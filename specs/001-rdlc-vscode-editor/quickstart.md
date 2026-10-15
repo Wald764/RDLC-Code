@@ -16,35 +16,39 @@ The following commands define the scripts the implementation must expose; they a
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm typecheck
+pnpm format:check
 pnpm lint
+pnpm typecheck
 pnpm test:unit
 pnpm test:roundtrip
 pnpm test:compatibility
 pnpm build
-pnpm test:vscode
 pnpm package
+pnpm test:vscode
+pnpm test:package
 ```
 
 Expected results:
 
+- `format:check`: pinned Prettier checks maintained source/configuration/documentation without rewriting files; generated and vendored material is excluded.
 - `typecheck` / `lint`: both applications and all workspace libraries pass without cross-layer dependency violations.
 - `test:unit`: domain tests run independently of VS Code/Angular; Angular component tests validate Signals-driven updates and accessible controls using the Angular test builder.
 - `test:roundtrip`: exact no-op equality and edit-footprint preservation checks pass for all applicable fixtures.
 - `test:compatibility`: fixture/specification rule matrix passes; unsupported and malformed cases produce expected non-destructive diagnostics. External-consumer verification is separately reported, never implied by this command.
-- `build`: produces bundled extension code and local AOT Angular HTML/CSS/JS/assets, with no CDN or server dependency.
+- `build`: production-builds bundled extension code and local AOT Angular HTML/CSS/JS/assets, with no CDN or server dependency.
 - `test:vscode`: official Electron harness verifies lifecycle, synchronization, stale-message rejection and failed/conflicting saves. Initial harness download may require network; prepare/cache it before disconnected validation.
-- `package`: creates `dist/rdlc-code.vsix` containing all runtime assets and required notices, with no development server or external runtime requirement.
+- `package`: creates `dist/rdlc-code-MAJOR.MINOR.PATCH.vsix` using the validated extension version, containing all runtime assets and required notices, with no development server or external runtime requirement. Release publishers consume this file without rebuilding.
+- `test:package`: installs that local VSIX in an isolated profile and checks offline local assets, isolation, manifest identity and notices using the existing VS Code harness; it does not rebuild or publish the package.
 
 The installed offline manual acceptance below is mandatory even when automated tests pass. A future offline integration script may automate it, but no additional framework is prescribed.
 
 ## Install and validate offline
 
 ```sh
-code --install-extension dist/rdlc-code.vsix
+code --install-extension dist/rdlc-code-1.2.3.vsix
 ```
 
-Use a clean VS Code profile and the packaged extension, disconnect networking, and verify the following scenarios. Record OS, VS Code/Electron versions, extension version, fixture IDs and reference-workstation details. Also inspect the packaged asset graph, CSP and active listeners; merely disconnecting the network does not prove there were no attempted requests.
+Replace illustrative version `1.2.3` with the actual package version. Use a clean VS Code profile and the packaged extension, disconnect networking, and verify the following scenarios. Record OS, VS Code/Electron versions, extension version, fixture IDs and reference-workstation details. Also inspect the packaged asset graph, CSP and active listeners; merely disconnecting the network does not prove there were no attempted requests.
 
 ### 1. Safe existing-report edit
 
@@ -72,4 +76,103 @@ With the keyboard alone, complete create/select/property edit/delete, dataset/fi
 
 ## Completion evidence
 
-Retain command exit codes, test summaries, fixture/specification coverage, preservation comparisons, lifecycle results, network/listener observations, accessibility/performance measurements and packaged dependency/license inventory. Record [V1–V8](plan.md#technical-decisions-requiring-validation) as proved, failed or unverified. Any failed mandatory gate blocks release; absent runtime-consumer evidence blocks that compatibility claim, not offline source authoring.
+Retain command exit codes, test summaries, fixture/specification coverage, preservation comparisons, lifecycle results, network/listener observations, accessibility/performance measurements and packaged dependency/license inventory. Record [V1–V10](plan.md#technical-decisions-requiring-validation) as proved, failed or unverified. Any failed mandatory gate blocks release; absent runtime-consumer evidence blocks that compatibility claim, not offline source authoring.
+
+## Planned GitHub and marketplace setup
+
+Complete these prerequisites before the first tag, after automation is implemented:
+
+V9 and V10 are approved design decisions (2026-10-15). The checks below establish technical
+readiness, not renewed design approval. Preserve all existing V1–V8 validation obligations.
+
+1. Commit exact `.node-version`, root `packageManager`, tool versions and `pnpm-lock.yaml`.
+   Configure GitHub Actions and required aggregate CI checks on protected `main`; protect release
+   tag creation and forbid tag update/deletion. Restrict workflow changes through review.
+2. Configure the reviewed extension manifest's publisher/name, `MARKETPLACE_PUBLISHER` and
+   optional `OPENVSX_NAMESPACE`. Destination identities must match the publisher embedded in
+   the canonical VSIX; they are configurable without workflow edits, not post-tag overrides.
+   Create/verify the VS Code publisher identity and extension ID. Configure Microsoft Entra
+   federation to the protected release environment, authorize its identity in the publisher,
+   and set `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` plus identity-specific login configuration as
+   GitHub configuration. Complete the
+   [GitHub-only Entra procedure](contracts/ci-cd.md#entra-federation-procedure-and-confirmation-boundary),
+   including Marketplace Contributor membership and a controlled pinned-toolchain publication.
+   Component support is documented; this end-to-end authentication is not yet tested and blocks
+   first publication until confirmed. Do not introduce Azure Pipelines. Direct
+   Marketplace `vsce --oidc` is not the selected strategy. A temporary PAT fallback requires
+   explicit validation because global PAT retirement is announced for 2026-12-01.
+3. Optionally create the matching Open VSX namespace, accept its Publisher Agreement and store
+   `OVSX_PAT` in GitHub Actions Secrets for automatic first publication. For subsequent versions,
+   register the trusted publisher and set `OPENVSX_AUTH_MODE=oidc`, removing the PAT. No Open VSX
+   configuration means a documented skip; invalid configured authentication fails.
+4. Restrict publishing environments to protected release tags without manual approvals. Grant
+   read-only build permissions, job-local GitHub release write permission and OIDC permission
+   only to federated publishers. Set artifact retention to 90 days within repository policy.
+   Keep all credentials out of files, shell arguments and logs.
+
+GitHub Releases use the job-scoped `GITHUB_TOKEN`, with `contents: write` confined to their
+publication job. Accounts, namespace ownership, agreements and necessary roles/permissions must
+be configured before the first release; none are presumed to exist from this design approval.
+
+The full trigger, permission, credential and recovery rules are in the [CI/CD contract](contracts/ci-cd.md).
+
+## Planned new-version procedure
+
+1. Choose the next stable SemVer using gitmoji-prefixed Conventional Commits and compatibility
+   impact. Prepare a PR synchronizing root and extension `package.json.version`; update the
+   lockfile if needed. Do not synchronize unrelated private workspace package versions.
+2. Review/merge the PR, confirm mandatory acceptance evidence and green main CI, and check out
+   that exact main commit. Release automation rechecks the tag independently.
+3. Create and push an immutable annotated tag; for illustrative version `1.2.3`:
+
+   ```sh
+   git checkout main
+   git pull --ff-only
+   git tag -a v1.2.3 -m "Release 1.2.3"
+   git push origin v1.2.3
+   ```
+
+4. Observe the automatic tag workflow: strict version checks, frozen install, quality gates,
+   production build, versioned VSIX/manifest, generated notes, GitHub Release, Marketplace,
+   then configured Open VSX. No approval, local package upload or manual publication follows
+   the tag. The GitHub attachment and all marketplace uploads originate from the same VSIX.
+
+## Planned CI/CD validation and recovery scenarios
+
+Run these scenarios in a controlled test repository/publisher namespace during V10, after
+implementation; do not exercise intentionally failing publications on production versions.
+
+| Scenario | Expected result |
+|---|---|
+| Fork PR and main push | All root quality checks run; fork/same-repository PRs receive no publication secrets; no release is created |
+| Broken formatting, lint, types, unit, roundtrip, compatibility or build | Required check fails and no artifact/release/marketplace upload occurs |
+| Missing/stale lockfile or cold cache | Stale/missing lockfile fails; cold cache still completes with frozen install |
+| Malformed `v*.*.*` tag or tag/package mismatch | Release stops before publication and names the invalid metadata |
+| Valid tag on reviewed main history | All gates pass; exact tag/commit and package version are recorded; one canonical versioned VSIX is distributed |
+| Modified handoff VSIX or conflicting existing release | Explicit digest/provenance failure; no replacement or silent duplicate skip |
+| Missing Open VSX configuration | Mandatory GitHub/Marketplace delivery succeeds; Open VSX is marked not-configured |
+| Configured but invalid Open VSX authentication | Preflight fails clearly; optional does not mean failures are ignored |
+| Marketplace/Open VSX failure after GitHub publication | Successful destinations remain; summary identifies the failed stage; failed-job rerun reuses the original verified artifact without compiling |
+| Publish response lost, but remote version exists | Verify remote bytes or prior acknowledged success bound to the manifest; ambiguity fails instead of overwriting |
+| Concurrent same-tag runs | Publication serialized without cancellation; matching completed destinations explicitly reused, conflicting ones fail |
+
+For a transient failure, use GitHub Actions **Re-run failed jobs** on the original run, within
+30 days/50 attempts and while its verified artifact remains available. Do not rerun all jobs
+to rebuild a partially published version. Inventory all destination states and identify already
+successful publications before any write. Compare the original tag/commit and manifest/hash
+before resuming. A verified GitHub Release attachment may supply the same bytes; a moved tag,
+missing proof, conflicting remote version or expired rerun window blocks automatic recovery.
+Fix credentials in GitHub configuration; any correction needing different package bytes requires
+a new version-preparation commit and new SemVer tag. Never move the old tag or replace its assets.
+
+Retain the canonical Actions artifact, manifest and available gate/publication evidence for
+90 days within repository policy. Keep the GitHub Release's original VSIX and manifest as the
+durable public copy; do not delete/replace them for recovery. Retention does not extend the
+30-day rerun limit. If neither retained storage nor the verified GitHub attachment provides
+the canonical bytes and proof, stop; recompilation is not a recovery option.
+
+**Unconfirmed remote-integrity prerequisite**: Before enabling an existing-version recovery
+path, demonstrate remote-byte identity or reliable prior acknowledged publication tied to the
+canonical digest. Marketplace download identity is not confirmed. A duplicate-version response,
+version number or registry signature alone is insufficient. If the association cannot be proved,
+report an explicit conflict without overwriting; do not assume an undocumented integrity API.

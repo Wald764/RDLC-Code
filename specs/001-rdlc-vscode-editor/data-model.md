@@ -51,6 +51,29 @@ The VS Code `TextDocument` is the sole mutable report authority. Domain objects 
 6. External change with local edits → VS Code conflict workflow; host must not force overwrite, retry stale patches, or bypass the document service. Failed save keeps the dirty TextDocument.
 7. Invalid source can still be saved deliberately through the normal text-editor workflow; graphical commands never rewrite it. A no-op graphical save delegates to VS Code without parsing-to-serialization.
 
+## Release provenance records
+
+These are CI/CD metadata, separate from the report model and never embedded in RDLC XML.
+Their workflow and recovery semantics are defined in [CI/CD](contracts/ci-cd.md).
+
+| Record | Fields | Invariants |
+|---|---|---|
+| ReleaseIdentity | canonical tag, peeled commit SHA, SemVer, publisher/extension name, configured Marketplace publisher and optional Open VSX namespace | Tag immutable; root and extension versions equal tag without `v`; commit on protected main history; configured destination identities match the publisher embedded in the single canonical VSIX |
+| ReleaseManifest | identity, exact Node/pnpm/tool versions, lockfile SHA-256, VSIX filename/SHA-256, original workflow run ID, gate job evidence | Created only from verified tagged source; no secrets; VSIX metadata matches identity; immutable after attachment |
+| ArtifactReference | original run ID, immutable artifact ID, archive digest, enclosed VSIX digest | Archive hash is not the VSIX hash; explicit VSIX mismatch fails; no overwrite or latest-name lookup |
+| DestinationResult | identity/digest, destination, status, job/attempt, remote version, verified receipt/evidence or sanitized error | Status is pending, succeeded, failed, conflict or not-configured; success requires acknowledged publication bound to this VSIX or verified prior evidence |
+
+Transitions: validated tag → successful gates → packaged/verified → GitHub published → Marketplace
+published → Open VSX published or not-configured. A failure stops subsequent writes and retains
+successful destination evidence. Recovery resumes only missing/failed destinations with the
+same identity/digest; conflicting or unprovable existing versions terminate without overwrite.
+No distributed rollback or mutable release database is introduced.
+
+V9/V10 design approval does not mark these records as operationally verified. Before each retry,
+inventory destination results; reuse proven successes and publish only missing destinations.
+Keep manifest/artifact/publication evidence under the documented retention policy. Unknown
+remote association remains a conflict, not a succeeded state inferred from version existence.
+
 ## Required specification anchors
 
 Use repository-root-relative references: MS-RDL §2.3.1 `vendor/02-structures/2.3.1-report.mustunderstand.md`; §2.6 `vendor/02-structures/2.6-reportsection.md`; §2.2.7 `vendor/02-structures/2.2.7-rdlsize.md`; §2.16.1 `vendor/02-structures/2.16.1-textbox.name.md`; §2.23 `vendor/02-structures/2.23-tablix.md`; §2.81 `vendor/02-structures/2.81-group.md`; §2.325/§2.328 `vendor/02-structures/2.325-dataset.md` and `vendor/02-structures/2.328-field.md`. Property mappings must use the matching version-specific sections, not inferred object names.

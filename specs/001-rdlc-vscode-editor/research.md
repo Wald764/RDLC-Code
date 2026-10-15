@@ -84,8 +84,128 @@
 
 **Evidence**: [Webview security and local resources](https://code.visualstudio.com/api/extension-guides/webview), [Angular CSP_NONCE](https://angular.dev/api/core/CSP_NONCE), [VS Code extension testing](https://code.visualstudio.com/api/working-with-extensions/testing-extension), [Node test runner](https://nodejs.org/api/test.html). See [compatibility gates](contracts/compatibility.md) and [validation guide](quickstart.md).
 
+## R9 — GitHub Actions, reproducible checks and version synchronization
+
+**Decision**: GitHub Actions alone runs PR/main CI and tag releases using the same pnpm root
+scripts. Read exact Node from `.node-version` and pnpm from `packageManager`, use the frozen
+lockfile and cache only the pnpm store. Preserve all TypeScript/Angular/domain decisions R1–R8.
+Use pinned Prettier for check-only formatting, excluding generated/vendored material, and the
+existing planned ESLint/TypeScript/test scripts for their respective quality checks.
+Release tags are canonical stable SemVer; synchronize root and extension versions in a reviewed
+pre-tag commit, leaving private workspace package versions independent. Never bump during release.
+Use gitmoji-prefixed Conventional Commits as required by `AGENTS.md`, interpreting the conventional
+subject after removing its shortcode prefix.
+
+**Rationale**: A tagged source tree must already declare the version it publishes. Fail-fast
+equality checks avoid silently publishing different metadata. Shared script contracts keep
+developer, PR and release checks aligned without another orchestration framework. All PRs are
+checked because constitution 1.1.0 is broader than only PRs targeting main.
+
+**Alternatives considered**: CI-side version injection, automatic bump/tag bots, independent
+marketplace builds, other CI platforms and cached `node_modules` add inconsistency or conflict
+with explicit requirements. No release-management bot or new application dependency is needed.
+
+**Sources**: [SemVer](https://semver.org/),
+[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/),
+[pnpm CI](https://pnpm.io/continuous-integration),
+[pnpm frozen lockfile](https://pnpm.io/cli/install#--frozen-lockfile),
+[GitHub workflow events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows).
+
+## R10 — Publishing authentication and trust
+
+**Approval**: V9 accepted by the user on 2026-10-15, including configurable publisher/namespace
+identities and pre-release account/role setup. This is not an authenticated compatibility test.
+
+**Decision**: Prefer GitHub OIDC to Microsoft Entra workload identity federation, an authorized
+Marketplace identity and `vsce --azure-credential` for Visual Studio Marketplace. Do not rely on
+direct `vsce --oidc` yet: current CLI documentation is ahead of backend availability. Reserve
+`VSCE_PAT` as a temporary validated fallback, not the long-term default. Open VSX first publication
+uses optional `OVSX_PAT`; after an active version exists, use registered trusted publishing when
+explicitly configured. Isolate publication jobs from source execution and PR credentials.
+
+**Rationale**: Official VS Code documentation supports Entra credentials and documents global
+PAT retirement on 2026-12-01. Azure documents GitHub federated login. Open VSX supports GitHub
+trusted publishers but requires an existing active extension version and namespace ownership;
+bootstrap therefore still needs PAT authentication. Repository/environment tag restrictions
+remain necessary because Open VSX trusted registration does not itself restrict tag refs.
+
+**Alternatives considered**: Hardcoded credentials, broad personal GitHub tokens, publication
+secrets in build/PR jobs and assuming npm trusted-publishing support applies here are rejected.
+PAT-only Marketplace delivery is unsuitable as the durable default. Direct Marketplace OIDC
+must wait for demonstrated backend support, not merely a CLI option.
+
+**Sources and limits** (checked 2026-10-15; revalidate under V9):
+[VS Code publishing and secure authentication](https://code.visualstudio.com/api/working-with-extensions/publishing-extension),
+[Azure GitHub OIDC](https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure-openid-connect),
+[`vsce` credential implementation](https://github.com/microsoft/vscode-vsce/blob/main/src/auth.ts),
+[Marketplace direct OIDC limitation](https://github.com/microsoft/vscode-vsce/issues/1275),
+[Open VSX publishing](https://github.com/eclipse-openvsx/openvsx/wiki/Publishing-Extensions),
+[Open VSX trusted publishing](https://github.com/eclipse-openvsx/openvsx/wiki/Trusted-Publishing).
+Publisher-specific tenancy, identity membership, namespace ownership and credentials have not
+been configured or tested; they are V9 validation requirements rather than presumed capabilities.
+
+**Confirmation boundary**: A targeted recheck confirms that official Azure documentation supports
+GitHub OIDC login for Entra applications and user-assigned managed identities. Official VS Code
+documentation supports `--azure-credential` (its sample uses Azure Pipelines), and the inspected
+`vsce` source includes `AzureCliCredential` and scope
+`499b84ac-1321-427f-aa17-267ca6975798/.default`. These establish the component capabilities, not a
+successful project-specific GitHub-to-Marketplace publication. The pinned-version end-to-end
+test is a blocking first-release prerequisite. Follow the
+[GitHub-only setup procedure](contracts/ci-cd.md#entra-federation-procedure-and-confirmation-boundary);
+no Azure Pipelines, service connection or invented token exchange is introduced.
+
+## R11 — Canonical VSIX, automatic notes and partial-release recovery
+
+**Approval**: V10 accepted by the user on 2026-10-15. A single canonical VSIX per version and its
+SHA-256 are mandatory across all three destinations. Existing successful publications must be
+identified before resuming; approval does not establish remote-integrity capabilities.
+
+**Decision**: Validate and test tagged source; package one canonical production VSIX after the
+quality matrix. Distribute those exact bytes with pinned `vsce`/`ovsx` prebuilt-package options.
+Generate notes with GitHub's release-notes API and publish GitHub assets before Marketplace and
+configured Open VSX. Use a manifest, VSIX SHA-256 and immutable artifact ID to bind all stages.
+Rerun failed destination jobs within GitHub's rerun window without rerunning the successful build.
+Existing remote versions require matching bytes or reliable prior success evidence bound to
+this artifact; otherwise report a conflict. Do not delete, replace or silently skip duplicates.
+
+**Rationale**: Artifact archive digests are not VSIX digests, and automatic download digest
+checks can warn rather than fail. Explicit local VSIX verification is required. Job reruns keep
+the original ref/SHA/run ID but change the attempt. Separate publisher jobs make partial success
+recoverable without compilation. There is no atomic transaction across the three destinations.
+
+**Alternatives considered**: Rebuilding for each marketplace, `--skip-duplicate`, uploading with
+overwrite, retagging and rolling back successful remote publications lose identity or history.
+An unacknowledged timeout cannot be treated as successful just because the version exists.
+
+**Sources and limits**:
+[GitHub artifact immutability](https://github.com/actions/upload-artifact#overwriting-an-artifact),
+[artifact digest validation](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-what-your-workflow-does/storing-and-sharing-data-from-a-workflow#validating-artifacts),
+[rerun limits and behavior](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs),
+[generated release notes API](https://docs.github.com/en/rest/releases/releases#generate-release-notes-content-for-a-release),
+[`vsce` prebuilt publication](https://github.com/microsoft/vscode-vsce),
+[`ovsx` publication/download](https://github.com/eclipse-openvsx/openvsx/blob/master/cli/README.md).
+GitHub reruns are limited to 30 days and 50 attempts. Open VSX exposes version-specific package
+downloads; Marketplace version existence alone does not establish original-byte identity.
+No official guarantee of unchanged downloaded Marketplace bytes was established. Ambiguous
+existing publications fail closed; V10 must exercise the actual recovery evidence path.
+
+**Blocking prerequisite**: Resolve the actual supported remote association method before enabling
+recovery for an existing marketplace version. A successful prior publisher job bound to the
+manifest/digest can establish provenance; remote version existence cannot. If exact remote
+bytes cannot be verified and reliable prior-success evidence is absent, stop with an explicit
+conflict. Do not fabricate a registry checksum API or weaken the canonical-artifact rule.
+The 90-day retained artifact and durable GitHub attachment permit reuse of the same bytes;
+neither extends GitHub's 30-day/50-attempt rerun window. Missing/expired evidence forbids rebuild
+as a recovery substitute.
+
 ## Supersession and research closure
 
 Repository inspection found an architecture-neutral feature specification and an unfilled plan template, not an existing implemented architecture. The current direction explicitly excludes incompatible backends, HTTP transport requirements, alternative UI frameworks and lossy whole-document regeneration. No constitution change is needed.
 
-All initial planning questions have selected decisions above; there are no `NEEDS CLARIFICATION` entries. Pending V1–V8 are technical proof/acceptance items with stated failure behavior. Missing evidence must block the corresponding release claim or unsafe operation, not cause an implicit fallback or erase unsupported XML.
+All initial planning questions have selected decisions above; there are no unresolved requirements
+clarifications. Pending V1–V8 remain unchanged technical proof/acceptance items; V9–V10 are
+user-approved design decisions with unresolved operational publication/recovery prerequisites,
+not pending design approvals. The CI/CD
+amendment extends the existing design under constitution 1.1.0 without modifying functional
+specifications. Missing evidence blocks the corresponding release claim or unsafe operation,
+not an implicit fallback or loss of unsupported XML.

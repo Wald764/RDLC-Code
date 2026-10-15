@@ -41,4 +41,19 @@ Minimum corpus: 12 files covering supported blank/textbox/table/group/dataset ca
 - **Offline/isolation**: installed VSIX loads without network/server; no report-triggered network requests, expression/code execution, entity resolution or data-source access. Exercise local malicious references as well as remote ones.
 - **Accessibility/performance/distribution**: keyboard-only full workflow, SC-004 timings, license/attribution inventory and reproducible contributor build.
 
-Missing mandatory evidence is a failed gate. Record consumer compatibility as “not verified” unless the exact consumer/version has evidence; do not mislabel an unrun test as passing. See [plan V1–V8](../plan.md#technical-decisions-requiring-validation) for proof obligations before release.
+Missing mandatory evidence is a failed gate. Record consumer compatibility as “not verified” unless the exact consumer/version has evidence; do not mislabel an unrun test as passing. See [plan V1–V10](../plan.md#technical-decisions-requiring-validation) for proof obligations before release.
+
+## CI/CD enforcement
+
+The [CI/CD contract](ci-cd.md) makes these gates mandatory on every PR, every push to main and
+every release tag. All checks and available evidence MUST apply to the exact tested commit;
+release evidence is linked to the tagged commit and canonical VSIX digest. Unit, roundtrip and
+compatibility tests cannot be skipped because only workflow/version files changed. Hosted
+checks MUST NOT replace unautomated mandatory acceptance evidence with an assumed pass.
+No VSIX, handoff artifact or release is uploaded before the required quality gates succeed.
+
+V9/V10 are user-approved design decisions, not passed technical checks. Before first publication,
+resolve project-specific Entra/GitHub/vsce authentication and publisher/namespace permissions.
+Before an existing-version recovery write, establish reliable association to the canonical
+VSIX; unconfirmed remote integrity without prior-success evidence causes an explicit conflict.
+V1–V8 and every compatibility/preservation gate above remain unchanged.

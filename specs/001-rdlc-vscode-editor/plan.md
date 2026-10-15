@@ -2,7 +2,7 @@
 
 **Branch**: `001-rdlc-vscode-editor` | **Date**: 2026-10-15 | **Spec**: [spec.md](spec.md)
 
-**Input**: `specs/001-rdlc-vscode-editor/spec.md` and the explicit TypeScript/Angular architecture direction.
+**Input**: `specs/001-rdlc-vscode-editor/spec.md`, the validated TypeScript/Angular architecture direction, and the GitHub Actions CI/CD amendment under constitution 1.1.0.
 
 **Status**: Phase 0 research and Phase 1 design complete. Design only; implementation and task generation are not authorized by this document. Technical validation gates remain explicit below.
 
@@ -11,6 +11,11 @@
 Deliver a local VS Code RDLC authoring extension using official `CustomTextEditorProvider` APIs and a bundled Angular graphical designer. Keep the live XML TextDocument authoritative; visual actions produce validated minimal source patches so unknown XML, namespaces and extensions survive. Separate parsing, serialization, validation, expression analysis and authoring-layout rendering into independently tested TypeScript packages in a pnpm workspace.
 
 The designer supports the specification's RDL 2016/01 single-section profile, textboxes, table-shaped tablix with row groups/totals, and local datasets/fields. Rendering means a design surface, not a report-processing engine. All installed functionality works offline without an HTTP listener, external service or .NET/C#/Java/Python backend.
+
+GitHub hosts the source and GitHub Actions exclusively handles CI/CD. PR/main quality gates and
+tag-triggered releases share the same checks. A release packages the tagged production build
+once, then distributes that exact versioned VSIX to GitHub and the marketplaces. The detailed
+workflow, trust, version and recovery contract is [CI/CD](contracts/ci-cd.md).
 
 ## Technical Context
 
@@ -25,6 +30,10 @@ The designer supports the specification's RDL 2016/01 single-section profile, te
 **Target Platform**: Desktop VS Code on Windows/macOS/Linux, local workspaces. Proposed minimum VS Code 1.110 is a validation candidate, not a tested compatibility claim; its Electron/browser runtime must meet Angular 22 requirements. No browser-hosted or remote-workspace support claim.
 
 **Project Type**: pnpm workspace containing a VS Code extension, a static Angular webview application and six domain/shared-model libraries. No backend or HTTP API.
+
+**Delivery**: Planned `.github/workflows/ci.yml` and `release.yml`; repository-pinned Node/pnpm,
+frozen pnpm lockfile, pnpm-store cache, pinned packaging/publishing tools, SemVer release tags,
+Conventional Commits compatible with the required gitmoji prefix, and secret-free build jobs.
 
 **Performance Goals**: SC-004: ≤1 MiB / 100 editable textboxes usable in ≤3 seconds for at least 19/20 opens; ≤200 ms for at least 95/100 property interactions, on a recorded reference workstation. Batch gesture commits and derive scenes from accepted snapshots. Workers are deferred unless measurements require them.
 
@@ -45,6 +54,8 @@ The designer supports the specification's RDL 2016/01 single-section profile, te
 | III. Lossless predictable editing | PASS | PASS | Source authority, lexical spans, targeted patches, candidate verification, stale-edit rejection, refusal of unsafe operations |
 | IV. Verifiable independent behavior | PASS | PASS | Separate domain packages; mandatory unit, roundtrip, compatibility and lifecycle checks |
 | V. Bounded agent context | PASS | PASS | Filename/index discovery and selected sections only; research agents received bounded scopes; no corpus reads |
+| VI. Reproducible automated releases | PASS | PASS (design) | Tag/package equality, frozen lockfile, tagged-commit gates, single VSIX, automatic GitHub/Marketplace and configured Open VSX publication; conflicting versions fail |
+| GitHub Actions security and quality gates | PASS | PASS (design) | All PRs/main checked, no artifacts on failed gates, least-privilege isolated publishers, supported authentication, no secret logging; see CI/CD contract |
 | Untrusted input and execution boundaries | PASS | PASS | No expression execution, external entities, data access or report-triggered networking; validated host messaging and CSP |
 | TypeScript / Angular / pnpm / offline direction | PASS | PASS | All application logic TypeScript, Angular Signals/SCSS, static packaged webview, no backend/server |
 
@@ -64,7 +75,8 @@ specs/001-rdlc-vscode-editor/
 └── contracts/
     ├── modules.md
     ├── editor-protocol.md
-    └── compatibility.md
+    ├── compatibility.md
+    └── ci-cd.md
 ```
 
 `tasks.md` belongs to the later task-generation phase and is not produced here.
@@ -93,6 +105,9 @@ pnpm-workspace.yaml
 pnpm-lock.yaml
 tsconfig.base.json
 vendor/                        # Existing reference material, unchanged
+.node-version                  # Exact build Node patch; validated under V1
+.github/workflows/ci.yml        # Planned PR/main checks, not generated here
+.github/workflows/release.yml   # Planned tag release, not generated here
 ```
 
 **Structure Decision**: The five required independent modules share one small model package to prevent cycles. The extension owns mutation orchestration; Angular owns presentation only. Workspace imports use `workspace:*`; no Nx/Turborepo, backend, generic transport layer or plugin framework is needed. Libraries colocate focused unit tests; cross-package corpus and lifecycle tests live under `tests/`.
@@ -107,11 +122,17 @@ See [research.md](research.md) for decisions, rationale, alternatives and source
 - [Module contracts](contracts/modules.md): package boundaries, dependency direction, parsing, expressions, validation, patch serialization and rendering.
 - [Editor protocol](contracts/editor-protocol.md): extension commands, versioned messages, document lifecycle, CSP and offline assets.
 - [Compatibility contract](contracts/compatibility.md): supported profile, evidence matrix, preservation and compatibility gates.
+- [CI/CD contract](contracts/ci-cd.md): triggers, version synchronization, checks, artifact identity, credentials and partial-release recovery.
 - [Quickstart validation guide](quickstart.md): future build/test commands and observable acceptance scenarios.
 
 ## Technical Decisions Requiring Validation
 
 These are selected design candidates, not unanswered product questions. No implementation may claim them proven yet.
+
+**Approval recorded 2026-10-15**: The user approves V9 and V10 as design decisions with the
+conditions below. This approval does not certify working authentication, remote integrity or
+release automation. Their outstanding publication prerequisites remain blocking until verified.
+V1–V8 and all previously selected architectural decisions remain unchanged.
 
 | ID | Candidate decision | Required evidence / impact if it fails |
 |---|---|---|
@@ -123,6 +144,8 @@ These are selected design candidates, not unanswered product questions. No imple
 | V6 | Dataset-wide meaning of report total; group-name scope for subtotal | Confirm product acceptance and fixture expression/placement checks; distinguish dataset-wide totals from tablix-filtered totals explicitly |
 | V7 | Source budgets and performance targets | Record reference workstation and benchmark bounded corpus; tune internal budgets without weakening no-loss behavior |
 | V8 | Native text lifecycle protects all pending work | Exercise source edits, split views, undo/redo, encoding/EOL, applyEdit refusal, dirty external conflicts, failed saves and cancellation; any silent loss blocks release |
+| V9 | APPROVED: job-scoped GITHUB_TOKEN; prefer Entra federation from GitHub Actions for Marketplace; Open VSX bootstrap PAT then GitHub OIDC; configurable publisher/namespace | Before first release, configure accounts/roles and matching identities; prove pinned vsce consumes the GitHub-federated Azure CLI credential and publishes the prebuilt VSIX. Documentation/source support is confirmed, authenticated end-to-end compatibility is not. No Azure Pipelines; unresolved authentication blocks publication |
+| V10 | APPROVED: one canonical VSIX/version with SHA-256, exclusive reuse across destinations, evidence-based recovery without rebuild or overwrite | Prove tag/version rejection, secret isolation, all quality gates, cross-OS checks, digest handoff, concurrent-run exclusion and partial recovery. Before enabling existing-version recovery, establish reliable prior-success or remote-integrity evidence; otherwise stop with explicit conflict. Retain artifacts 90 days; GitHub reruns limited to 30 days/50 attempts |
 
 ## Complexity Tracking
 

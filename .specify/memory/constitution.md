@@ -1,17 +1,3 @@
-<!--
-Sync Impact Report (temporary review material; remove before committing)
-Version change: unratified scaffold -> 1.0.0 (initial adoption)
-Modified principles: five unfilled principle slots replaced with:
-  I. Open-Source, VS Code-Native Editing
-  II. Specification-Driven RDLC Compatibility
-  III. Lossless, Predictable Report Editing
-  IV. Verifiable Behavior and Clear Boundaries
-  V. Bounded Agent Context (NON-NEGOTIABLE)
-Added sections: Project Constraints; Development Workflow and Quality Gates.
-Removed sections: none; generic section placeholders have been populated.
-Dependent templates and commands: consume the constitution at runtime; no edits required here.
-Deferred TODOs: none.
--->
 # RDLC Code Constitution
 
 ## Core Principles
@@ -85,6 +71,25 @@ Any future `AGENTS.md` instructions MUST preserve this prohibition and document 
 lookup workflow. Task plans and reviews MUST verify that reference discovery stays scoped.
 This protects context quality in a repository containing over a thousand specification files.
 
+### VI. Reproducible, Automated Releases
+
+The project MUST use Semantic Versioning (SemVer). Git tags matching `vMAJOR.MINOR.PATCH`
+MUST be the source of truth for extension versions. Every release-tag push MUST automatically
+trigger the complete release process in GitHub Actions, with no manual approval or publishing
+step after tag creation. Release automation MUST verify that the tag version equals the VS Code
+extension package version and MUST fail before publication if they differ.
+
+Release builds MUST use the exact commit identified by the tag and install dependencies from
+the committed pnpm lockfile with frozen-lockfile enforcement. All required quality checks MUST
+pass for that commit before any artifact is published. The pipeline MUST produce a versioned
+VSIX and automatically create a GitHub Release with a generated changelog and that VSIX attached.
+It MUST publish the same VSIX to the Visual Studio Marketplace and MUST also publish that same
+VSIX to Open VSX when the required credentials are configured in GitHub Actions.
+
+A published version MUST never be silently overwritten. A conflicting existing version or
+release artifact MUST cause an explicit failure rather than replacement. These rules keep
+published packages traceable to reviewed source and consistent across distribution channels.
+
 ## Project Constraints
 
 - Feature specifications MUST define supported RDLC/RDL versions, supported constructs,
@@ -99,6 +104,10 @@ This protects context quality in a repository containing over a thousand specifi
   contract and deliberate user action.
 - Vendored reference material MUST remain distinguishable from project-owned source and
   retain its original attribution and licensing terms.
+- The project MUST be hosted on GitHub and MUST use GitHub Actions exclusively for CI/CD.
+- GitHub Actions workflows MUST use the minimum permissions required for each job. Publication
+  secrets and credentials MUST be managed through GitHub Actions and MUST never be exposed in
+  logs. Authentication MUST use methods officially supported by each publication platform.
 
 ## Development Workflow and Quality Gates
 
@@ -110,8 +119,15 @@ This protects context quality in a repository containing over a thousand specifi
 4. Implement the smallest coherent change and run the focused checks required by its impact,
    including available build, type, lint, and test checks applicable to changed components.
 5. Review report preservation, VS Code lifecycle behavior, input handling, dependency
-   licensing, and bounded agent context as applicable. Record check results and any remaining
-   limitations in the change summary; limitations MUST NOT contradict mandatory principles.
+    licensing, and bounded agent context as applicable. Record check results and any remaining
+    limitations in the change summary; limitations MUST NOT contradict mandatory principles.
+6. Every pull request and every push to `main` MUST trigger lint, typecheck, tests, and build
+   checks in GitHub Actions. Dependency installation MUST be reproducible from the committed
+   pnpm lockfile using frozen-lockfile enforcement. Failed quality checks MUST block all
+   artifact publication.
+7. Every release-tag push MUST run the same quality gates for the tagged commit before
+   publication and satisfy principle VI, including version consistency, identical VSIX
+   distribution, automatic release notes, and protection against overwriting published versions.
 
 ## Governance
 
@@ -129,4 +145,4 @@ or redefinitions; MINOR for new principles or materially expanded obligations; P
 clarifications that do not change obligations. The ratification date remains the date of
 initial adoption. The initial version is 1.0.0 because the prior file was an unratified scaffold.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-15 | **Last Amended**: 2026-10-15
+**Version**: 1.1.0 | **Ratified**: 2026-10-15 | **Last Amended**: 2026-10-15
