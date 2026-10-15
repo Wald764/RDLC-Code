@@ -35,7 +35,7 @@ workflow, trust, version and recovery contract is [CI/CD](contracts/ci-cd.md).
 frozen pnpm lockfile, pnpm-store cache, pinned packaging/publishing tools, SemVer release tags,
 Conventional Commits compatible with the required gitmoji prefix, and secret-free build jobs.
 
-**Performance Goals**: SC-004: ≤1 MiB / 100 editable textboxes usable in ≤3 seconds for at least 19/20 opens; ≤200 ms for at least 95/100 property interactions, on a recorded reference workstation. Batch gesture commits and derive scenes from accepted snapshots. Workers are deferred unless measurements require them.
+**Performance Goals**: SC-004: ≤1 MiB (1,048,576 bytes) / 100 editable textboxes usable in ≤3 seconds for at least 19/20 opens; ≤200 ms for at least 95/100 property interactions, on a recorded reference workstation. Use SC-004's open-command-to-painted/enabled-snapshot and property-commit-to-painted-accepted-change boundaries, with VS Code running and a fresh webview for each open. Batch gesture commits and derive scenes from accepted snapshots. Workers are deferred unless measurements require them.
 
 **Constraints**: Entirely offline after VSIX installation; local AOT assets; restrictive CSP; no execution of report expressions/code, entity resolution, data queries, or remote resource retrieval; lossless untouched XML; atomic source edits; keyboard accessibility; MIT original code and reviewed dependency licenses. Initial parser budgets are documented in [module contracts](contracts/modules.md).
 
@@ -132,7 +132,11 @@ These are selected design candidates, not unanswered product questions. No imple
 **Approval recorded 2026-10-15**: The user approves V9 and V10 as design decisions with the
 conditions below. This approval does not certify working authentication, remote integrity or
 release automation. Their outstanding publication prerequisites remain blocking until verified.
-V1–V8 and all previously selected architectural decisions remain unchanged.
+The user also approves V6's Sum semantics, the SC-004 measurement protocol, conditional Open VSX
+validation, and the release-evidence gate. Other V1–V8 decisions remain unchanged; technical
+verification is still required. Prepare release versions before final acceptance; the release
+validator rejects missing, failed or stale mandatory evidence before any artifact upload, as
+defined in [CI/CD](contracts/ci-cd.md#mandatory-acceptance-evidence).
 
 | ID | Candidate decision | Required evidence / impact if it fails |
 |---|---|---|
@@ -141,10 +145,10 @@ V1–V8 and all previously selected architectural decisions remain unchanged.
 | V3 | `saxes` plus source-span retention | Review ISC/MIT-compatible dependency notices, prove offsets and full lexical coverage on adversarial fixtures; do not permit rewriting until roundtrip gates pass |
 | V4 | Query-free local datasets and seven `rd:TypeName` mappings | Obtain Microsoft-designer fixture evidence and intended consumer-version acceptance for each type; withhold runtime-compatibility claims where evidence is absent |
 | V5 | Synchronized table/group/footer profile | Verify generated hierarchy against original sections and representative fixtures; keep spanning/opaque structures preservation-only. Do not implement the ambiguous global cell-count reading |
-| V6 | Dataset-wide meaning of report total; group-name scope for subtotal | Confirm product acceptance and fixture expression/placement checks; distinguish dataset-wide totals from tablix-filtered totals explicitly |
+| V6 | APPROVED: Sum totals with dataset-wide report scope and group-name subtotal scope | Verify fixture expressions, footer placement and dataset-wide labels; distinguish dataset-wide totals from tablix-filtered totals explicitly. Product semantics are approved, not technically verified |
 | V7 | Source budgets and performance targets | Record reference workstation and benchmark bounded corpus; tune internal budgets without weakening no-loss behavior |
 | V8 | Native text lifecycle protects all pending work | Exercise source edits, split views, undo/redo, encoding/EOL, applyEdit refusal, dirty external conflicts, failed saves and cancellation; any silent loss blocks release |
-| V9 | APPROVED: job-scoped GITHUB_TOKEN; prefer Entra federation from GitHub Actions for Marketplace; Open VSX bootstrap PAT then GitHub OIDC; configurable publisher/namespace | Before first release, configure accounts/roles and matching identities; prove pinned vsce consumes the GitHub-federated Azure CLI credential and publishes the prebuilt VSIX. Documentation/source support is confirmed, authenticated end-to-end compatibility is not. No Azure Pipelines; unresolved authentication blocks publication |
+| V9 | APPROVED: job-scoped GITHUB_TOKEN; prefer Entra federation from GitHub Actions for Marketplace; optional Open VSX bootstrap PAT then GitHub OIDC; configurable publisher/namespace | Before first release, configure required accounts/roles and matching identities; prove pinned vsce consumes the GitHub-federated Azure CLI credential and publishes the prebuilt VSIX. GitHub and Marketplace evidence is mandatory; validate Open VSX only when configured and only for the mode being used, otherwise record not-configured without blocking release. Invalid configured authentication blocks publication. Documentation/source support is confirmed, authenticated end-to-end compatibility is not. No Azure Pipelines |
 | V10 | APPROVED: one canonical VSIX/version with SHA-256, exclusive reuse across destinations, evidence-based recovery without rebuild or overwrite | Prove tag/version rejection, secret isolation, all quality gates, cross-OS checks, digest handoff, concurrent-run exclusion and partial recovery. Before enabling existing-version recovery, establish reliable prior-success or remote-integrity evidence; otherwise stop with explicit conflict. Retain artifacts 90 days; GitHub reruns limited to 30 days/50 attempts |
 
 ## Complexity Tracking

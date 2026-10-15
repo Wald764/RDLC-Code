@@ -12,3 +12,7 @@ Format: `:gitmoji: type(scope): description`
 - Always include a scope.
 - Write the description in English, using the present imperative.
 - Keep the subject short. An optional short body is enough; no AI attribution trailers.
+
+## /vendor
+
+Offficial MS doc, this folder is **read-only**

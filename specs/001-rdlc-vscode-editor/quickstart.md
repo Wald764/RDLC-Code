@@ -72,7 +72,7 @@ Open fixtures containing embedded code, expressions, queries, remote/local exter
 
 ### 6. Accessibility and performance
 
-With the keyboard alone, complete create/select/property edit/delete, dataset/field/table/column/group/total editing, undo/redo and save; verify labels, visible focus and no focus traps. For a 1 MiB/100-textbox supported fixture, measure 20 opens and 100 property interactions against SC-004. Record failures rather than assuming performance from the architecture.
+With the keyboard alone, complete create/select/property edit/delete, dataset/field/table/column/group/total editing, undo/redo and save; verify labels, visible focus and no focus traps. For a 1 MiB (1,048,576 bytes)/100-textbox supported fixture, measure 20 opens and 100 property interactions against SC-004: open command to painted first accepted snapshot with supported property controls enabled, each time starting with a closed report editor and fresh webview in running VS Code; valid property commit to the corresponding painted accepted document change. Record failures rather than assuming performance from the architecture.
 
 ## Completion evidence
 
@@ -121,8 +121,15 @@ The full trigger, permission, credential and recovery rules are in the [CI/CD co
 1. Choose the next stable SemVer using gitmoji-prefixed Conventional Commits and compatibility
    impact. Prepare a PR synchronizing root and extension `package.json.version`; update the
    lockfile if needed. Do not synchronize unrelated private workspace package versions.
-2. Review/merge the PR, confirm mandatory acceptance evidence and green main CI, and check out
-   that exact main commit. Release automation rechecks the tag independently.
+2. Review/merge the version-preparation PR, then perform final mandatory acceptance on that exact
+   version-prepared main commit. Record its identity, tool versions, evidence paths/results and
+   configured destinations in `docs/validation/release-readiness.md`. Commit results only in
+   explicitly listed validation-evidence Markdown under `docs/validation/`; any other change,
+   including versions, requires renewed applicable verification and a new candidate record.
+   Confirm green main CI and run the planned `scripts/validate-release.ts` evidence/identity
+   checks against the intended release commit. Unconfigured Open VSX is not-configured and does
+   not block release; invalid configured authentication does. Release automation rechecks the
+   tag, evidence freshness and all automated gates independently before uploading artifacts.
 3. Create and push an immutable annotated tag; for illustrative version `1.2.3`:
 
    ```sh

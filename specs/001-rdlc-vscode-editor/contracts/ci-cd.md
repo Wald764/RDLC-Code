@@ -74,6 +74,30 @@ steps MUST NOT use `continue-on-error`. No artifact upload, GitHub Release or ma
 publication is permitted until every required gate succeeds. Local package creation for tests
 is not publication. PR jobs never receive publication secrets, including same-repository PRs.
 
+### Mandatory acceptance evidence
+
+Prepare and review the version-synchronization commit before final candidate acceptance.
+`docs/validation/release-readiness.md` MUST identify that tested candidate commit, final
+root/extension versions, tool versions, required evidence paths and results, and applicable
+publication destinations/authentication modes. Records MUST include preservation/compatibility,
+lifecycle, offline/isolation, performance/usability/keyboard, contributor-build/license and
+applicable V1–V10 evidence. Open VSX may be not-configured; when configured, evidence is required
+for the authentication mode being used. Missing, failed or unrun mandatory evidence blocks release.
+
+Before any artifact upload, `scripts/validate-release.ts` MUST validate these records and reject
+stale evidence. The tag MUST equal the tested candidate commit or differ only in explicitly
+listed validation-evidence Markdown files under `docs/validation/`; verify the full candidate-to-tag
+diff and reject any other changed path, including code, versions, lockfile, tools or workflows.
+Any such change requires renewed applicable verification and a new candidate record. An evidence
+documentation commit MUST NOT change release metadata. This permits recording results without
+claiming a commit can contain its own hash or allowing metadata-only changes to bypass acceptance.
+
+Automated quality gates still run on the exact tagged commit. The release manifest MUST identify
+the tested candidate, accepted evidence paths/hashes and permitted documentation-only diff, and
+bind them to the tagged commit and canonical VSIX SHA-256. Candidate manual evidence is not a
+claim of byte-identical final-package testing; the canonical package still needs its installed
+offline smoke check. This gate is automatic and introduces no post-tag human approval.
+
 ## Package once and distribute
 
 The release pipeline runs the quality sequence against the tag even if main CI already passed.
@@ -167,7 +191,8 @@ MUST match its embedded publisher namespace. Mismatch fails before publication, 
 rewriting/repacking the VSIX. Choose matching owned identities before tagging; these variables
 are validation/configuration inputs, not post-tag overrides of package metadata. All necessary
 accounts, publisher memberships, namespace ownership, agreements and role assignments MUST
-be configured before the first release.
+be configured before the first release to each applicable destination. Unconfigured Open VSX
+requires no account or authentication evidence and is recorded as not-configured.
 
 ### Entra federation procedure and confirmation boundary
 
@@ -242,8 +267,9 @@ failed Actions job; successful normal releases never need post-tag intervention.
 V9 and V10 are approved design choices. Their technical evidence obligations remain mandatory:
 
 - **Authentication prerequisite**: confirm the project-specific Entra/GitHub/pinned-vsce path
-  above; configure accounts/roles before first release. Validate Open VSX PAT bootstrap and
-  trusted-publisher registration before using each authentication mode.
+  above; configure required accounts/roles before first release. Only when Open VSX is configured,
+  validate the PAT bootstrap or trusted-publisher mode being used before using that mode;
+  unconfigured Open VSX does not block release, while invalid configured authentication does.
 - **Remote association prerequisite**: confirm a supported remote-byte comparison or reliable
   prior-success evidence bound to the canonical VSIX for each existing-version recovery path.
   Marketplace downloaded-byte identity is not confirmed. Version existence or signature validity

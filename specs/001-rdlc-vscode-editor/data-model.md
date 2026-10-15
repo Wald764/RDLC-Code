@@ -59,7 +59,7 @@ Their workflow and recovery semantics are defined in [CI/CD](contracts/ci-cd.md)
 | Record | Fields | Invariants |
 |---|---|---|
 | ReleaseIdentity | canonical tag, peeled commit SHA, SemVer, publisher/extension name, configured Marketplace publisher and optional Open VSX namespace | Tag immutable; root and extension versions equal tag without `v`; commit on protected main history; configured destination identities match the publisher embedded in the single canonical VSIX |
-| ReleaseManifest | identity, exact Node/pnpm/tool versions, lockfile SHA-256, VSIX filename/SHA-256, original workflow run ID, gate job evidence | Created only from verified tagged source; no secrets; VSIX metadata matches identity; immutable after attachment |
+| ReleaseManifest | identity, exact Node/pnpm/tool versions, lockfile SHA-256, VSIX filename/SHA-256, original workflow run ID, gate job evidence, tested candidate commit, accepted evidence paths/SHA-256 values, permitted validation-documentation-only diff | Created only from verified tagged source; no secrets; VSIX metadata matches identity; required evidence passes the release-evidence gate and is bound to tagged commit/canonical digest; immutable after attachment |
 | ArtifactReference | original run ID, immutable artifact ID, archive digest, enclosed VSIX digest | Archive hash is not the VSIX hash; explicit VSIX mismatch fails; no overwrite or latest-name lookup |
 | DestinationResult | identity/digest, destination, status, job/attempt, remote version, verified receipt/evidence or sanitized error | Status is pending, succeeded, failed, conflict or not-configured; success requires acknowledged publication bound to this VSIX or verified prior evidence |
 

@@ -18,7 +18,7 @@ References below are repository-root-relative and refer to the vendored MS-RDL v
 | Namespace extensions | Preserve all; unknown required semantics disables authoring | §1.7 `vendor/01-introduction/1.7-vendor-extensible-fields.md`; §2.3.1 `vendor/02-structures/2.3.1-report.mustunderstand.md`; prefix/default/rebinding/unknown-attribute fixtures |
 | Textboxes | One paragraph/run, supported geometry/text/style | §2.16 `vendor/02-structures/2.16-textbox.md`; §2.16.1 item naming; §2.2.7 size units; literal, expression, Unicode and rich-text-preservation fixtures |
 | Tables | Body-level tablix, static columns, unmerged cells, supported row groups | §2.23/§2.27/§2.29/§2.31 corresponding structural files; two-column/multirow/nested-group fixtures; synchronize body and hierarchy leaves |
-| Groups and totals | Named row groups, static footer totals, explicit scope | §2.81 `vendor/02-structures/2.81-group.md`; §2.34.5 `2.34.5-tablixmember.group.md`; §2.34.8 `2.34.8-tablixmember.keepwithgroup.md`; §2.341.7 `2.341.7-aggregate-functions.md`; dataset-wide report total versus group subtotal evidence |
+| Groups and totals | Named row groups, static footer Sum totals, explicit dataset/group-name scope; report totals labeled dataset-wide, not tablix-filtered | §2.81 `vendor/02-structures/2.81-group.md`; §2.34.5 `2.34.5-tablixmember.group.md`; §2.34.8 `2.34.8-tablixmember.keepwithgroup.md`; §2.341.7 `2.341.7-aggregate-functions.md`; dataset-wide report total versus group subtotal evidence |
 | Local datasets | Field declarations, no query execution | §2.325 `vendor/02-structures/2.325-dataset.md`; §2.328 `2.328-field.md`; existing query preservation, new query-free dataset and all seven designer-type fixtures |
 | Other features | Preservation-only; affected unsafe actions blocked | Images, charts, rectangles, headers/footers, custom items, code, external resources, parameters, rich text, matrices, spanning cells and unknown types |
 
@@ -46,14 +46,18 @@ Missing mandatory evidence is a failed gate. Record consumer compatibility as �
 ## CI/CD enforcement
 
 The [CI/CD contract](ci-cd.md) makes these gates mandatory on every PR, every push to main and
-every release tag. All checks and available evidence MUST apply to the exact tested commit;
-release evidence is linked to the tagged commit and canonical VSIX digest. Unit, roundtrip and
+every release tag. Automated checks MUST run against the exact tested commit. Manual acceptance
+evidence MUST identify the version-prepared candidate commit; the tag may differ only by explicitly
+listed validation-evidence documentation, checked by the [release-evidence gate](ci-cd.md#mandatory-acceptance-evidence).
+The release manifest links accepted evidence to the tagged commit and canonical VSIX digest. Unit, roundtrip and
 compatibility tests cannot be skipped because only workflow/version files changed. Hosted
 checks MUST NOT replace unautomated mandatory acceptance evidence with an assumed pass.
 No VSIX, handoff artifact or release is uploaded before the required quality gates succeed.
 
 V9/V10 are user-approved design decisions, not passed technical checks. Before first publication,
-resolve project-specific Entra/GitHub/vsce authentication and publisher/namespace permissions.
+resolve project-specific Entra/GitHub/vsce authentication and required publisher permissions.
+Open VSX evidence is required only when configured and for the authentication mode being used;
+otherwise record not-configured without blocking release. Invalid configured authentication fails.
 Before an existing-version recovery write, establish reliable association to the canonical
 VSIX; unconfirmed remote integrity without prior-success evidence causes an explicit conflict.
 V1–V8 and every compatibility/preservation gate above remain unchanged.
