@@ -110,3 +110,16 @@ versions. Earlier failed attempts are not counted as passes.
   parser notices when bundled, external compatibility and all release evidence
   remain required before public distribution. No tags, credentials or publication
   were created.
+
+## Follow-up: macOS stable test launcher (2026-10-16)
+
+The first hosted run on commit `67b4ae1` passed quality checks and five desktop
+matrix entries. macOS/stable failed before test execution with
+`Contents/MacOS/Electron ENOENT`: test-electron 2.5.2 assumed the historical binary
+name, whose compatibility symlink recent VS Code builds removed.
+
+Pin test-electron 3.1.0, which resolves the executable from the macOS bundle's
+`CFBundleExecutable`, and update the frozen lockfile. Frozen installation,
+typecheck, and development/installed-VSIX checks pass locally on Windows with
+VS Code 1.110.0 and stable 1.142.0. The hosted macOS fix remains unverified until
+the new CI matrix completes; the original results above remain historical.
