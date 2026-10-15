@@ -1,0 +1,16 @@
+node_modules/
+**/dist/
+**/build/
+coverage/
+.angular/
+.vscode-test/
+vendor/
+.git/
+.specify/
+.opencode/
+specs/
+AGENTS.md
+pnpm-lock.yaml
+apps/vscode-extension/LICENSE
+apps/vscode-extension/THIRD_PARTY_NOTICES.md
+tests/fixtures/xml/

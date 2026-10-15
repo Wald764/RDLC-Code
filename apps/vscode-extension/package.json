@@ -1,0 +1,58 @@
+{
+  "name": "rdlc-code",
+  "displayName": "RDLC Code",
+  "description": "Source-preserving RDLC authoring foundations (editor features pending).",
+  "publisher": "rdlc-code",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.110.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./build/extension.cjs",
+  "activationEvents": [
+    "onCustomEditor:rdlcCode.designer"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "rdlcCode.designer",
+        "displayName": "RDLC Designer",
+        "selector": [
+          {
+            "filenamePattern": "*.rdlc"
+          }
+        ],
+        "priority": "option"
+      }
+    ],
+    "commands": [
+      {
+        "command": "rdlcCode.openDesigner",
+        "title": "RDLC Code: Open Designer"
+      },
+      {
+        "command": "rdlcCode.openSource",
+        "title": "RDLC Code: Open Source"
+      }
+    ]
+  },
+  "dependencies": {
+    "@rdlc/report-model": "workspace:*",
+    "@rdlc/xml-parser": "workspace:*",
+    "@rdlc/xml-serializer": "workspace:*",
+    "@rdlc/validation": "workspace:*",
+    "@rdlc/expressions": "workspace:*",
+    "@rdlc/renderer": "workspace:*"
+  }
+}

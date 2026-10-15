@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "lexical-extensions",
+      "path": "xml/lexical.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.3-report.md",
+        "vendor/01-introduction/1.7-vendor-extensible-fields.md"
+      ],
+      "operation": "none",
+      "editFootprint": [],
+      "expectedDiagnostics": [],
+      "preservation": "Exact UTF-16 source coverage, including BOM, CDATA, entities, comments and foreign XML",
+      "consumerEvidence": null
+    },
+    {
+      "id": "unsafe-dtd",
+      "path": "xml/unsafe-dtd.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "unsupported",
+      "capabilities": ["source"],
+      "citations": ["vendor/04-security/4-security.md"],
+      "operation": "none",
+      "editFootprint": [],
+      "expectedDiagnostics": ["XML_SOURCE_ONLY"],
+      "preservation": "Exact original source remains accessible; DTD entities are never registered or retrieved",
+      "consumerEvidence": null
+    },
+    {
+      "id": "malformed",
+      "path": "xml/malformed.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "malformed",
+      "capabilities": ["source"],
+      "citations": ["vendor/02-structures/2.3-report.md"],
+      "operation": "none",
+      "editFootprint": [],
+      "expectedDiagnostics": ["XML_MALFORMED"],
+      "preservation": "No recovered editable tree; original source retained without rewriting",
+      "consumerEvidence": null
+    },
+    {
+      "id": "unsupported-xml11",
+      "path": "xml/unsupported-xml11.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "unsupported",
+      "capabilities": ["source"],
+      "citations": ["vendor/02-structures/2.3-report.md"],
+      "operation": "none",
+      "editFootprint": [],
+      "expectedDiagnostics": ["XML_SOURCE_ONLY"],
+      "preservation": "XML 1.1 remains source-only; never silently broaden the XML 1.0 profile",
+      "consumerEvidence": null
+    }
+  ]
+}

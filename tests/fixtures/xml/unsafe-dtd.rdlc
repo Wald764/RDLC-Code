@@ -1,0 +1,2 @@
+<!DOCTYPE Report [<!ENTITY external SYSTEM "https://invalid.example/never-fetch">]>
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition">&external;</Report>

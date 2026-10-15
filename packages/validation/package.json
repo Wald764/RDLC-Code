@@ -1,0 +1,16 @@
+{
+  "name": "@rdlc/validation",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "dependencies": {
+    "@rdlc/report-model": "workspace:*",
+    "@rdlc/expressions": "workspace:*"
+  }
+}

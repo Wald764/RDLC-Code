@@ -1,0 +1,9 @@
+{
+  "name": "rdlc-test-harness",
+  "publisher": "rdlc-tests",
+  "version": "0.0.0",
+  "private": true,
+  "engines": {
+    "vscode": "^1.110.0"
+  }
+}

@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+apps/vscode-extension/LICENSE
+apps/vscode-extension/THIRD_PARTY_NOTICES.md
+coverage/
+.angular/
+.vscode-test/
+*.vsix
+*.log
+.env*
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+.idea/
+.vscode/

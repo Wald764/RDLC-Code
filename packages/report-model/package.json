@@ -1,0 +1,12 @@
+{
+  "name": "@rdlc/report-model",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./dist/*.js"
+    }
+  }
+}

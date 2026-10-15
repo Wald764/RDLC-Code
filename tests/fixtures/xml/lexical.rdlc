@@ -1,0 +1,7 @@
+﻿<?xml version="1.0"?>
+<!-- Synthetic lexical preservation fixture; MIT; MS-RDL §1.7, §2.3, §2.6 -->
+<?designer preserve?>
+<r:Report xmlns:r="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition" xmlns:x="urn:extension" x:note='a &amp; b'>
+  <r:ReportSections><r:ReportSection><r:Body><r:Height>2in</r:Height></r:Body><r:Width>6in</r:Width><r:Page><r:PageHeight>11in</r:PageHeight><r:PageWidth>8.5in</r:PageWidth></r:Page></r:ReportSection></r:ReportSections>
+  <x:Opaque xmlns:x="urn:rebound"><![CDATA[<😀>&raw]]>&#x1F600;</x:Opaque>
+</r:Report>

@@ -1,0 +1,41 @@
+{
+  "name": "rdlc-code",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.28.2",
+  "engines": {
+    "node": ">=24.15.0 <25"
+  },
+  "scripts": {
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit && pnpm --filter @rdlc/designer typecheck",
+    "test:unit": "node scripts/compile.ts && node --test packages/*/dist/*.test.js dist/apps/vscode-extension/src/*.test.js dist/scripts/*.test.js && pnpm --filter @rdlc/designer test",
+    "test:roundtrip": "node scripts/compile.ts && node --test dist/tests/roundtrip/*.test.js",
+    "test:compatibility": "node scripts/compile.ts && node --test dist/tests/compatibility/*.test.js",
+    "build": "node scripts/compile.ts && node dist/scripts/build.js",
+    "package": "node dist/scripts/package.js",
+    "test:vscode": "node dist/tests/vscode/run-tests.js",
+    "test:package": "node --test dist/tests/package/*.test.js && node dist/tests/vscode/run-tests.js --packaged"
+  },
+  "devDependencies": {
+    "@rdlc/report-model": "workspace:*",
+    "@rdlc/xml-parser": "workspace:*",
+    "@rdlc/xml-serializer": "workspace:*",
+    "@rdlc/expressions": "workspace:*",
+    "@rdlc/validation": "workspace:*",
+    "@rdlc/renderer": "workspace:*",
+    "@eslint/js": "9.39.1",
+    "@types/node": "24.10.1",
+    "@types/vscode": "1.110.0",
+    "@vscode/test-electron": "2.5.2",
+    "@vscode/vsce": "3.7.1",
+    "esbuild": "0.27.0",
+    "eslint": "9.39.1",
+    "jiti": "2.6.1",
+    "prettier": "3.6.2",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.2"
+  }
+}

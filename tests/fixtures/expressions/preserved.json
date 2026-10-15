@@ -1,0 +1,9 @@
+{
+  "provenance": "Synthetic MIT fixture; MS-RDL expression-bearing preserved/query properties",
+  "citations": ["vendor/02-structures/2.341.7-aggregate-functions.md"],
+  "properties": [
+    { "name": "Hidden", "value": "=Fields!Flag.Value" },
+    { "name": "CommandText", "value": "=Fields!Sql.Value" },
+    { "name": "OpaqueExtension", "value": "custom" }
+  ]
+}
