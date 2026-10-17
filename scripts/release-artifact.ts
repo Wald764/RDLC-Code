@@ -11,6 +11,12 @@ export interface ReleaseIdentity {
   publisher: string;
   name: string;
 }
+export function artifactVersion(tag: string, name: string): string {
+  // Only the inert probe may use the reserved test tag suffix; registry versions stay numeric.
+  const stableTag =
+    name === 'rdlc-code-auth-test' ? tag.replace(/-publishing-test$/, '') : tag;
+  return stableVersion(stableTag, stableTag.slice(1), stableTag.slice(1));
+}
 export interface ReleaseManifest {
   identity: ReleaseIdentity;
   candidate: string;
@@ -41,9 +47,8 @@ export function createManifest(input: {
   filename: string;
   bytes: Buffer;
 }): ReleaseManifest {
-  stableVersion(
-    input.identity.tag,
-    input.identity.version,
+  assert.equal(
+    artifactVersion(input.identity.tag, input.identity.name),
     input.identity.version,
   );
   assert.match(input.identity.commit, /^[a-f0-9]{40}$/);
@@ -73,7 +78,10 @@ export function createManifest(input: {
     ),
     'Invalid manifest tool version',
   );
-  assert.equal(input.filename, `rdlc-code-${input.identity.version}.vsix`);
+  assert.equal(
+    input.filename,
+    `${input.identity.name}-${input.identity.version}.vsix`,
+  );
   assert.ok(
     Object.keys(input.evidence).length > 0,
     'Accepted evidence is required',
@@ -199,9 +207,9 @@ export function verifyArtifact(
     'An immutable artifact ID is required',
   );
   assert.equal(reference.runId, manifest.runId, 'Wrong original workflow run');
-  stableVersion(identity.tag, identity.version, identity.version);
+  assert.equal(artifactVersion(identity.tag, identity.name), identity.version);
   assert.deepEqual(manifest.identity, identity, 'Artifact identity differs');
-  assert.equal(manifest.filename, `rdlc-code-${identity.version}.vsix`);
+  assert.equal(manifest.filename, `${identity.name}-${identity.version}.vsix`);
   assert.match(manifest.vsixSha256, /^[a-f0-9]{64}$/);
   assert.equal(
     sha256(bytes),

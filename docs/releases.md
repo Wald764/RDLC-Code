@@ -13,6 +13,22 @@ job, no `v*` tag has been pushed, and the publication path therefore remains
 marketplace version or release is created by these tools.
 See the [CI/CD contract](../specs/001-rdlc-vscode-editor/contracts/ci-cd.md).
 
+## Controlled three-destination test
+
+The reserved tag `v0.0.2-publishing-test` triggers `publishing-auth-test.yml` and is
+explicitly excluded from the stable release trigger. It packages only the inert
+`Wald764.rdlc-code-auth-test` fixture at registry version `0.0.2`. Marketplace
+versions stay numeric; the test suffix belongs to the Git tag, not the VSIX version.
+Both the test and the stable release call the same `publish.yml` jobs, with the
+same artifact binding, credential preflights, remote asset checks and retry logic.
+The test identity creates a GitHub prerelease and never moves the latest marker.
+Publisher environments remain restricted to `v*` tags.
+
+The probe's manifest gates describe its own packaging/guard tests, not application
+acceptance. It does not validate the editor's production build or replace the
+mandatory stable-release evidence. Its distinct extension ID and reserved test tag
+are checked before packaging and handoff. Existing `0.0.1` probe versions are retained.
+
 ## GitHub setup before the first release
 
 1. Protect `main` with reviews and required **Required checks** CI; forbid bypasses
@@ -64,7 +80,7 @@ See the [CI/CD contract](../specs/001-rdlc-vscode-editor/contracts/ci-cd.md).
 login. Do not print its input environment. Authentication proof must identify
 the tools, controlled publisher, run and canonical VSIX digest without tokens.
 
-Job layout: `validation` (accepted evidence) → `quality` (reused CI matrix) →
+Stable job layout: `validation` (accepted evidence) → `quality` (reused CI matrix) →
 `canonical` (build, package, manifest, immutable artifact) → `preflight` (artifact
 binding, destination inventory, federated publisher check in the `marketplace`
 environment) → `openvsx-preflight` (namespace credential or trusted-publisher check
@@ -74,7 +90,8 @@ environment) → `summary` (always runs). Publication cannot start without the
 accepted `github-auth`, `marketplace-auth`, `recovery` and `github-actions`
 records, because the evidence validator runs before the build. Open VSX credentials
 are confined to its authentication preflight and publisher jobs in that environment.
-The publisher/tag/namespace configuration is shared at workflow level; the GitHub
+Publication jobs live in the reusable `.github/workflows/publish.yml`. The
+publisher/tag/namespace configuration is shared at workflow level; the GitHub
 writer explicitly sets `GH_REPO` and a job-local `GITHUB_TOKEN` for both `gh` and
 the REST verifier, so no checkout is needed to select the repository or read drafts.
 

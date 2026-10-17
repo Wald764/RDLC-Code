@@ -4,7 +4,11 @@ import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { verifyArtifact, type ReleaseManifest } from './release-artifact.js';
+import {
+  artifactVersion,
+  verifyArtifact,
+  type ReleaseManifest,
+} from './release-artifact.js';
 import { recoveryPlan, type DestinationInventory } from './verify-release.js';
 
 const MARKETPLACE = 'https://marketplace.visualstudio.com';
@@ -160,7 +164,7 @@ export function verifyHandoff(directory: string): ReleaseManifest {
   const identity = {
     tag,
     commit,
-    version: tag.startsWith('v') ? tag.slice(1) : '',
+    version: artifactVersion(tag, manifest.identity.name),
     publisher: process.env.MARKETPLACE_PUBLISHER ?? '',
     name: manifest.identity.name,
   };
@@ -478,7 +482,12 @@ if (
     const state = Object.fromEntries(
       statuses.map((entry) => [entry.destination, entry.status]),
     );
-    emit({ vsix: manifest.vsixSha256, filename: manifest.filename, ...state });
+    emit({
+      vsix: manifest.vsixSha256,
+      filename: manifest.filename,
+      prerelease: String(manifest.identity.name === 'rdlc-code-auth-test'),
+      ...state,
+    });
     summarize(
       [
         `### ${manifest.identity.tag} handoff`,
@@ -547,7 +556,7 @@ if (
     console.log(
       previousStableTag(
         (await releases.json()) as GithubRelease[],
-        option('--tag'),
+        option('--tag').replace(/-publishing-test$/, ''),
       ) ?? '',
     );
   } else {

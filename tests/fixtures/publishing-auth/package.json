@@ -3,7 +3,7 @@
   "displayName": "RDLC Code Authentication Test",
   "description": "Inert theme used only to verify RDLC Code registry authentication and prebuilt VSIX handoff.",
   "publisher": "Wald764",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "license": "MIT",
   "engines": {
     "vscode": "^1.142.0"

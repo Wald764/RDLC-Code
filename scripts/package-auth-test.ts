@@ -14,9 +14,10 @@ import {
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createVSIX } from '@vscode/vsce';
+import { createManifest } from './release-artifact.js';
 
 const fixture = 'tests/fixtures/publishing-auth';
-export const authFilename = 'rdlc-code-auth-test-0.0.1.vsix';
+export const authFilename = 'rdlc-code-auth-test-0.0.2.vsix';
 // Reuse the ZIP reader from the pinned packaging tool, as in production verification.
 const { readZip } = createRequire(import.meta.url)(
   '@vscode/vsce/out/zip.js',
@@ -32,7 +33,7 @@ function authMetadata() {
   const metadata = JSON.parse(readFileSync(`${fixture}/package.json`, 'utf8'));
   assert.equal(metadata.publisher, 'Wald764');
   assert.equal(metadata.name, 'rdlc-code-auth-test');
-  assert.equal(metadata.version, '0.0.1');
+  assert.equal(metadata.version, '0.0.2');
   assert.equal(
     metadata.scripts,
     undefined,
@@ -131,7 +132,7 @@ export async function packageAuthTest(
   }
   const record = {
     identity: 'Wald764.rdlc-code-auth-test',
-    version: '0.0.1',
+    version: '0.0.2',
     ...context,
     filename: authFilename,
     sha256: createHash('sha256').update(readFileSync(path)).digest('hex'),
@@ -163,14 +164,55 @@ if (
     'pat',
     'This probe validates the Open VSX bootstrap PAT mode',
   );
+  assert.equal(
+    process.env.GITHUB_REF,
+    'refs/tags/v0.0.2-publishing-test',
+    'Only the reserved probe tag may publish this fixture',
+  );
   const record = await packageAuthTest(resolve('dist/publishing-auth'), {
     commit: process.env.GITHUB_SHA ?? '',
     runId: process.env.GITHUB_RUN_ID ?? '',
   });
+  const root = JSON.parse(readFileSync('package.json', 'utf8'));
+  const manifest = createManifest({
+    identity: {
+      tag: 'v0.0.2-publishing-test',
+      commit: record.commit,
+      version: record.version,
+      publisher: 'Wald764',
+      name: 'rdlc-code-auth-test',
+    },
+    candidate: record.commit,
+    runId: record.runId,
+    tools: {
+      node: record.tools.node,
+      pnpm: root.packageManager.replace(/^pnpm@/, ''),
+      typescript: root.devDependencies.typescript,
+      angular: JSON.parse(readFileSync('apps/designer/package.json', 'utf8'))
+        .dependencies['@angular/core'],
+      vsce: record.tools.vsce,
+    },
+    // These are probe packaging/guard tests, not the production acceptance gates.
+    gates: { validation: 'success', quality: 'success' },
+    openvsx: 'pat',
+    lockfile: readFileSync('pnpm-lock.yaml'),
+    evidence: {
+      'docs/validation/publishing-auth.md': readFileSync(
+        'docs/validation/publishing-auth.md',
+      ),
+    },
+    permittedEvidenceChanges: [],
+    filename: record.filename,
+    bytes: readFileSync(resolve('dist/publishing-auth', record.filename)),
+  });
+  writeFileSync(
+    'dist/publishing-auth/release-manifest.json',
+    JSON.stringify(manifest, null, 2) + '\n',
+  );
   if (process.env.GITHUB_OUTPUT)
     appendFileSync(
       process.env.GITHUB_OUTPUT,
-      `sha256=${record.sha256}\nnode=${record.tools.node}\n`,
+      `sha256=${record.sha256}\nnode=${record.tools.node}\nvsce=${record.tools.vsce}\n`,
     );
   console.log(JSON.stringify(record));
 }

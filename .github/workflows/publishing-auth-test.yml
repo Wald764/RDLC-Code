@@ -1,33 +1,36 @@
 name: Publishing authentication test
 
-# Controlled T071 proof only; normal releases remain tag-triggered and separately gated.
 on:
-  workflow_dispatch:
+  push:
+    tags: ['v*-publishing-test']
 
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
-  group: publishing-auth-test
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   package:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/tags/v0.0.2-publishing-test'
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
     env:
       MARKETPLACE_PUBLISHER: ${{ vars.MARKETPLACE_PUBLISHER }}
       OPENVSX_NAMESPACE: ${{ vars.OPENVSX_NAMESPACE }}
       OPENVSX_AUTH_MODE: ${{ vars.OPENVSX_AUTH_MODE }}
     outputs:
       artifact-id: ${{ steps.artifact.outputs.artifact-id }}
-      sha256: ${{ steps.package.outputs.sha256 }}
+      archive-digest: ${{ steps.artifact.outputs.artifact-digest }}
       node: ${{ steps.package.outputs.node }}
+      vsce: ${{ steps.package.outputs.vsce }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+      - name: Require the test tag to point into main history
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - uses: pnpm/action-setup@9fd676a19091d4595eefd76e4bd31c97133911f1 # v4.2.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -39,93 +42,35 @@ jobs:
             package.json
       - run: pnpm install --frozen-lockfile
       - run: node scripts/compile.ts
-      - run: node --test dist/scripts/package-auth-test.test.js
+      - name: Test artifact guards and publisher retry logic
+        run: node --test dist/scripts/package-auth-test.test.js dist/scripts/publish-release.test.js dist/tests/release/*.test.js
       - name: Package and verify the approved inert probe once
         id: package
         run: node dist/scripts/package-auth-test.js
+      - name: Include the same verifiers as the production handoff
+        run: |
+          mkdir -p dist/publishing-auth/scripts
+          cp dist/scripts/release-artifact.js dist/scripts/validate-release.js \
+             dist/scripts/verify-release.js dist/scripts/publish-release.js \
+             dist/publishing-auth/scripts/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         id: artifact
         with:
-          name: publishing-auth-test-${{ github.run_id }}
-          path: |
-            dist/publishing-auth/rdlc-code-auth-test-0.0.1.vsix
-            dist/publishing-auth/auth-test.json
+          name: canonical-${{ github.ref_name }}-${{ github.run_id }}
+          path: dist/publishing-auth/*
           if-no-files-found: error
           retention-days: 90
           overwrite: false
 
-  openvsx-preflight:
+  publish:
     needs: package
-    runs-on: ubuntu-24.04
-    environment: openvsx
-    steps:
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: ${{ needs.package.outputs.node }}
-      - name: Install the pinned registry CLI without lifecycle scripts
-        run: npm install --prefix "$RUNNER_TEMP/publishing-tools" --ignore-scripts --no-audit --no-fund --no-package-lock ovsx@1.3.0
-      - name: Check the Open VSX token and namespace before any publication
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
-        run: '"$RUNNER_TEMP/publishing-tools/node_modules/.bin/ovsx" verify-pat Wald764'
-
-  marketplace:
-    needs: [package, openvsx-preflight]
-    runs-on: ubuntu-24.04
-    environment: marketplace
+    uses: ./.github/workflows/publish.yml
     permissions:
+      contents: write
+      actions: read
       id-token: write
-    env:
-      EXPECTED_SHA256: ${{ needs.package.outputs.sha256 }}
-      AZURE_CORE_OUTPUT: none
-    steps:
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: ${{ needs.package.outputs.node }}
-      - name: Install the pinned registry CLI without lifecycle scripts
-        run: npm install --prefix "$RUNNER_TEMP/publishing-tools" --ignore-scripts --no-audit --no-fund --no-package-lock @vscode/vsce@3.7.1
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          artifact-ids: ${{ needs.package.outputs.artifact-id }}
-          path: canonical
-          merge-multiple: true
-      - name: Fail on any change to the canonical VSIX
-        run: printf '%s  %s\n' "$EXPECTED_SHA256" 'canonical/rdlc-code-auth-test-0.0.1.vsix' | sha256sum --check --strict
-      - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-          audience: api://AzureADTokenExchange
-      - name: Verify the federated identity's Marketplace publisher rights
-        run: '"$RUNNER_TEMP/publishing-tools/node_modules/.bin/vsce" verify-pat Wald764 --azure-credential'
-      - name: Publish the approved prebuilt probe to Marketplace
-        run: '"$RUNNER_TEMP/publishing-tools/node_modules/.bin/vsce" publish --azure-credential --skip-duplicate --packagePath canonical/rdlc-code-auth-test-0.0.1.vsix'
-      - name: Record the acknowledged upload and canonical digest
-        run: printf 'Marketplace CLI acknowledged Wald764.rdlc-code-auth-test 0.0.1. Canonical SHA-256 %s\n' "$EXPECTED_SHA256" >> "$GITHUB_STEP_SUMMARY"
-
-  openvsx:
-    needs: [package, marketplace]
-    runs-on: ubuntu-24.04
-    environment: openvsx
-    env:
-      EXPECTED_SHA256: ${{ needs.package.outputs.sha256 }}
-    steps:
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: ${{ needs.package.outputs.node }}
-      - name: Install the pinned registry CLI without lifecycle scripts
-        run: npm install --prefix "$RUNNER_TEMP/publishing-tools" --ignore-scripts --no-audit --no-fund --no-package-lock ovsx@1.3.0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          artifact-ids: ${{ needs.package.outputs.artifact-id }}
-          path: canonical
-          merge-multiple: true
-      - name: Fail on any change to the canonical VSIX
-        run: printf '%s  %s\n' "$EXPECTED_SHA256" 'canonical/rdlc-code-auth-test-0.0.1.vsix' | sha256sum --check --strict
-      - name: Publish the same approved prebuilt probe to Open VSX
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
-        run: '"$RUNNER_TEMP/publishing-tools/node_modules/.bin/ovsx" publish --skip-duplicate canonical/rdlc-code-auth-test-0.0.1.vsix'
-      - name: Record the acknowledged upload and canonical digest
-        run: printf 'Open VSX CLI acknowledged Wald764.rdlc-code-auth-test 0.0.1. Canonical SHA-256 %s\n' "$EXPECTED_SHA256" >> "$GITHUB_STEP_SUMMARY"
+    with:
+      artifact-id: ${{ needs.package.outputs.artifact-id }}
+      archive-digest: ${{ needs.package.outputs.archive-digest }}
+      node: ${{ needs.package.outputs.node }}
+      vsce: ${{ needs.package.outputs.vsce }}

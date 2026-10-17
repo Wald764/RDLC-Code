@@ -1,0 +1,296 @@
+name: Publish canonical artifact
+
+on:
+  workflow_call:
+    inputs:
+      artifact-id:
+        type: string
+        required: true
+      archive-digest:
+        type: string
+        required: true
+      node:
+        type: string
+        required: true
+      vsce:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_TAG: ${{ github.ref_name }}
+  MARKETPLACE_PUBLISHER: ${{ vars.MARKETPLACE_PUBLISHER }}
+  OPENVSX_NAMESPACE: ${{ vars.OPENVSX_NAMESPACE }}
+  OPENVSX_AUTH_MODE: ${{ vars.OPENVSX_AUTH_MODE }}
+
+jobs:
+  preflight:
+    name: Publication preflight
+    runs-on: ubuntu-24.04
+    environment: marketplace
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      ARTIFACT_ID: ${{ inputs.artifact-id }}
+      ARCHIVE_DIGEST: ${{ inputs.archive-digest }}
+      GITHUB_TOKEN: ${{ github.token }}
+      AZURE_CORE_OUTPUT: none
+    outputs:
+      github: ${{ steps.plan.outputs.github }}
+      marketplace: ${{ steps.plan.outputs.marketplace }}
+      openvsx: ${{ steps.plan.outputs.openvsx }}
+      filename: ${{ steps.plan.outputs.filename }}
+      vsix: ${{ steps.plan.outputs.vsix }}
+      # Republished so downstream jobs keep the artifact identity without
+      # declaring a direct dependency on the build job.
+      artifact-id: ${{ inputs.artifact-id }}
+      archive-digest: ${{ inputs.archive-digest }}
+      node: ${{ inputs.node }}
+      vsce: ${{ inputs.vsce }}
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ inputs.node }}
+      - name: Install the pinned publishing CLI without lifecycle scripts
+        run: npm install --prefix "$RUNNER_TEMP/publishing-tools" --ignore-scripts --no-audit --no-fund --no-package-lock "@vscode/vsce@${{ inputs.vsce }}"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ inputs.artifact-id }}
+          path: canonical
+          merge-multiple: true
+      - name: Bind the handoff to this tag and inventory every destination
+        id: plan
+        run: node canonical/scripts/publish-release.js plan --dir canonical
+      - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          allow-no-subscriptions: ${{ vars.AZURE_ALLOW_NO_SUBSCRIPTIONS == 'true' }}
+          audience: api://AzureADTokenExchange
+      - name: Verify the federated identity's publisher rights before any write
+        run: '"$RUNNER_TEMP/publishing-tools/node_modules/.bin/vsce" verify-pat "$MARKETPLACE_PUBLISHER" --azure-credential'
+
+  openvsx-preflight:
+    name: Open VSX authentication preflight
+    needs: preflight
+    runs-on: ubuntu-24.04
+    environment: openvsx
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARTIFACT_ID: ${{ inputs.artifact-id }}
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ inputs.node }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ inputs.artifact-id }}
+          path: canonical
+          merge-multiple: true
+      - name: Install the pinned Open VSX client without lifecycle scripts
+        run: npm install --prefix "$RUNNER_TEMP/publishing-tools" --ignore-scripts --no-audit --no-fund --no-package-lock ovsx@1.3.0
+      - name: Verify configured PAT or trusted publisher before any publication
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: node canonical/scripts/publish-release.js openvsx-auth --dir canonical --tools "$RUNNER_TEMP/publishing-tools"
+
+  github:
+    name: GitHub release
+    needs: [preflight, openvsx-preflight]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ARTIFACT_ID: ${{ inputs.artifact-id }}
+      ARCHIVE_DIGEST: ${{ inputs.archive-digest }}
+      VSIX: ${{ needs.preflight.outputs.filename }}
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ inputs.node }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ inputs.artifact-id }}
+          path: canonical
+          merge-multiple: true
+      - name: Re-inventory before writing, including on failed-job reruns
+        id: state
+        run: node canonical/scripts/publish-release.js plan --dir canonical
+      - name: Generate notes from the previous stable release
+        if: steps.state.outputs.github == 'pending'
+        run: |
+          previous="$(node canonical/scripts/publish-release.js previous --tag "$RELEASE_TAG")"
+          echo "Previous stable bound: ${previous:-none (first stable release)}" >> "$GITHUB_STEP_SUMMARY"
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$RELEASE_TAG" ${previous:+-f previous_tag_name="$previous"} \
+            --jq .body > "$RUNNER_TEMP/notes.md"
+      - name: Create the draft release for the exact tag
+        if: steps.state.outputs.github == 'pending'
+        run: |
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 ||
+            gh release create "$RELEASE_TAG" --draft --verify-tag \
+              --prerelease="${{ steps.state.outputs.prerelease }}" \
+              --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/notes.md"
+      - name: Attach the canonical VSIX and manifest to the draft
+        if: steps.state.outputs.github == 'pending'
+        # Upload errors are tolerated only because the next step proves the draft
+        # carries our exact bytes. Existing assets are never replaced.
+        run: |
+          for asset in "canonical/$VSIX" canonical/release-manifest.json; do
+            gh release upload "$RELEASE_TAG" "$asset" 2>&1 |
+              tee -a "$GITHUB_STEP_SUMMARY" || true
+          done
+      - name: Prove the draft carries the canonical bytes
+        if: steps.state.outputs.github == 'pending'
+        run: node canonical/scripts/publish-release.js recheck --destination github
+      - name: Publish the release without moving the latest marker
+        if: steps.state.outputs.github == 'pending'
+        run: gh release edit "$RELEASE_TAG" --draft=false --latest=false --prerelease="${{ steps.state.outputs.prerelease }}"
+      - name: Confirm the published release carries the canonical bytes
+        run: node canonical/scripts/publish-release.js recheck --destination github --published
+    outputs:
+      state: ${{ steps.state.outputs.github }}
+
+  marketplace:
+    name: Visual Studio Marketplace
+    needs: [preflight, github]
+    runs-on: ubuntu-24.04
+    environment: marketplace
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      ARTIFACT_ID: ${{ needs.preflight.outputs.artifact-id }}
+      ARCHIVE_DIGEST: ${{ needs.preflight.outputs.archive-digest }}
+      VSIX: ${{ needs.preflight.outputs.filename }}
+      GITHUB_TOKEN: ${{ github.token }}
+      AZURE_CORE_OUTPUT: none
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ needs.preflight.outputs.node }}
+      - name: Install the pinned publishing CLI without lifecycle scripts
+        run: npm install --prefix "$RUNNER_TEMP/publishing-tools" --ignore-scripts --no-audit --no-fund --no-package-lock "@vscode/vsce@${{ needs.preflight.outputs.vsce }}"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.preflight.outputs.artifact-id }}
+          path: canonical
+          merge-multiple: true
+      - name: Re-inventory before writing, including on failed-job reruns
+        id: state
+        run: node canonical/scripts/publish-release.js plan --dir canonical
+      - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        if: steps.state.outputs.marketplace == 'pending'
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          allow-no-subscriptions: ${{ vars.AZURE_ALLOW_NO_SUBSCRIPTIONS == 'true' }}
+          audience: api://AzureADTokenExchange
+      - name: Publish the verified prebuilt VSIX
+        if: steps.state.outputs.marketplace == 'pending'
+        # No --skip-duplicate: an existing version is resolved by byte comparison
+        # below, never by silently ignoring the registry response.
+        run: '"$RUNNER_TEMP/publishing-tools/node_modules/.bin/vsce" publish --azure-credential --packagePath "canonical/$VSIX"'
+      - name: Require the published bytes to match the canonical VSIX
+        run: node canonical/scripts/publish-release.js recheck --destination marketplace
+    outputs:
+      state: ${{ steps.state.outputs.marketplace }}
+
+  openvsx:
+    name: Open VSX
+    needs: [preflight, marketplace]
+    runs-on: ubuntu-24.04
+    environment: openvsx
+    # Open VSX requests an ID token only when trusted publishing is configured.
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      ARTIFACT_ID: ${{ needs.preflight.outputs.artifact-id }}
+      ARCHIVE_DIGEST: ${{ needs.preflight.outputs.archive-digest }}
+      VSIX: ${{ needs.preflight.outputs.filename }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ needs.preflight.outputs.node }}
+      - name: Install the pinned Open VSX CLI without lifecycle scripts
+        # ovsx is not a repository dependency; this is the version proven by the
+        # controlled publishing-authentication probe.
+        run: npm install --prefix "$RUNNER_TEMP/publishing-tools" --ignore-scripts --no-audit --no-fund --no-package-lock ovsx@1.3.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.preflight.outputs.artifact-id }}
+          path: canonical
+          merge-multiple: true
+      - name: Re-inventory before writing, including on failed-job reruns
+        id: state
+        run: node canonical/scripts/publish-release.js plan --dir canonical
+      - name: Verify the configured namespace access before publishing
+        if: steps.state.outputs.openvsx == 'pending' && vars.OPENVSX_AUTH_MODE != 'oidc'
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: '"$RUNNER_TEMP/publishing-tools/node_modules/.bin/ovsx" verify-pat "$OPENVSX_NAMESPACE"'
+      - name: Publish the verified prebuilt VSIX with the bootstrap PAT
+        if: steps.state.outputs.openvsx == 'pending' && vars.OPENVSX_AUTH_MODE != 'oidc'
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: '"$RUNNER_TEMP/publishing-tools/node_modules/.bin/ovsx" publish "canonical/$VSIX"'
+      - name: Publish the verified prebuilt VSIX with trusted publishing
+        # No PAT in this step: a present OVSX_PAT takes precedence over the
+        # short-lived token the registry issues for this workflow's ID token.
+        if: steps.state.outputs.openvsx == 'pending' && vars.OPENVSX_AUTH_MODE == 'oidc'
+        run: '"$RUNNER_TEMP/publishing-tools/node_modules/.bin/ovsx" publish --trusted-publishing "canonical/$VSIX"'
+      - name: Require the published bytes to match the canonical VSIX
+        if: steps.state.outputs.openvsx != 'not-configured'
+        run: node canonical/scripts/publish-release.js recheck --destination openvsx
+    outputs:
+      state: ${{ steps.state.outputs.openvsx }}
+
+  summary:
+    name: Publication state
+    if: always()
+    needs: [preflight, openvsx-preflight, github, marketplace, openvsx]
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Summarize every stage and destination
+        env:
+          PREFLIGHT: ${{ needs.preflight.result }}
+          OPENVSX_PREFLIGHT: ${{ needs.openvsx-preflight.result }}
+          GITHUB: ${{ needs.github.result }}
+          MARKETPLACE: ${{ needs.marketplace.result }}
+          OPENVSX: ${{ needs.openvsx.result }}
+          PLANNED_GITHUB: ${{ needs.preflight.outputs.github }}
+          PLANNED_MARKETPLACE: ${{ needs.preflight.outputs.marketplace }}
+          PLANNED_OPENVSX: ${{ needs.preflight.outputs.openvsx }}
+          CURRENT_GITHUB: ${{ needs.github.outputs.state }}
+          CURRENT_MARKETPLACE: ${{ needs.marketplace.outputs.state }}
+          CURRENT_OPENVSX: ${{ needs.openvsx.outputs.state }}
+        run: |
+          {
+            echo "## ${GITHUB_REF_NAME} publication state"
+            echo
+            echo "| Stage | Result |"
+            echo "| --- | --- |"
+            echo "| authentication preflight | $PREFLIGHT |"
+            echo "| Open VSX authentication preflight | $OPENVSX_PREFLIGHT |"
+            echo "| GitHub release | $GITHUB (observed before this attempt: ${CURRENT_GITHUB:-unavailable}) |"
+            echo "| Visual Studio Marketplace | $MARKETPLACE (observed before this attempt: ${CURRENT_MARKETPLACE:-unavailable}) |"
+            echo "| Open VSX | $OPENVSX (observed before this attempt: ${CURRENT_OPENVSX:-unavailable}) |"
+            echo
+            echo "Observed before any write: github=$PLANNED_GITHUB marketplace=$PLANNED_MARKETPLACE openvsx=$PLANNED_OPENVSX"
+          } >> "$GITHUB_STEP_SUMMARY"
