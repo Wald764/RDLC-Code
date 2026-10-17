@@ -1,0 +1,112 @@
+name: Retire publishing probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retire-publishing-probe
+  cancel-in-progress: false
+
+jobs:
+  marketplace:
+    if: github.ref == 'refs/tags/vprobe-cleanup-20261018'
+    runs-on: ubuntu-24.04
+    environment: marketplace
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CORE_OUTPUT: none
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.0
+      - run: npm install --prefix "$RUNNER_TEMP/probe-tools" --ignore-scripts --no-audit --no-fund --no-package-lock @vscode/vsce@3.7.1
+      - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          allow-no-subscriptions: ${{ vars.AZURE_ALLOW_NO_SUBSCRIPTIONS == 'true' }}
+          audience: api://AzureADTokenExchange
+      - name: Hide and unpublish only the fixed probe, preserving its versions
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const {createHash} = require('node:crypto');
+          const {join} = require('node:path');
+          const root = join(process.env.RUNNER_TEMP, 'probe-tools/node_modules/@vscode/vsce');
+          const {getPAT} = require(join(root, 'out/publish.js'));
+          const {getGalleryAPI} = require(join(root, 'out/util.js'));
+          const {createRequire} = require('node:module');
+          const {PublishedExtensionFlags: Flags} = createRequire(join(root, 'package.json'))('azure-devops-node-api/interfaces/GalleryInterfaces');
+          async function checkProduction() {
+            const response = await fetch('https://marketplace.visualstudio.com/_apis/public/gallery/publishers/Wald764/vsextensions/rdlc-code/0.1.0/vspackage');
+            assert.ok(response.ok, `Production download HTTP ${response.status}`);
+            assert.equal(createHash('sha256').update(Buffer.from(await response.arrayBuffer())).digest('hex'), '13d7ed0be2110f81600615988b45e22eb596b3bdb37ff8b3b05f31503b5127f6');
+          }
+          (async () => {
+            await checkProduction();
+            const api = await getGalleryAPI(await getPAT('Wald764', {azureCredential: true}));
+            const before = await api.getExtension(null, 'Wald764', 'rdlc-code-auth-test');
+            assert.equal(before.publisher.publisherName, 'Wald764');
+            assert.equal(before.extensionName, 'rdlc-code-auth-test');
+            assert.equal(typeof before.flags, 'number');
+            const flags = before.flags | Flags.Unpublished | Flags.Hidden;
+            await api.updateExtensionProperties('Wald764', 'rdlc-code-auth-test', flags);
+            const after = await api.getExtension(null, 'Wald764', 'rdlc-code-auth-test');
+            assert.equal(after.extensionId, before.extensionId);
+            assert.ok(after.flags & Flags.Unpublished);
+            assert.ok(after.flags & Flags.Hidden);
+            await checkProduction();
+            console.log(JSON.stringify({identity: 'Wald764.rdlc-code-auth-test', unpublished: true, hidden: true, versionsPreserved: true, productionDigestUnchanged: true}));
+          })().catch(error => { console.error(`Probe retirement failed (${error.statusCode || error.code || error.name}); credential details suppressed`); process.exitCode = 1; });
+          NODE
+
+  openvsx:
+    if: github.ref == 'refs/tags/vprobe-cleanup-20261018'
+    runs-on: ubuntu-24.04
+    environment: openvsx
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.0
+      - run: npm install --prefix "$RUNNER_TEMP/probe-tools" --ignore-scripts --no-audit --no-fund --no-package-lock ovsx@1.3.0
+      - name: Withdraw only the fixed probe and verify production bytes
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const {createHash} = require('node:crypto');
+          const {join} = require('node:path');
+          const {unpublish} = require(join(process.env.RUNNER_TEMP, 'probe-tools/node_modules/ovsx/lib/unpublish.js'));
+          async function checkProduction() {
+            const metadata = await fetch('https://open-vsx.org/api/Wald764/rdlc-code/0.1.0');
+            assert.ok(metadata.ok, `Production metadata HTTP ${metadata.status}`);
+            const document = await metadata.json();
+            assert.equal(document.namespace, 'Wald764');
+            assert.equal(document.name, 'rdlc-code');
+            const response = await fetch(document.files.download);
+            assert.ok(response.ok, `Production download HTTP ${response.status}`);
+            assert.equal(createHash('sha256').update(Buffer.from(await response.arrayBuffer())).digest('hex'), '13d7ed0be2110f81600615988b45e22eb596b3bdb37ff8b3b05f31503b5127f6');
+          }
+          (async () => {
+            await checkProduction();
+            const before = await fetch('https://open-vsx.org/api/Wald764/rdlc-code-auth-test');
+            if (before.status !== 404) {
+              assert.ok(before.ok, `Probe metadata HTTP ${before.status}`);
+              const document = await before.json();
+              assert.equal(document.namespace, 'Wald764');
+              assert.equal(document.name, 'rdlc-code-auth-test');
+              await unpublish({extensionId: 'Wald764.rdlc-code-auth-test', force: true});
+            }
+            const after = await fetch('https://open-vsx.org/api/Wald764/rdlc-code-auth-test');
+            assert.equal(after.status, 404, 'Probe is still publicly available');
+            await checkProduction();
+            console.log(JSON.stringify({identity: 'Wald764.rdlc-code-auth-test', withdrawn: true, productionDigestUnchanged: true}));
+          })().catch(error => { console.error(`Probe retirement failed (${error.statusCode || error.code || error.name}); credential details suppressed`); process.exitCode = 1; });
+          NODE
