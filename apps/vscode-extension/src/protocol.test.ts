@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { validateMessage } from '@rdlc/report-model/protocol';
+import { parse } from '@rdlc/xml-parser/parser';
+import { projectReport } from '@rdlc/xml-parser/project-report';
+import { renderScene } from '@rdlc/renderer/render';
 import { DocumentBinding } from './protocol.js';
 
 const edit = {
@@ -140,5 +144,61 @@ test('host binds IDs, versions, handshake, capability and request IDs to one doc
       scene: null,
     }).ok,
     false,
+  );
+});
+
+test('full snapshots support 100 textboxes near 1 MiB without increasing client edit budgets', () => {
+  const fixture = readFileSync(
+    'tests/fixtures/textboxes/supported.rdlc',
+    'utf8',
+  );
+  const textbox = fixture
+    .match(/<Textbox\b[\s\S]*?<\/Textbox>/)![0]
+    .replace('Hello &amp; welcome', 'A'.repeat(9000));
+  const source = fixture.replace(
+    /<Textbox\b[\s\S]*?<\/Textbox>/,
+    Array.from({ length: 100 }, (_, index) =>
+      textbox.replaceAll('Title', `Title${index}`),
+    ).join('\n'),
+  );
+  assert.ok(Buffer.byteLength(source) < 1024 * 1024);
+  const projection = projectReport(
+    parse({ uri: 'test:large', version: 1, source, eol: '\n' }),
+  );
+  assert.equal(projection.status, 'editable');
+  const message = {
+    protocol: 1,
+    kind: 'snapshot',
+    version: 1,
+    projection: {
+      status: projection.status,
+      capabilities: projection.capabilities,
+      diagnostics: projection.diagnostics,
+    },
+    scene: renderScene(projection),
+  };
+  assert.ok(Buffer.byteLength(JSON.stringify(message)) > 65536);
+  assert.ok(validateMessage(message));
+  assert.equal(
+    validateMessage({
+      ...edit,
+      payload: { property: 'text', value: 'A'.repeat(65537) },
+    }),
+    null,
+  );
+  assert.equal(
+    validateMessage({
+      ...message,
+      scene: {
+        ...message.scene,
+        items: [
+          {
+            ...message.scene.items[0]!,
+            text: 'A'.repeat(8 * 1024 * 1024),
+          },
+        ],
+      },
+    }),
+    null,
   );
 });

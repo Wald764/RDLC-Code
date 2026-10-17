@@ -1,0 +1,56 @@
+<section class="editor" aria-label="Report design surface">
+  @if (scene(); as design) {
+    <p class="status" role="status">
+      Design surface — {{ status() }} · {{ design.items.length }} item(s)
+    </p>
+    @if (host.outcome(); as outcome) {
+      <p class="outcome" role="status" [attr.data-accepted]="outcome.accepted">
+        {{ outcome.accepted ? 'Saved' : 'Blocked' }}: {{ outcome.reason }}
+      </p>
+    }
+    <div
+      class="page"
+      role="group"
+      aria-label="Page"
+      [style.width.px]="design.page.width"
+      [style.height.px]="design.page.height"
+    >
+      <div
+        class="body"
+        role="group"
+        aria-label="Body"
+        [style.left.px]="design.body.left"
+        [style.top.px]="design.body.top"
+        [style.width.px]="design.body.width"
+        [style.height.px]="design.body.height"
+      >
+        @for (item of design.items; track $index) {
+          <button
+            type="button"
+            class="item"
+            [class.selected]="$index === selectedIndex()"
+            [class.placeholder]="item.placeholder"
+            [attr.data-item]="$index"
+            [attr.aria-pressed]="$index === selectedIndex()"
+            [style.left.px]="item.bounds.left"
+            [style.top.px]="item.bounds.top"
+            [style.width.px]="item.bounds.width"
+            [style.height.px]="item.bounds.height"
+            (click)="select($index)"
+          >
+            {{ item.label }}
+          </button>
+        }
+      </div>
+    </div>
+    @if (selected(); as item) {
+      <rdlc-textbox-properties [item]="item" (commit)="commit($event)" />
+    }
+    <rdlc-diagnostics
+      [diagnostics]="diagnostics()"
+      (openSource)="openSource()"
+    />
+  } @else {
+    <p role="status">Waiting for the RDLC host to provide a document…</p>
+  }
+</section>

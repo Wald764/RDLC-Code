@@ -36,6 +36,21 @@ test('dynamic, unknown and malformed syntax is incomplete; static dependencies a
   );
   assert.equal(analyze('='.padEnd(65538, 'x')).complete, false);
 });
+test('report-item references are distinct from fields and survive incomplete analysis', () => {
+  const result = analyze('=ReportItems!Title.Value + Fields!Title.Value');
+  assert.equal(result.complete, true);
+  assert.deepEqual(
+    result.references.map((reference) => [reference.kind, reference.name]),
+    [
+      ['report-item', 'Title'],
+      ['field', 'Title'],
+    ],
+  );
+  const opaque = analyze('=reportitems!Title.Value + Code.Run()');
+  assert.equal(opaque.complete, false);
+  assert.equal(opaque.references[0]?.kind, 'report-item');
+  assert.equal(analyze('="ReportItems!Title.Value"').references.length, 0);
+});
 test('known preserved/query expression properties and unknown extension semantics are conservative', () => {
   const fixture = JSON.parse(
     readFileSync('tests/fixtures/expressions/preserved.json', 'utf8'),

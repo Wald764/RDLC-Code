@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Synthetic textbox fixture with preservation-only content; MIT; MS-RDL 2.16, 2.18, 2.20 -->
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition" xmlns:x="urn:rdlc-code:extension">
+  <ReportSections>
+    <ReportSection>
+      <Body>
+        <ReportItems>
+          <Textbox Name="Title">
+            <Top>0.25in</Top>
+            <Left>0.25in</Left>
+            <Height>0.5in</Height>
+            <Width>3in</Width>
+            <Style>
+              <FontSize>14pt</FontSize>
+            </Style>
+            <Paragraphs>
+              <Paragraph>
+                <TextRuns>
+                  <TextRun>
+                    <Value>Hello</Value>
+                  </TextRun>
+                </TextRuns>
+              </Paragraph>
+            </Paragraphs>
+          </Textbox>
+          <Textbox Name="Rich">
+            <Top>1in</Top>
+            <Left>0.25in</Left>
+            <Height>0.5in</Height>
+            <Width>3in</Width>
+            <Paragraphs>
+              <Paragraph>
+                <TextRuns>
+                  <TextRun><Value>Hello</Value><Style><Color>Blue</Color></Style></TextRun>
+                  <TextRun><Value> World</Value></TextRun>
+                </TextRuns>
+              </Paragraph>
+            </Paragraphs>
+          </Textbox>
+          <Textbox Name="Dynamic">
+            <Top>1.5in</Top>
+            <Left>0.25in</Left>
+            <Height>0.5in</Height>
+            <Width>=Fields!Width.Value</Width>
+            <Paragraphs>
+              <Paragraph>
+                <TextRuns>
+                  <TextRun><Value>=Fields!Label.Value</Value></TextRun>
+                </TextRuns>
+              </Paragraph>
+            </Paragraphs>
+          </Textbox>
+          <x:Chart xmlns:x="urn:rdlc-code:extension" keep="opaque"><![CDATA[<raw>&]]></x:Chart>
+        </ReportItems>
+        <Height>2in</Height>
+      </Body>
+      <Width>6in</Width>
+      <Page>
+        <PageHeight>11in</PageHeight>
+        <PageWidth>8.5in</PageWidth>
+      </Page>
+    </ReportSection>
+  </ReportSections>
+</Report>

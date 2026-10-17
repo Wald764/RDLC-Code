@@ -1,0 +1,38 @@
+.editor {
+  display: grid;
+  gap: 1rem;
+}
+.status,
+.outcome {
+  margin: 0;
+}
+.outcome[data-accepted='false'] {
+  color: #b00020;
+}
+.page {
+  position: relative;
+  background: #fff;
+  border: 1px solid #999;
+}
+.body {
+  position: absolute;
+  border: 1px dashed #666;
+  background: #f6f6f6;
+}
+.item {
+  position: absolute;
+  overflow: hidden;
+  text-align: left;
+  background: #fff;
+  border: 1px solid #3366cc;
+  font: inherit;
+  cursor: pointer;
+}
+.item.selected {
+  outline: 2px solid #3366cc;
+  outline-offset: 1px;
+}
+.item.placeholder {
+  border-style: dashed;
+  color: #555;
+}

@@ -5,16 +5,10 @@ import type {
   ReportSection,
 } from '@rdlc/report-model/report';
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
+import { children, RDL_2016 } from './names.js';
+import { projectTextboxes } from './project-textboxes.js';
 
-export const RDL_2016 =
-  'http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition';
-export function children(node: XmlNode, name: string): readonly XmlNode[] {
-  return node.children.filter(
-    (child) =>
-      child.expandedName.namespaceUri === RDL_2016 &&
-      child.expandedName.localName === name,
-  );
-}
+export { children, RDL_2016 } from './names.js';
 
 export function projectReport(document: XmlSyntaxDocument): ReportProjection {
   const root = document.root;
@@ -130,6 +124,7 @@ export function projectReport(document: XmlSyntaxDocument): ReportProjection {
           : 'source-only',
     capabilities: editable ? ['source', 'projection'] : ['source'],
     section,
+    textboxes: projectTextboxes(section),
     preserved,
     diagnostics,
   };

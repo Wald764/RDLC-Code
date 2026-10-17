@@ -14,3 +14,4 @@ pnpm-lock.yaml
 apps/vscode-extension/LICENSE
 apps/vscode-extension/THIRD_PARTY_NOTICES.md
 tests/fixtures/xml/
+tests/fixtures/textboxes/

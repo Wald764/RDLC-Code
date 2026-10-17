@@ -1,3 +1,4 @@
+import { textboxProperties } from './editing.js';
 import type { EditIntent } from './editing.js';
 import type { Diagnostic } from './diagnostics.js';
 import type { DesignScene } from './scene.js';
@@ -124,6 +125,49 @@ function bounds(value: unknown): boolean {
     (value.height as number) >= 0
   );
 }
+function sceneItem(value: unknown): boolean {
+  return (
+    record(value) &&
+    keys(value, [
+      'id',
+      'bounds',
+      'label',
+      'placeholder',
+      'name',
+      'text',
+      'geometry',
+      'style',
+      'capabilities',
+    ]) &&
+    id(value.id) &&
+    bounds(value.bounds) &&
+    string(value.label) &&
+    typeof value.placeholder === 'boolean' &&
+    (value.name === undefined || value.name === null || string(value.name)) &&
+    (value.text === undefined || value.text === null || string(value.text)) &&
+    (value.capabilities === undefined || strings(value.capabilities)) &&
+    (value.geometry === undefined ||
+      value.geometry === null ||
+      nullableStrings(value.geometry, ['left', 'top', 'width', 'height'])) &&
+    (value.style === undefined ||
+      value.style === null ||
+      nullableStrings(value.style, [
+        'fontFamily',
+        'fontSize',
+        'fontWeight',
+        'fontStyle',
+        'color',
+        'textAlign',
+      ]))
+  );
+}
+function nullableStrings(value: unknown, fields: readonly string[]): boolean {
+  return (
+    record(value) &&
+    keys(value, fields) &&
+    fields.every((field) => value[field] === null || string(value[field]))
+  );
+}
 function scene(value: unknown, expectedVersion: number): boolean {
   return (
     value === null ||
@@ -133,22 +177,16 @@ function scene(value: unknown, expectedVersion: number): boolean {
       bounds(value.page) &&
       bounds(value.body) &&
       Array.isArray(value.items) &&
-      value.items.every(
-        (item) =>
-          record(item) &&
-          keys(item, ['id', 'bounds', 'label', 'placeholder']) &&
-          id(item.id) &&
-          bounds(item.bounds) &&
-          string(item.label) &&
-          typeof item.placeholder === 'boolean',
-      ))
+      value.items.every(sceneItem))
   );
 }
 
 export function validateMessage(value: unknown): ProtocolMessage | null {
+  // Host snapshots carry a full scene; client intents retain the smaller budget.
+  const snapshot = record(value) && value.kind === 'snapshot';
   let nodes = 0;
   const plainJson = (input: unknown, depth: number): boolean => {
-    if (++nodes > 8192 || depth > 20) return false;
+    if (++nodes > (snapshot ? 131072 : 8192) || depth > 20) return false;
     if (
       input === null ||
       typeof input === 'boolean' ||
@@ -169,7 +207,8 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
   };
   if (
     !plainJson(value, 0) ||
-    new TextEncoder().encode(JSON.stringify(value)).length > 65536 ||
+    new TextEncoder().encode(JSON.stringify(value)).length >
+      (snapshot ? 8 * 1024 * 1024 : 65536) ||
     !record(value) ||
     value.protocol !== 1
   )
@@ -196,7 +235,7 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
         value.operation === 'setProperty' &&
         record(value.payload) &&
         keys(value.payload, ['property', 'value']) &&
-        ['name', 'text', 'left', 'top', 'width', 'height'].includes(
+        (textboxProperties as readonly string[]).includes(
           String(value.payload.property),
         ) &&
         string(value.payload.value);

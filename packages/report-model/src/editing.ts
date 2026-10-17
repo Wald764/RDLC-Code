@@ -1,5 +1,36 @@
 import type { SourceRange } from './document.js';
 
+/** Authored textbox value/style/geometry properties. FR-005. */
+export const textboxProperties = [
+  'name',
+  'text',
+  'left',
+  'top',
+  'width',
+  'height',
+  'fontFamily',
+  'fontSize',
+  'fontWeight',
+  'fontStyle',
+  'color',
+  'textAlign',
+] as const;
+export type TextboxProperty = (typeof textboxProperties)[number];
+export const textboxStyleProperties = [
+  'fontFamily',
+  'fontSize',
+  'fontWeight',
+  'fontStyle',
+  'color',
+  'textAlign',
+] as const;
+export const textboxGeometryProperties = [
+  'left',
+  'top',
+  'width',
+  'height',
+] as const;
+
 /** Host validates shape/version/capability/references; webviews cannot supply patches. */
 export interface EditIntent {
   readonly requestId: string;
@@ -7,7 +38,7 @@ export interface EditIntent {
   readonly targetId: string;
   readonly operation: 'setProperty';
   readonly payload: {
-    readonly property: 'name' | 'text' | 'left' | 'top' | 'width' | 'height';
+    readonly property: TextboxProperty;
     readonly value: string;
   };
 }

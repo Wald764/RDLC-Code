@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Synthetic textbox fixture; MIT; MS-RDL 2.16, 2.18, 2.20, 2.2.7 -->
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition" xmlns:rd="http://schemas.microsoft.com/SQLServer/reporting/reportdesigner" xmlns:x="urn:rdlc-code:extension">
+  <ReportSections>
+    <ReportSection>
+      <Body>
+        <ReportItems>
+          <Textbox Name="Title" rd:DefaultName="Title">
+            <Top>0.25in</Top>
+            <Left>0.25in</Left>
+            <Height>0.5in</Height>
+            <Width>3in</Width>
+            <Style>
+              <FontFamily>Segoe UI</FontFamily>
+              <FontSize>14pt</FontSize>
+              <FontWeight>Bold</FontWeight>
+            </Style>
+            <Paragraphs>
+              <Paragraph>
+                <TextRuns>
+                  <TextRun>
+                    <Value>Hello &amp; welcome</Value>
+                  </TextRun>
+                </TextRuns>
+              </Paragraph>
+            </Paragraphs>
+            <x:Opaque keep="1">preserve</x:Opaque>
+          </Textbox>
+        </ReportItems>
+        <Height>2in</Height>
+      </Body>
+      <Width>6in</Width>
+      <Page>
+        <PageHeight>11in</PageHeight>
+        <PageWidth>8.5in</PageWidth>
+        <LeftMargin>1in</LeftMargin>
+        <TopMargin>1in</TopMargin>
+        <RightMargin>1in</RightMargin>
+        <BottomMargin>1in</BottomMargin>
+      </Page>
+    </ReportSection>
+  </ReportSections>
+</Report>

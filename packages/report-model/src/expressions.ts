@@ -2,7 +2,7 @@ import type { SourceRange } from './document.js';
 
 /** Known references block destructive changes; incomplete analysis blocks conservatively. */
 export interface Reference {
-  readonly kind: 'field' | 'dataset' | 'group';
+  readonly kind: 'field' | 'dataset' | 'group' | 'report-item';
   readonly name: string;
   readonly range: SourceRange;
   readonly confidence: 'static';

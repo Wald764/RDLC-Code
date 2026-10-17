@@ -1,0 +1,20 @@
+<section class="diagnostics" aria-label="Diagnostics">
+  <h2>Diagnostics</h2>
+  @if (diagnostics().length === 0) {
+    <p role="status">No diagnostics.</p>
+  } @else {
+    <ul>
+      @for (
+        diagnostic of diagnostics();
+        track diagnostic.code + diagnostic.message
+      ) {
+        <li [attr.data-severity]="diagnostic.severity">
+          <strong>{{ diagnostic.code }}</strong>
+          <span>{{ diagnostic.message }}</span>
+          <span class="action">{{ diagnostic.correctiveAction }}</span>
+        </li>
+      }
+    </ul>
+  }
+  <button type="button" (click)="openSource.emit()">Open source</button>
+</section>

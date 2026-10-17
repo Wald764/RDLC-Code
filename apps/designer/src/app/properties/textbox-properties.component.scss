@@ -1,0 +1,19 @@
+.properties {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 30rem;
+}
+.properties h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.field {
+  display: grid;
+  grid-template-columns: 12rem 1fr;
+  gap: 0.5rem;
+  align-items: center;
+}
+.field input:disabled,
+.field select:disabled {
+  opacity: 0.6;
+}

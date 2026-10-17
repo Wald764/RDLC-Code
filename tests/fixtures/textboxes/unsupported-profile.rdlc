@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Synthetic unsupported-profile fixture; MIT; MS-RDL 2.3, 2.6 -->
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2010/01/reportdefinition">
+  <ReportSections>
+    <ReportSection>
+      <Body>
+        <ReportItems>
+          <Textbox Name="Title">
+            <Top>0.25in</Top>
+            <Left>0.25in</Left>
+            <Height>0.5in</Height>
+            <Width>3in</Width>
+            <Paragraphs>
+              <Paragraph>
+                <TextRuns>
+                  <TextRun><Value>Hello</Value></TextRun>
+                </TextRuns>
+              </Paragraph>
+            </Paragraphs>
+          </Textbox>
+        </ReportItems>
+        <Height>2in</Height>
+      </Body>
+      <Width>6in</Width>
+      <Page>
+        <PageHeight>11in</PageHeight>
+        <PageWidth>8.5in</PageWidth>
+      </Page>
+    </ReportSection>
+  </ReportSections>
+</Report>

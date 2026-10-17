@@ -1,0 +1,36 @@
+<form
+  class="properties"
+  aria-label="Textbox properties"
+  (submit)="$event.preventDefault()"
+>
+  <h2>Textbox</h2>
+  @for (field of fields; track field.property) {
+    <label class="field">
+      <span>{{ field.label }}</span>
+      @if (field.kind === 'select') {
+        <select
+          [attr.data-property]="field.property"
+          [value]="current(field.property)"
+          [disabled]="!can(field.property)"
+          (change)="submit(field.property, $event)"
+          (keydown.enter)="submit(field.property, $event)"
+          (keydown.escape)="cancel(field.property, $event)"
+        >
+          @for (option of field.options; track option) {
+            <option [value]="option">{{ option }}</option>
+          }
+        </select>
+      } @else {
+        <input
+          type="text"
+          [attr.data-property]="field.property"
+          [value]="current(field.property)"
+          [disabled]="!can(field.property)"
+          (change)="submit(field.property, $event)"
+          (keydown.enter)="submit(field.property, $event)"
+          (keydown.escape)="cancel(field.property, $event)"
+        />
+      }
+    </label>
+  }
+</form>

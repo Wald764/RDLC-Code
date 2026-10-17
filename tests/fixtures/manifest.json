@@ -63,6 +63,51 @@
       "expectedDiagnostics": ["XML_SOURCE_ONLY"],
       "preservation": "XML 1.1 remains source-only; never silently broaden the XML 1.0 profile",
       "consumerEvidence": null
+    },
+    {
+      "id": "textbox-supported",
+      "path": "textboxes/supported.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": ["vendor/02-structures/2.16-textbox.md"],
+      "operation": "edit",
+      "editFootprint": [],
+      "expectedDiagnostics": [],
+      "preservation": "Foreign namespace elements, unknown attributes and lexical surroundings remain byte-exact outside the edited span",
+      "consumerEvidence": ["tests/roundtrip/textboxes.test.ts"]
+    },
+    {
+      "id": "textbox-supported-opaque",
+      "path": "textboxes/supported-plus-opaque.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": ["vendor/02-structures/2.18-paragraph.md"],
+      "operation": "none",
+      "editFootprint": [],
+      "expectedDiagnostics": [],
+      "preservation": "Rich text, expression-valued geometry and foreign XML stay preservation-only and are never rewritten",
+      "consumerEvidence": ["tests/compatibility/textboxes.test.ts"]
+    },
+    {
+      "id": "textbox-unsupported-profile",
+      "path": "textboxes/unsupported-profile.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2010/01/reportdefinition",
+      "status": "unsupported",
+      "capabilities": ["source"],
+      "citations": ["vendor/02-structures/2.3-report.md"],
+      "operation": "none",
+      "editFootprint": [],
+      "expectedDiagnostics": ["REPORT_SOURCE_ONLY"],
+      "preservation": "Other RDL versions remain source-only with no automatic conversion",
+      "consumerEvidence": null
     }
   ]
 }

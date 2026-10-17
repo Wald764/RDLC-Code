@@ -1,14 +1,11 @@
-import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { EditorComponent } from './editor/editor.component';
 
 @Component({
   selector: 'rdlc-root',
   standalone: true,
+  imports: [EditorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template:
-    '<main><h1>RDLC Code</h1><p role="status">{{ status() }}</p></main>',
+  template: '<rdlc-editor />',
 })
-export class AppComponent {
-  readonly status = signal(
-    'Foundations ready. Visual editing is not available yet.',
-  );
-}
+export class AppComponent {}

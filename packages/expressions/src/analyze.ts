@@ -65,14 +65,14 @@ export function analyze(
   for (let i = 0; i < tokens.length; i++) {
     const name = tokens[i + 2];
     if (
-      is(i, 'Fields') &&
+      (is(i, 'Fields') || is(i, 'ReportItems')) &&
       is(i + 1, '!') &&
       name?.kind === 'identifier' &&
       is(i + 3, '.') &&
       is(i + 4, 'Value')
     )
       references.push({
-        kind: 'field',
+        kind: is(i, 'Fields') ? 'field' : 'report-item',
         name: name.text,
         range: { start: tokens[i]!.start, end: tokens[i + 4]!.end },
         confidence: 'static',
@@ -96,7 +96,7 @@ export function analyze(
       return true;
     }
     if (
-      is(cursor, 'Fields') &&
+      (is(cursor, 'Fields') || is(cursor, 'ReportItems')) &&
       is(cursor + 1, '!') &&
       tokens[cursor + 2]?.kind === 'identifier' &&
       is(cursor + 3, '.') &&
