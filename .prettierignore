@@ -8,6 +8,7 @@ vendor/
 .git/
 .specify/
 .opencode/
+.claude/skills/
 specs/
 AGENTS.md
 pnpm-lock.yaml
