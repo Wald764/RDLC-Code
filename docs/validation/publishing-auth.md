@@ -31,7 +31,7 @@ and production editor both published successfully through the shared jobs. See
 [release-010.md](release-010.md) for the production tag, run and remote hashes.
 The owner explicitly retained the working Open VSX PAT; OIDC remains untested
 but is not required for that selected mode. T073–T076 are complete; remaining
-hosted failure experiments are tracked under T077–T078 in
+hosted failure experiments are retained as owner-waived follow-ups under T077–T078 in
 [github-actions.md](github-actions.md).
 
 ## Historical authentication and probe observations

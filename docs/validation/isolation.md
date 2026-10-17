@@ -1,7 +1,8 @@
 # Installed isolation evidence
 
 Updated: 2026-10-18. Status: **owner acceptance reported; instrumented automation
-incomplete**. T062 remains open for the detailed checks below. The owner reported
+incomplete**. T062 is closed by explicit owner acceptance for the current scope;
+the unperformed instrumented checks below are waived for now. The owner reported
 isolation satisfactory for the initial release; that report is recorded in the
 tagged readiness record. Production package checks and the three-OS installed
 matrix passed, but do not supply independently retained runtime isolation traces.
@@ -18,7 +19,7 @@ browser runtime style nonces, chunk loading or execution absence. The current
 Electron runner disables Workspace Trust and cannot supply untrusted-workspace
 acceptance evidence. Do not label its normal installed smoke run as that proof.
 
-Before accepting T062, install the exact candidate VSIX into an isolated profile,
+For an optional future instrumented check, install the exact candidate VSIX into an isolated profile,
 enable Workspace Trust and open an explicitly untrusted workspace. Observe host
 and webview network attempts (not only successful requests) and active listeners
 before activation and throughout report operations. Open synthetic reports with

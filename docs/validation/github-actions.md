@@ -1,7 +1,8 @@
 # GitHub Actions verification
 
-Updated: 2026-10-18. **Normal production delivery is proven; T078's full negative
-scenario matrix remains incomplete.** This record distinguishes observed hosted
+Updated: 2026-10-18. **Normal production delivery is proven; T078 is closed by owner
+acceptance for the current scope.** Its full negative scenario matrix is unrun and
+waived for now. This record distinguishes observed hosted
 outcomes from local regression tests and workflow configuration.
 
 ## Hosted observations
@@ -34,7 +35,7 @@ rejection, configured/unconfigured/conflicting authentication, full destination
 inventories, draft asset conflicts, failed-job discovery of prior uploads and
 missing/expired provenance. These test results are not hosted failure injections.
 
-## Remaining T078 work
+## Optional follow-ups accepted as unrun
 
 - Exercise fork and same-repository PR secret isolation, without exposing secrets.
 - Inject failures into each quality/evidence gate and prove no artifact upload.
@@ -45,5 +46,5 @@ missing/expired provenance. These test results are not hosted failure injections
   artifact reuse; the observed Open VSX visibility recovery covers only one case.
 
 Version preparation, scoped candidate acceptance and explicit publication already
-occurred. They are not pending simply because this extended verification task is
-still open. No new production publication is triggered by this tracking update.
+occurred. The owner closed this extended verification task while retaining the
+unrun follow-ups above. No new production publication is triggered by this update.

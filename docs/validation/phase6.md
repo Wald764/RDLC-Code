@@ -1,8 +1,9 @@
 # Phase 6 implementation and validation
 
-Updated: 2026-10-18. **RDLC Code 0.1.0 is published; five verification/corpus tasks
-remain open.** Publication is complete, not a claim that every original acceptance
-experiment has been executed.
+Updated: 2026-10-18. **RDLC Code 0.1.0 is published; all 19 phase-6 tasks are closed
+for the current scope.** The owner explicitly accepted T062, T068 and T077–T079
+as-is, waiving their remaining experiments/corpus expansion for now. Their closure
+is an acceptance decision, not a claim that every original experiment was executed.
 
 ## Release evidence
 
@@ -25,21 +26,21 @@ experiment has been executed.
 
 | Task      | Status                              | Basis / remaining work                                                                                                                                                                                                                 |
 | --------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| T062      | Open                                | Actual-package CSP/resources and malicious-entity tests pass; owner reports isolation accepted. Instrumented untrusted-workspace network/listener/runtime-CSP automation remains absent; see isolation.md.                             |
+| T062      | Closed by owner acceptance          | Actual-package CSP/resources and malicious-entity tests pass; owner reports isolation accepted. Instrumented untrusted-workspace network/listener/runtime-CSP automation remains absent; see isolation.md.                             |
 | T063      | Complete for approved scope         | Owner reports keyboard/functional/performance acceptance; automated budgets and record-validator tests pass. Detailed timing records and five-author study are optional, not claimed executed.                                         |
 | T064      | Complete                            | Exact package identity/content checks, complete parser/project/designer licenses, six minimum/stable three-OS desktop jobs and independent published-package inspection pass.                                                          |
 | T065      | Complete for approved scope         | English build/install/profile/release instructions, license review and CI build/install checks; independent contributor reproduction is optional.                                                                                      |
 | T066–T067 | Complete                            | Stable tag/version/commit/evidence tests and actual detached-tag validation, including candidate/tool binding and full documentation-only diff checks.                                                                                 |
-| T068      | Open                                | Digest/provenance/partial-success/conflict/window cases are tested. A focused concurrent same-tag exclusion test remains missing; workflow concurrency configuration alone is not that experiment.                                     |
+| T068      | Closed by owner acceptance          | Digest/provenance/partial-success/conflict/window cases are tested. A focused concurrent same-tag exclusion test remains missing; workflow concurrency configuration alone is not that experiment.                                     |
 | T069–T070 | Complete                            | Tested immutable manifest, full-inventory recovery planner, source-free CLI, sanitized configuration and credential preflight.                                                                                                         |
 | T071      | Complete for PAT mode               | Job-local GitHub token, Marketplace Azure federation and Open VSX PAT published probe and production packages. Owner chose to retain PAT; OIDC is not required.                                                                        |
 | T072      | Complete                            | Hosted validation/shared quality/canonical build/package/install stages passed with immutable artifact output, accepted evidence hashes and tag concurrency configured.                                                                |
 | T073–T074 | Complete                            | Shared source-free jobs verified a GitHub draft then published, followed by Marketplace and Open VSX using one canonical artifact.                                                                                                     |
 | T075      | Complete                            | Fresh inventory and successful no-op recovery demonstrated by probe run 39069849589 attempt 2, without rebuilding or re-uploading; summaries and conflicts also have regression coverage.                                              |
 | T076      | Complete as configuration/procedure | 90-day retention and durable release assets configured; rerun/window/missing-proof behavior documented and unit-tested. Elapsed retention and the full rerun window have not been observed.                                            |
-| T077      | Open                                | Probe recovery and production remote-byte equality proven; remaining hosted injected destination failures/lost responses are unrun. See release-recovery.md.                                                                           |
-| T078      | Open                                | Normal production chain and selected real failures observed; full fork/PR secret-isolation, negative-gate, cache/lockfile and concurrency experiments remain unrun. See github-actions.md.                                             |
-| T079      | Open                                | Candidate gates, scoped owner acceptance and license checks passed. Manifest audit found 11 fixtures rather than the required minimum 12; textbox-supported declares an edit with an empty footprint.                                  |
+| T077      | Closed by owner acceptance          | Probe recovery and production remote-byte equality proven; remaining hosted injected destination failures/lost responses are unrun. See release-recovery.md.                                                                           |
+| T078      | Closed by owner acceptance          | Normal production chain and selected real failures observed; full fork/PR secret-isolation, negative-gate, cache/lockfile and concurrency experiments remain unrun. See github-actions.md.                                             |
+| T079      | Closed by owner acceptance          | Candidate gates, scoped owner acceptance and license checks passed. The owner accepts the current 11-fixture corpus; the original 12-fixture target and missing textbox-supported footprint were not fulfilled.                        |
 | T080      | Complete for published release      | Active main/tag rulesets, tag-only publisher environments, configured credential paths and intended-tag validation observed. Solo direct pushes and PAT mode match owner policy. Tag/publication followed an explicit release request. |
 
 ## Scope changes and limits
@@ -53,8 +54,8 @@ changes, not fabricated test passes.
 
 External Microsoft-designer/ReportViewer consumer compatibility remains unproven;
 the release claims offline source authoring, not report execution. No unrun
-instrumented isolation or hosted failure experiment is marked complete. The
-remaining tasks are tracked above rather than described as pending publication.
+instrumented isolation or hosted failure experiment is claimed executed. The
+waived follow-ups remain documented above without leaving tasks open.
 
 ## Executed checks and maintenance history
 
