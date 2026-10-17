@@ -1,6 +1,7 @@
 import { createVSIX } from '@vscode/vsce';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { readVsix, verifyVsix } from './verify-vsix.js';
 
 const root = JSON.parse(readFileSync('package.json', 'utf8')) as {
   version: string;
@@ -18,3 +19,4 @@ await createVSIX({
   skipLicense: false,
   allowMissingRepository: true,
 });
+verifyVsix(await readVsix(resolve(`dist/rdlc-code-${root.version}.vsix`)));

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import assert from 'node:assert/strict';
 
 export async function run(): Promise<void> {
-  const extension = vscode.extensions.getExtension('rdlc-code.rdlc-code');
+  const extension = vscode.extensions.getExtension('Wald764.rdlc-code');
   assert.ok(extension, 'Extension must be discovered');
   await extension.activate();
   assert.ok(extension.isActive);

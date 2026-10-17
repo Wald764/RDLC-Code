@@ -1,0 +1,3 @@
+<?xml version="1.0"?>
+<!DOCTYPE Report [<!ENTITY payload SYSTEM "file:///rdlc-isolation-sentinel">]>
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition">&payload;</Report>

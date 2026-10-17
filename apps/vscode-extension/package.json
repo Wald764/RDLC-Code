@@ -2,7 +2,7 @@
   "name": "rdlc-code",
   "displayName": "RDLC Code",
   "description": "Offline source-preserving RDLC report designer.",
-  "publisher": "rdlc-code",
+  "publisher": "Wald764",
   "version": "0.1.0",
   "private": true,
   "type": "module",

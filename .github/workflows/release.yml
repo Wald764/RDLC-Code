@@ -1,0 +1,79 @@
+name: Release candidate
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validation:
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      MARKETPLACE_PUBLISHER: ${{ vars.MARKETPLACE_PUBLISHER }}
+      OPENVSX_NAMESPACE: ${{ vars.OPENVSX_NAMESPACE }}
+      OPENVSX_AUTH_MODE: ${{ vars.OPENVSX_AUTH_MODE }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+      - name: Validate detached tag, reviewed ancestry and mandatory candidate evidence
+        run: node scripts/validate-release.ts "$RELEASE_TAG" origin/main
+
+  quality:
+    needs: validation
+    uses: ./.github/workflows/ci.yml
+
+  canonical:
+    needs: [validation, quality]
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      MARKETPLACE_PUBLISHER: ${{ vars.MARKETPLACE_PUBLISHER }}
+      OPENVSX_NAMESPACE: ${{ vars.OPENVSX_NAMESPACE }}
+      OPENVSX_AUTH_MODE: ${{ vars.OPENVSX_AUTH_MODE }}
+      RELEASE_VALIDATION_RESULT: ${{ needs.validation.result }}
+      RELEASE_QUALITY_RESULT: ${{ needs.quality.result }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@9fd676a19091d4595eefd76e4bd31c97133911f1 # v4.2.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            .node-version
+            package.json
+      - run: node scripts/validate-release.ts "$RELEASE_TAG" origin/main
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm package
+      - run: xvfb-run -a pnpm test:package
+      - name: Bind the canonical bytes to source, gates and accepted evidence
+        run: node dist/scripts/release-artifact.js
+      - name: Upload verified canonical VSIX and immutable manifest
+        id: canonical
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canonical-${{ github.ref_name }}-${{ github.run_id }}
+          path: dist/canonical/*
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false
+    outputs:
+      artifact-id: ${{ steps.canonical.outputs.artifact-id }}
+      archive-digest: ${{ steps.canonical.outputs.artifact-digest }}
