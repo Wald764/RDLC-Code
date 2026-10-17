@@ -2,15 +2,13 @@
 
 ## Current state
 
-Release identity/evidence, configuration, artifact/recovery guard functions and
-the publication jobs have local tests. `.github/workflows/release.yml` prepares the
-secret-free validation, reused CI matrix and canonical-artifact stages, then runs a
-destination preflight and the GitHub, Marketplace and optional Open VSX publisher
-jobs from that single verified artifact. None of it has been run in hosted GitHub
-Actions for a production tag: missing acceptance evidence still blocks its first
-job, no `v*` tag has been pushed, and the publication path therefore remains
-**unproven** until T077–T079 are executed. No tag, account, GitHub ruleset,
-marketplace version or release is created by these tools.
+RDLC Code `0.1.0` is published on GitHub, Marketplace and Open VSX. Production
+release run [39075357277](https://github.com/Wald764/RDLC-Code/actions/runs/39075357277)
+passed on its first attempt, including the full desktop matrix and source-free
+publisher chain. Independent downloads from all three destinations matched the
+canonical manifest. See [0.1.0 evidence](validation/release-010.md) for identities,
+hashes and remaining evidence boundaries. The tagged readiness record captures the
+owner-approved initial-release scope; optional unrun checks are not claimed passed.
 See the [CI/CD contract](../specs/001-rdlc-vscode-editor/contracts/ci-cd.md).
 
 ## Controlled three-destination test
