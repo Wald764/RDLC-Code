@@ -1,0 +1,36 @@
+name: Marketplace identity check
+
+# One-time authentication setup, separate from the automatic release workflow.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  profile:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: marketplace
+    permissions:
+      id-token: write
+    env:
+      AZURE_CORE_OUTPUT: none
+    steps:
+      - name: Sign in with the federated publishing identity
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          audience: api://AzureADTokenExchange
+      - name: Retrieve the profile ID to add as a Marketplace Contributor
+        shell: bash
+        run: >-
+          az rest
+          --method get
+          --url https://app.vssps.visualstudio.com/_apis/profile/profiles/me
+          --resource 499b84ac-1321-427f-aa17-267ca6975798
+          --query id
+          --output tsv
+          --only-show-errors
+          | tee -a "$GITHUB_STEP_SUMMARY"
