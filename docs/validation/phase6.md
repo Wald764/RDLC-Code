@@ -8,6 +8,16 @@ preserved; this work does not supply their still-documented interactive evidence
 
 ## Delivered scope
 
+Follow-up hosted evidence: the inert `v0.0.4-publishing-test` probe published the
+same VSIX to GitHub (prerelease), Marketplace and Open VSX using the shared jobs.
+Run 39069849589 passed on attempt 2 after an Open VSX visibility delay; failed-job
+recovery reused artifact 12114239416 without rebuilding or uploading a duplicate.
+See [publishing-auth.md](publishing-auth.md) for hashes, retained failed test tags
+and remaining gaps. This proves the job-local GitHub token path and one real
+recovery case under tag-only environments, not production editor acceptance.
+T071 and T073–T076 remain open. A follow-up bounded Open VSX visibility wait has
+local regression coverage but has not itself run in the hosted immutable artifact.
+
 | Tasks     | Local implementation                                                                                                                                                                                                                                                                                                                                                                                                                               | Remaining acceptance or implementation                                                                                                                                                                       |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | T062      | Actual-VSIX CSP/nonce/local-resource/source-map/font checks; synthetic MIT local/remote entity rejection fixtures                                                                                                                                                                                                                                                                                                                                  | Installed untrusted-workspace runtime-CSP, execution/network-attempt/listener observations; see isolation.md                                                                                                 |

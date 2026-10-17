@@ -169,7 +169,7 @@ proven complete by matching both the VSIX and the exact manifest SHA-256 before
 it is published, assets are never replaced and the latest
 marker is never moved. Marketplace publishes the verified prebuilt VSIX with
 `--azure-credential --packagePath` and no `--skip-duplicate`; an asynchronous
-Marketplace write is waited for with bounded retries and accepted only when the
+Marketplace or Open VSX write is waited for with bounded retries and accepted only when the
 downloaded bytes match. Open VSX verifies the configured namespace before
 publishing and uses the bootstrap PAT or the registered trusted-publisher mode.
 The final `summary` job reports every stage and destination result.

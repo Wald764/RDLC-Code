@@ -543,12 +543,8 @@ if (
         repository,
         directory,
       );
-      // Marketplace processing is asynchronous; wait before declaring a conflict.
-      for (
-        let wait = 0;
-        destination === 'marketplace' && !entry.exists && wait < 10;
-        wait++
-      ) {
+      // Both registries may acknowledge an upload before its version is visible.
+      for (let wait = 0; !entry.exists && wait < 10; wait++) {
         await new Promise((resolve) => setTimeout(resolve, 30_000));
         entry = await destinationInventory(
           registry,

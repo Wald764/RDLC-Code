@@ -1,16 +1,14 @@
 # Publishing authentication prerequisites
 
-Date: 2026-10-17. Status: **Marketplace and Open VSX publication proven; T071 still
-open**. T071 is incomplete: the GitHub token path and production conditions are not
-proven.
+Date: 2026-10-17. Status: **Three-destination tagged probe and failed-job recovery
+proven; T071 still open for production acceptance**. The inert probe exercises
+the shared publication jobs, not the editor's stable-release acceptance gates.
 
 The user reports Marketplace publisher `Wald764`, an Azure user-assigned managed
 identity, configured GitHub variables and federation for the `marketplace`
 environment. The extension manifest already declares publisher `Wald764`.
-These are reported setup details, not observed authentication evidence. The
-Marketplace Contributor membership and actual credential exchange remain unverified.
-The pinned vsce/Entra end-to-end prebuilt upload and job-local GitHub token proof
-must be performed following `docs/releases.md` before publisher jobs are enabled.
+The successful uploads below demonstrate credential exchange and publish rights;
+the exact Marketplace role assignment was not independently inspected.
 Record candidate/tag, controlled identity, run, pinned login/CLI versions, VSIX
 SHA-256, acknowledged upload and sanitized role/login observations. Never record
 tokens or request authorization headers.
@@ -63,16 +61,58 @@ Each registry was then queried directly rather than trusted from the run output:
   therefore per-build and valid only for the artifact it was measured on; this is
   one more reason recovery reuses the original artifact instead of rebuilding.
 
-Remaining T071 gaps: the release publication jobs now exist (T073–T076), but they
-have only been exercised as local tooling and through the manual probe, never by a
-production tag-restricted release. The GitHub job-local `GITHUB_TOKEN` publication
-path is therefore implemented but unproven. The probe stays public at `0.0.1` and
-must not be overwritten; Open VSX currently relies on a permanent PAT rather than
+Remaining T071 gaps: the shared publication jobs have been exercised by the tagged
+probe below, but not by a production editor release. Existing probe versions must
+not be overwritten; Open VSX currently relies on a bootstrap PAT rather than
 trusted OIDC.
 
 The temporary `main` deployment-branch rules added for the manual runs were removed
 from both the `marketplace` and `openvsx` environments, leaving only the release-tag
-rules. That is the operator's statement; T080 covers inspecting the actual settings.
+rules. An authenticated API inspection during the tagged test confirmed that each
+environment has exactly one deployment rule: tag `v*`. This is partial settings
+evidence, not completion of the entire T080 audit.
+
+## Tagged three-destination probe and recovery
+
+Run [39069849589](https://github.com/Wald764/RDLC-Code/actions/runs/39069849589),
+tag `v0.0.4-publishing-test`, commit
+`beed034f0d52b4bffa2d5cd89f9f6a92a8c83d84`, publishes only the inert extension
+`Wald764.rdlc-code-auth-test` version `0.0.4`. Both callers use the same reusable
+`publish.yml` chain. The test tag is excluded from the stable release trigger.
+
+- Attempt 1 passed both credential preflights, created and verified a GitHub draft,
+  published it as a prerelease, then uploaded the original VSIX to Marketplace
+  through Azure federation and to Open VSX through the environment PAT.
+- Open VSX acknowledged publication before its public version endpoint was ready.
+  The immediate recheck failed on HTTP 404; the run correctly remained failed.
+- Once the version was visible, only failed jobs were rerun. Attempt 2 completed
+  successfully, downloading original artifact `12114239416` (archive SHA-256
+  `56122189642d3256b1e01a2eef447dafe9884ad846a661d509e90c9f42aeb6dc`).
+  Open VSX was freshly inventoried, its bytes matched, and its upload step was
+  skipped. Packaging was not rerun; no duplicate skipping or overwrite was used.
+- Independent downloads from all three destinations and the Open VSX checksum
+  agree with the original manifest's VSIX SHA-256:
+  `d2651729b678036d7a2f89c9ec422a32a71bf531162b9c88a7a8c188ea0079a2`.
+- The published GitHub `release-manifest.json` SHA-256 is
+  `c5493655bbe4e20b3a4284a0fbe226693d616c0d7fe7565f3d7b72515de05396`.
+  The release is public, `draft=false`, `prerelease=true`:
+  https://github.com/Wald764/RDLC-Code/releases/tag/v0.0.4-publishing-test.
+
+Earlier immutable test tags are retained: `v0.0.2-publishing-test` stopped before
+publication because reusable-workflow secret inheritance was missing;
+`v0.0.3-publishing-test` uploaded a draft but could not discover it through the
+tag endpoint. Secret inheritance and paginated draft discovery were corrected
+before the successful `0.0.4` publication. The `0.0.3` draft remains intact.
+
+Pinned tools: Node 24.22.0, vsce 3.7.1, ovsx 1.3.0; Azure login v2.3.0 uses the
+previously recorded action SHA. No credentials are recorded here.
+
+The follow-up code gives Open VSX the same bounded visibility wait as Marketplace
+(ten 30-second waits). Local CLI regressions cover delayed visibility, wrong bytes
+and exhaustion. That new wait was not part of the immutable test artifact, so the
+hosted success proves recovery after visibility, not execution of the new wait.
+Production readiness, other injected failure modes, the full recovery window and
+Open VSX OIDC remain unproven; T071 and T073–T076 stay open.
 
 ## Retrieve the Marketplace identity profile
 
@@ -110,9 +150,9 @@ Successful profile retrieval proves only login/profile discovery, not permission
 to upload a VSIX; the controlled prebuilt publication below is the remaining
 T071 obligation.
 
-## Controlled prebuilt publication
+## Historical manual prebuilt publication (0.0.1)
 
-`.github/workflows/publishing-auth-test.yml` is a manual `workflow_dispatch`
+At commit `f9d6491`, `.github/workflows/publishing-auth-test.yml` was a manual `workflow_dispatch`
 workflow, separate from the release path. It packages one deliberately inert probe
 (`Wald764.rdlc-code-auth-test` `0.0.1`, a theme with no executable extension code)
 from `tests/fixtures/publishing-auth`, verifies its contents, digest and identity,
@@ -150,6 +190,6 @@ publication, and a skipped duplicate is not a fresh upload. If one destination
 fails, fix only its configuration and re-run failed jobs; the successful `package`
 job is never rebuilt.
 
-Not yet done: the tag-restricted production conditions and the GitHub release path.
-Open VSX trusted publishing (`OPENVSX_AUTH_MODE=oidc`) is untested. The probe is
-expected to be publicly visible on both registries.
+The current tag-triggered procedure is documented in `docs/releases.md` and the
+observed results above. Production editor release conditions and Open VSX trusted
+publishing (`OPENVSX_AUTH_MODE=oidc`) remain untested.

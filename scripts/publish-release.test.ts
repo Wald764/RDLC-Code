@@ -247,12 +247,20 @@ test('source-free CLI authenticates draft reads, requires both assets and re-inv
     `
     import assert from 'node:assert/strict';
     import {readFileSync} from 'node:fs';
+    const counts = new Map();
+    globalThis.setTimeout = callback => { queueMicrotask(callback); return 0; };
     globalThis.fetch = async (url, options) => {
       if (new URL(url).hostname === 'api.github.com')
         assert.equal(options.headers.authorization, 'Bearer test-token');
       const routes = JSON.parse(readFileSync(new URL('./routes.json', import.meta.url)));
-      const route = routes[new URL(url).pathname];
+      const path = new URL(url).pathname;
+      let route = routes[path];
       assert.ok(route, 'Unexpected request: ' + url);
+      if (route.responses) {
+        const count = counts.get(path) || 0;
+        counts.set(path, count + 1);
+        route = route.responses[Math.min(count, route.responses.length - 1)];
+      }
       return route.body !== undefined ? new Response(route.body) : Response.json(route.json, {status:route.status || 200});
     };
   `,
@@ -359,6 +367,31 @@ test('source-free CLI authenticates draft reads, requires both assets and re-inv
     result = run('plan');
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Conflict at marketplace/);
+    handoff(directory, 'pat');
+    env.OPENVSX_NAMESPACE = 'Wald764';
+    env.OPENVSX_AUTH_MODE = 'pat';
+    routes['/api/Wald764/rdlc-code/1.2.3'] = {
+      responses: [
+        { json: null, status: 404 },
+        {
+          json: {
+            version: identity.version,
+            files: { sha256: 'https://open-vsx.org/checksum' },
+          },
+        },
+      ],
+    };
+    routes['/checksum'] = { body: manifest.vsixSha256 };
+    result = run('recheck', '--destination', 'openvsx');
+    assert.equal(result.status, 0, result.stderr);
+    routes['/checksum'] = { body: 'foreign-digest' };
+    result = run('recheck', '--destination', 'openvsx');
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /bytes differ/);
+    routes['/api/Wald764/rdlc-code/1.2.3'] = { json: null, status: 404 };
+    result = run('recheck', '--destination', 'openvsx');
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /no published version/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
