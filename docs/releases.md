@@ -67,12 +67,16 @@ the tools, controlled publisher, run and canonical VSIX digest without tokens.
 Job layout: `validation` (accepted evidence) → `quality` (reused CI matrix) →
 `canonical` (build, package, manifest, immutable artifact) → `preflight` (artifact
 binding, destination inventory, federated publisher check in the `marketplace`
-environment) → `github` (job-local `contents: write` only) → `marketplace`
+environment) → `openvsx-preflight` (namespace credential or trusted-publisher check
+in the `openvsx` environment) → `github` (the only job with `contents: write`) → `marketplace`
 (`id-token: write` in the `marketplace` environment) → `openvsx` (`openvsx`
 environment) → `summary` (always runs). Publication cannot start without the
 accepted `github-auth`, `marketplace-auth`, `recovery` and `github-actions`
-records, because the evidence validator runs before the build. Only the Open VSX
-job receives its namespace credential, and only inside that job's environment.
+records, because the evidence validator runs before the build. Open VSX credentials
+are confined to its authentication preflight and publisher jobs in that environment.
+The publisher/tag/namespace configuration is shared at workflow level; the GitHub
+writer explicitly sets `GH_REPO` and a job-local `GITHUB_TOKEN` for both `gh` and
+the REST verifier, so no checkout is needed to select the repository or read drafts.
 
 ## Version and acceptance preparation
 
@@ -121,11 +125,22 @@ compare — is a conflict: the job fails closed and no publisher runs. The same 
 proves the federated identity's publisher rights with the pinned vsce
 `verify-pat --azure-credential`.
 
-Publishers run sequentially and only for a `pending` destination; a `succeeded`
-destination is an explicit verified no-op. Every publisher job re-verifies the
-handoff and re-checks the remote bytes after writing. GitHub notes use explicit
+Before any release or package write, `openvsx-preflight` checks the configured
+credential with the pinned ovsx 1.3.0 client. PAT mode verifies namespace access;
+OIDC mode requests the GitHub ID token and uses the client's supported registry
+exchange to prove the trusted-publisher registration, discarding the short-lived
+token. Tokens are not logged or passed to later jobs. Missing credentials, a PAT
+in OIDC mode, or stray configuration in `not-configured` mode fail before publication.
+The trusted mode still requires its separate controlled authentication evidence.
+
+Publisher jobs run sequentially even for an already completed destination: a
+verified no-op succeeds and allows the next job to run. Each job re-verifies the
+handoff and re-inventories all destinations before deciding whether to write;
+the initial preflight plan is never used as a cached write decision. Every
+publisher re-checks the remote bytes after writing. GitHub notes use explicit
 previous stable tag bounds, the release is created as a draft, its assets are
-proven complete before it is published, assets are never replaced and the latest
+proven complete by matching both the VSIX and the exact manifest SHA-256 before
+it is published, assets are never replaced and the latest
 marker is never moved. Marketplace publishes the verified prebuilt VSIX with
 `--azure-credential --packagePath` and no `--skip-duplicate`; an asynchronous
 Marketplace write is waited for with bounded retries and accepted only when the
@@ -135,7 +150,7 @@ The final `summary` job reports every stage and destination result.
 
 On partial failure, use **Re-run failed jobs** on the original run. Do not rerun
 the successful build. A rerun rebuilds no bytes: it reuses the original run and
-artifact ID, re-derives the same plan and resumes only the destinations still
+artifact ID, queries current registry state again and resumes only the destinations still
 `pending`. Reuse of an existing version requires matching remote bytes; an
 existing version number, a lost response or duplicate skipping is insufficient.
 Ambiguity is a conflict. Never use duplicate skipping, deletion, overwrite,

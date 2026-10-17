@@ -16,7 +16,7 @@ preserved; this work does not supply their still-documented interactive evidence
 | T065      | English root/packaged README, contributor/build/install/profile/limitations and release instructions                                                                                                                                                                                                                                                                                                                                               | Independent contributor reproduction; see contributor-build.md                                                                                                                                               |
 | T066      | Stable SemVer, tag peeling/ancestry, private-version independence, commit/breaking semantics and stale/missing evidence tests                                                                                                                                                                                                                                                                                                                      | Complete as a local tooling test task                                                                                                                                                                        |
 | T067      | Read-only detached-tag/Git-object validator; full candidate diff allowlist, tool/version/evidence identity, accepted-path hashes; PR/commit CI checks                                                                                                                                                                                                                                                                                              | Complete as implementation; live protection and final candidate proof belong to T078–T080                                                                                                                    |
-| T068–T069 | Digest/artifact-ID/run checks, immutable manifest/gate/evidence generation, conservative full-inventory recovery planner and synthetic partial/lost-response/conflict tests                                                                                                                                                                                                                                                                        | Real authenticated remote evidence/adapters and recovery integration; no existing-version recovery is enabled                                                                                                |
+| T068–T069 | Digest/artifact-ID/run checks, immutable manifest/gate/evidence generation, conservative full-inventory recovery planner and synthetic partial/lost-response/conflict tests                                                                                                                                                                                                                                                                        | Remote adapters and retry integration now have local regression tests; hosted authenticated recovery and failure injection remain unproven                                                                   |
 | T070      | Tested sanitized configuration preflight plus protected-tag/environment/Entra/Open VSX setup documentation                                                                                                                                                                                                                                                                                                                                         | Complete as shape/consistency validation; live authentication is T071                                                                                                                                        |
 | T071      | Sanitized prerequisite record, controlled inert two-registry probe workflow and authenticated publication instructions                                                                                                                                                                                                                                                                                                                             | Marketplace and Open VSX publication proven; see publishing-auth.md. GitHub job-local token publication and production tag conditions remain unproven                                                        |
 | T072      | Prepared secret-free tag/evidence job, reused complete CI matrix, canonical production/package/install stages, manifest and immutable artifact-ID output, tag concurrency and 90-day artifact retention                                                                                                                                                                                                                                            | Hosted execution and canonical installed offline/isolation acceptance remain unrun; not marked complete                                                                                                      |
@@ -87,3 +87,30 @@ the release path remains unproven. Normal installed Electron
 tests still disable Workspace Trust and are not proof of T062. Actual offline
 isolation automation must be completed before accepting T072's canonical smoke
 requirement. No production release readiness is claimed.
+
+## Publication review corrections
+
+Review of `de60f08` and `568a3e3` found integration defects despite passing local
+helper tests. The corrections share publisher configuration with every job, give
+the source-free GitHub writer an explicit repository and REST token, require both
+remote asset hashes, and place Open VSX authentication before every publication
+destination. GitHub → Marketplace → Open VSX is now an actual dependency chain;
+already-complete destinations finish as successful no-ops rather than skipped jobs.
+Every publisher recomputes the inventory, including on failed-job reruns, so a
+successful upload followed by a failed acknowledgement/check is not uploaded again.
+
+Regression tests execute the shipped CLI in a temporary source-free directory
+with mocked HTTP responses. They cover authenticated draft reads, missing and
+conflicting manifest assets, draft/published checks, a retry discovering previously
+uploaded bytes, and rejecting foreign bytes. Open VSX preflight tests cover PAT,
+trusted-publisher exchange through the pinned client's API, missing/conflicting
+credentials, and sanitized failures. These are local simulations, not new hosted
+publication or OIDC evidence; T071 and T073–T076 remain open.
+
+Local checks for these corrections: 44 Node unit tests and 14 Angular tests pass;
+the 7 release tests, lint, typecheck and actionlint also pass. The pinned ovsx
+1.3.0 package was installed outside the repository with lifecycle scripts disabled;
+all client APIs used by the authentication preflight load successfully. Formatting
+passes for the changed files. Generated Claude skills are now excluded from the
+repository formatter, like the existing OpenCode integration, preserving their
+Spec Kit manifest hashes.

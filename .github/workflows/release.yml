@@ -7,6 +7,12 @@ on:
 permissions:
   contents: read
 
+env:
+  RELEASE_TAG: ${{ github.ref_name }}
+  MARKETPLACE_PUBLISHER: ${{ vars.MARKETPLACE_PUBLISHER }}
+  OPENVSX_NAMESPACE: ${{ vars.OPENVSX_NAMESPACE }}
+  OPENVSX_AUTH_MODE: ${{ vars.OPENVSX_AUTH_MODE }}
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -14,11 +20,6 @@ concurrency:
 jobs:
   validation:
     runs-on: ubuntu-24.04
-    env:
-      RELEASE_TAG: ${{ github.ref_name }}
-      MARKETPLACE_PUBLISHER: ${{ vars.MARKETPLACE_PUBLISHER }}
-      OPENVSX_NAMESPACE: ${{ vars.OPENVSX_NAMESPACE }}
-      OPENVSX_AUTH_MODE: ${{ vars.OPENVSX_AUTH_MODE }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -38,10 +39,6 @@ jobs:
     needs: [validation, quality]
     runs-on: ubuntu-24.04
     env:
-      RELEASE_TAG: ${{ github.ref_name }}
-      MARKETPLACE_PUBLISHER: ${{ vars.MARKETPLACE_PUBLISHER }}
-      OPENVSX_NAMESPACE: ${{ vars.OPENVSX_NAMESPACE }}
-      OPENVSX_AUTH_MODE: ${{ vars.OPENVSX_AUTH_MODE }}
       RELEASE_VALIDATION_RESULT: ${{ needs.validation.result }}
       RELEASE_QUALITY_RESULT: ${{ needs.quality.result }}
     steps:
@@ -102,10 +99,6 @@ jobs:
       actions: read
       id-token: write
     env:
-      RELEASE_TAG: ${{ github.ref_name }}
-      MARKETPLACE_PUBLISHER: ${{ vars.MARKETPLACE_PUBLISHER }}
-      OPENVSX_NAMESPACE: ${{ vars.OPENVSX_NAMESPACE }}
-      OPENVSX_AUTH_MODE: ${{ vars.OPENVSX_AUTH_MODE }}
       ARTIFACT_ID: ${{ needs.canonical.outputs.artifact-id }}
       ARCHIVE_DIGEST: ${{ needs.canonical.outputs.archive-digest }}
       GITHUB_TOKEN: ${{ github.token }}
@@ -141,21 +134,47 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          allow-no-subscriptions: ${{ vars.AZURE_ALLOW_NO_SUBSCRIPTIONS == 'true' }}
           audience: api://AzureADTokenExchange
       - name: Verify the federated identity's publisher rights before any write
         run: '"$RUNNER_TEMP/publishing-tools/node_modules/.bin/vsce" verify-pat "$MARKETPLACE_PUBLISHER" --azure-credential'
 
+  openvsx-preflight:
+    name: Open VSX authentication preflight
+    needs: [canonical, preflight]
+    runs-on: ubuntu-24.04
+    environment: openvsx
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARTIFACT_ID: ${{ needs.canonical.outputs.artifact-id }}
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ needs.canonical.outputs.node }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.canonical.outputs.artifact-id }}
+          path: canonical
+          merge-multiple: true
+      - name: Install the pinned Open VSX client without lifecycle scripts
+        run: npm install --prefix "$RUNNER_TEMP/publishing-tools" --ignore-scripts --no-audit --no-fund --no-package-lock ovsx@1.3.0
+      - name: Verify configured PAT or trusted publisher before any publication
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: node canonical/scripts/publish-release.js openvsx-auth --dir canonical --tools "$RUNNER_TEMP/publishing-tools"
+
   github:
     name: GitHub release
-    needs: [canonical, preflight]
-    # An already-verified publication is an explicit no-op; anything else fails closed.
-    if: needs.preflight.outputs.github == 'pending'
+    needs: [canonical, preflight, openvsx-preflight]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     env:
-      GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ github.ref_name }}
+      GITHUB_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       ARTIFACT_ID: ${{ needs.canonical.outputs.artifact-id }}
       ARCHIVE_DIGEST: ${{ needs.canonical.outputs.archive-digest }}
       VSIX: ${{ needs.preflight.outputs.filename }}
@@ -168,9 +187,11 @@ jobs:
           artifact-ids: ${{ needs.canonical.outputs.artifact-id }}
           path: canonical
           merge-multiple: true
-      - name: Verify the downloaded handoff
-        run: node canonical/scripts/publish-release.js verify --dir canonical
+      - name: Re-inventory before writing, including on failed-job reruns
+        id: state
+        run: node canonical/scripts/publish-release.js plan --dir canonical
       - name: Generate notes from the previous stable release
+        if: steps.state.outputs.github == 'pending'
         run: |
           previous="$(node canonical/scripts/publish-release.js previous --tag "$RELEASE_TAG")"
           echo "Previous stable bound: ${previous:-none (first stable release)}" >> "$GITHUB_STEP_SUMMARY"
@@ -178,11 +199,13 @@ jobs:
             -f tag_name="$RELEASE_TAG" ${previous:+-f previous_tag_name="$previous"} \
             --jq .body > "$RUNNER_TEMP/notes.md"
       - name: Create the draft release for the exact tag
+        if: steps.state.outputs.github == 'pending'
         run: |
           gh release view "$RELEASE_TAG" >/dev/null 2>&1 ||
             gh release create "$RELEASE_TAG" --draft --verify-tag \
               --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/notes.md"
       - name: Attach the canonical VSIX and manifest to the draft
+        if: steps.state.outputs.github == 'pending'
         # Upload errors are tolerated only because the next step proves the draft
         # carries our exact bytes. Existing assets are never replaced.
         run: |
@@ -191,24 +214,26 @@ jobs:
               tee -a "$GITHUB_STEP_SUMMARY" || true
           done
       - name: Prove the draft carries the canonical bytes
+        if: steps.state.outputs.github == 'pending'
         run: node canonical/scripts/publish-release.js recheck --destination github
       - name: Publish the release without moving the latest marker
+        if: steps.state.outputs.github == 'pending'
         run: gh release edit "$RELEASE_TAG" --draft=false --latest=false
       - name: Confirm the published release carries the canonical bytes
         run: node canonical/scripts/publish-release.js recheck --destination github --published
+    outputs:
+      state: ${{ steps.state.outputs.github }}
 
   marketplace:
     name: Visual Studio Marketplace
-    needs: preflight
-    if: needs.preflight.outputs.marketplace == 'pending'
+    needs: [preflight, github]
     runs-on: ubuntu-24.04
     environment: marketplace
     permissions:
       contents: read
+      actions: read
       id-token: write
     env:
-      RELEASE_TAG: ${{ github.ref_name }}
-      MARKETPLACE_PUBLISHER: ${{ vars.MARKETPLACE_PUBLISHER }}
       ARTIFACT_ID: ${{ needs.preflight.outputs.artifact-id }}
       ARCHIVE_DIGEST: ${{ needs.preflight.outputs.archive-digest }}
       VSIX: ${{ needs.preflight.outputs.filename }}
@@ -225,35 +250,38 @@ jobs:
           artifact-ids: ${{ needs.preflight.outputs.artifact-id }}
           path: canonical
           merge-multiple: true
-      - name: Verify the downloaded handoff
-        run: node canonical/scripts/publish-release.js verify --dir canonical
+      - name: Re-inventory before writing, including on failed-job reruns
+        id: state
+        run: node canonical/scripts/publish-release.js plan --dir canonical
       - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        if: steps.state.outputs.marketplace == 'pending'
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          allow-no-subscriptions: ${{ vars.AZURE_ALLOW_NO_SUBSCRIPTIONS == 'true' }}
           audience: api://AzureADTokenExchange
       - name: Publish the verified prebuilt VSIX
+        if: steps.state.outputs.marketplace == 'pending'
         # No --skip-duplicate: an existing version is resolved by byte comparison
         # below, never by silently ignoring the registry response.
         run: '"$RUNNER_TEMP/publishing-tools/node_modules/.bin/vsce" publish --azure-credential --packagePath "canonical/$VSIX"'
       - name: Require the published bytes to match the canonical VSIX
         run: node canonical/scripts/publish-release.js recheck --destination marketplace
+    outputs:
+      state: ${{ steps.state.outputs.marketplace }}
 
   openvsx:
     name: Open VSX
     needs: [preflight, marketplace]
-    if: needs.preflight.outputs.openvsx == 'pending'
     runs-on: ubuntu-24.04
     environment: openvsx
-    # The optional Open VSX destination is the only job that may use OIDC.
+    # Open VSX requests an ID token only when trusted publishing is configured.
     permissions:
       contents: read
+      actions: read
       id-token: write
     env:
-      RELEASE_TAG: ${{ github.ref_name }}
-      OPENVSX_NAMESPACE: ${{ vars.OPENVSX_NAMESPACE }}
-      OPENVSX_AUTH_MODE: ${{ vars.OPENVSX_AUTH_MODE }}
       ARTIFACT_ID: ${{ needs.preflight.outputs.artifact-id }}
       ARCHIVE_DIGEST: ${{ needs.preflight.outputs.archive-digest }}
       VSIX: ${{ needs.preflight.outputs.filename }}
@@ -271,31 +299,44 @@ jobs:
           artifact-ids: ${{ needs.preflight.outputs.artifact-id }}
           path: canonical
           merge-multiple: true
-      - name: Verify the downloaded handoff
-        run: node canonical/scripts/publish-release.js verify --dir canonical
+      - name: Re-inventory before writing, including on failed-job reruns
+        id: state
+        run: node canonical/scripts/publish-release.js plan --dir canonical
       - name: Verify the configured namespace access before publishing
-        if: vars.OPENVSX_AUTH_MODE != 'oidc'
+        if: steps.state.outputs.openvsx == 'pending' && vars.OPENVSX_AUTH_MODE != 'oidc'
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: '"$RUNNER_TEMP/publishing-tools/node_modules/.bin/ovsx" verify-pat "$OPENVSX_NAMESPACE"'
       - name: Publish the verified prebuilt VSIX with the bootstrap PAT
-        if: vars.OPENVSX_AUTH_MODE != 'oidc'
+        if: steps.state.outputs.openvsx == 'pending' && vars.OPENVSX_AUTH_MODE != 'oidc'
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: '"$RUNNER_TEMP/publishing-tools/node_modules/.bin/ovsx" publish "canonical/$VSIX"'
       - name: Publish the verified prebuilt VSIX with trusted publishing
         # No PAT in this step: a present OVSX_PAT takes precedence over the
         # short-lived token the registry issues for this workflow's ID token.
-        if: vars.OPENVSX_AUTH_MODE == 'oidc'
+        if: steps.state.outputs.openvsx == 'pending' && vars.OPENVSX_AUTH_MODE == 'oidc'
         run: '"$RUNNER_TEMP/publishing-tools/node_modules/.bin/ovsx" publish --trusted-publishing "canonical/$VSIX"'
       - name: Require the published bytes to match the canonical VSIX
+        if: steps.state.outputs.openvsx != 'not-configured'
         run: node canonical/scripts/publish-release.js recheck --destination openvsx
+    outputs:
+      state: ${{ steps.state.outputs.openvsx }}
 
   summary:
     name: Publication state
     if: always()
     needs:
-      [validation, quality, canonical, preflight, github, marketplace, openvsx]
+      [
+        validation,
+        quality,
+        canonical,
+        preflight,
+        openvsx-preflight,
+        github,
+        marketplace,
+        openvsx,
+      ]
     runs-on: ubuntu-24.04
     permissions: {}
     steps:
@@ -305,12 +346,16 @@ jobs:
           QUALITY: ${{ needs.quality.result }}
           CANONICAL: ${{ needs.canonical.result }}
           PREFLIGHT: ${{ needs.preflight.result }}
+          OPENVSX_PREFLIGHT: ${{ needs.openvsx-preflight.result }}
           GITHUB: ${{ needs.github.result }}
           MARKETPLACE: ${{ needs.marketplace.result }}
           OPENVSX: ${{ needs.openvsx.result }}
           PLANNED_GITHUB: ${{ needs.preflight.outputs.github }}
           PLANNED_MARKETPLACE: ${{ needs.preflight.outputs.marketplace }}
           PLANNED_OPENVSX: ${{ needs.preflight.outputs.openvsx }}
+          CURRENT_GITHUB: ${{ needs.github.outputs.state }}
+          CURRENT_MARKETPLACE: ${{ needs.marketplace.outputs.state }}
+          CURRENT_OPENVSX: ${{ needs.openvsx.outputs.state }}
         run: |
           {
             echo "## ${GITHUB_REF_NAME} publication state"
@@ -321,9 +366,10 @@ jobs:
             echo "| quality matrix | $QUALITY |"
             echo "| canonical artifact | $CANONICAL |"
             echo "| authentication preflight | $PREFLIGHT |"
-            echo "| GitHub release | $GITHUB |"
-            echo "| Visual Studio Marketplace | $MARKETPLACE |"
-            echo "| Open VSX | $OPENVSX |"
+            echo "| Open VSX authentication preflight | $OPENVSX_PREFLIGHT |"
+            echo "| GitHub release | $GITHUB (observed before this attempt: ${CURRENT_GITHUB:-unavailable}) |"
+            echo "| Visual Studio Marketplace | $MARKETPLACE (observed before this attempt: ${CURRENT_MARKETPLACE:-unavailable}) |"
+            echo "| Open VSX | $OPENVSX (observed before this attempt: ${CURRENT_OPENVSX:-unavailable}) |"
             echo
             echo "Observed before any write: github=$PLANNED_GITHUB marketplace=$PLANNED_MARKETPLACE openvsx=$PLANNED_OPENVSX"
           } >> "$GITHUB_STEP_SUMMARY"

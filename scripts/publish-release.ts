@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { verifyArtifact, type ReleaseManifest } from './release-artifact.js';
 import { recoveryPlan, type DestinationInventory } from './verify-release.js';
@@ -72,16 +73,36 @@ export function assetDigest(
 export function githubObservation(
   release: GithubRelease | null,
   assets: readonly GithubAsset[],
-  filename: string,
+  manifest: ReleaseManifest,
+  manifestDigest: string,
+  complete = false,
 ): DestinationInventory {
-  if (!release || release.draft === true)
+  if (!release)
     return { destination: 'github', configured: true, exists: false };
-  const digest = assetDigest(assets, filename);
+  assert.equal(
+    release.tag_name,
+    manifest.identity.tag,
+    'Wrong GitHub release tag',
+  );
+  for (const [name, digest] of [
+    [manifest.filename, manifest.vsixSha256],
+    ['release-manifest.json', manifestDigest],
+  ] as const) {
+    const asset = assets.find((entry) => entry.name === name);
+    if (asset || complete || !release.draft)
+      assert.equal(
+        assetDigest(assets, name),
+        digest,
+        `GitHub asset differs or is missing: ${name}`,
+      );
+  }
+  if (release.draft && !complete)
+    return { destination: 'github', configured: true, exists: false };
   return {
     destination: 'github',
     configured: true,
     exists: true,
-    ...(digest ? { remoteDigest: digest } : {}),
+    remoteDigest: manifest.vsixSha256,
   };
 }
 
@@ -158,11 +179,22 @@ export function verifyHandoff(directory: string): ReleaseManifest {
     identity,
   );
   assert.equal(sha256(bytes), manifest.vsixSha256);
+  const namespace = process.env.OPENVSX_NAMESPACE || null;
+  assert.equal(
+    namespace,
+    manifest.destinations.openvsxNamespace,
+    'Open VSX namespace differs from the canonical manifest',
+  );
+  assert.equal(
+    process.env.OPENVSX_AUTH_MODE || (namespace ? 'pat' : 'not-configured'),
+    manifest.destinations.openvsxMode,
+    'Open VSX mode differs from the canonical manifest',
+  );
   return manifest;
 }
 
 async function api(path: string): Promise<Response> {
-  const token = process.env.GITHUB_TOKEN;
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   return fetch(`https://api.github.com${path}`, {
     headers: {
       accept: 'application/vnd.github+json',
@@ -175,6 +207,8 @@ async function api(path: string): Promise<Response> {
 async function githubInventory(
   manifest: ReleaseManifest,
   repository: string,
+  directory: string,
+  options: { complete?: boolean; published?: boolean } = {},
 ): Promise<DestinationInventory> {
   const release = await api(
     `/repos/${repository}/releases/tags/${manifest.identity.tag}`,
@@ -183,6 +217,8 @@ async function githubInventory(
     return { destination: 'github', configured: true, exists: false };
   assert.ok(release.ok, `GitHub release lookup failed: ${release.status}`);
   const document = (await release.json()) as GithubRelease & { id: number };
+  if (options.published)
+    assert.equal(document.draft, false, 'GitHub release is still a draft');
   const assets = await api(
     `/repos/${repository}/releases/${document.id}/assets`,
   );
@@ -190,7 +226,9 @@ async function githubInventory(
   return githubObservation(
     document,
     (await assets.json()) as GithubAsset[],
-    manifest.filename,
+    manifest,
+    sha256(readFileSync(join(directory, 'release-manifest.json'))),
+    options.complete ?? false,
   );
 }
 
@@ -263,10 +301,11 @@ async function openvsxInventory(
 async function inventory(
   manifest: ReleaseManifest,
   repository: string,
+  directory: string,
 ): Promise<readonly DestinationInventory[]> {
   return Promise.all(
     (['github', 'marketplace', 'openvsx'] as const).map((destination) =>
-      destinationInventory(destination, manifest, repository),
+      destinationInventory(destination, manifest, repository, directory),
     ),
   );
 }
@@ -275,8 +314,10 @@ async function destinationInventory(
   destination: 'github' | 'marketplace' | 'openvsx',
   manifest: ReleaseManifest,
   repository: string,
+  directory: string,
 ): Promise<DestinationInventory> {
-  if (destination === 'github') return githubInventory(manifest, repository);
+  if (destination === 'github')
+    return githubInventory(manifest, repository, directory);
   if (destination === 'marketplace')
     return marketplaceInventory(
       manifest,
@@ -286,6 +327,82 @@ async function destinationInventory(
   if (!namespace)
     return { destination: 'openvsx', configured: false, exists: false };
   return openvsxInventory(manifest, namespace);
+}
+
+/** Use the pinned Open VSX client for its supported token exchange; never log tokens. */
+export async function verifyOpenvsxAuth(
+  directory: string,
+  tools: string,
+): Promise<void> {
+  const manifest = verifyHandoff(directory);
+  const mode = manifest.destinations.openvsxMode;
+  const namespace = process.env.OPENVSX_NAMESPACE;
+  const pat = process.env.OVSX_PAT;
+  if (mode === 'not-configured') {
+    assert.ok(
+      !namespace && !process.env.OPENVSX_AUTH_MODE && !pat,
+      'Unexpected Open VSX configuration',
+    );
+    summarize('Open VSX authentication: not-configured.');
+    return;
+  }
+  assert.equal(
+    namespace,
+    manifest.identity.publisher,
+    'Open VSX namespace differs',
+  );
+  assert.equal(
+    process.env.OPENVSX_AUTH_MODE || (pat ? 'pat' : ''),
+    mode,
+    'Open VSX mode differs from the canonical manifest',
+  );
+  assert.ok(
+    mode === 'pat' ? !!pat?.trim() : !pat,
+    'Missing PAT or conflicting PAT/OIDC configuration',
+  );
+  const require = createRequire(join(tools, 'package.json'));
+  assert.equal(
+    (require('ovsx/package.json') as { version: string }).version,
+    '1.3.0',
+  );
+  const { Registry } = require('ovsx/lib/registry') as {
+    Registry: new () => {
+      verifyPat(namespace: string, token: string): Promise<{ error?: string }>;
+      getRegistryVersion(): Promise<{ trustedPublishingAudience?: string }>;
+      requestTrustedPublishingToken(
+        namespace: string,
+        name: string,
+        token: string,
+      ): Promise<{ value?: string; error?: string }>;
+    };
+  };
+  try {
+    const registry = new Registry();
+    if (mode === 'pat') {
+      const result = await registry.verifyPat(namespace!, pat!);
+      assert.ok(!result.error);
+    } else {
+      const { getIdToken } = require('ovsx/lib/oidc') as {
+        getIdToken(audience: string, options: object): Promise<string>;
+      };
+      const version = await registry.getRegistryVersion();
+      const idToken = await getIdToken(
+        version.trustedPublishingAudience || 'https://open-vsx.org',
+        {},
+      );
+      const result = await registry.requestTrustedPublishingToken(
+        namespace!,
+        manifest.identity.name,
+        idToken,
+      );
+      assert.ok(result.value && !result.error);
+    }
+  } catch {
+    throw new Error(
+      `Open VSX ${mode} authentication failed; verify the namespace credential or trusted publisher registration`,
+    );
+  }
+  summarize(`Open VSX ${mode} authentication verified before publication.`);
 }
 
 function emit(values: Record<string, string>): void {
@@ -332,6 +449,8 @@ if (
     summarize(
       `Verified \`${manifest.filename}\` SHA-256 \`${manifest.vsixSha256}\` for ${manifest.identity.tag}.`,
     );
+  } else if (command === 'openvsx-auth') {
+    await verifyOpenvsxAuth(directory, option('--tools'));
   } else if (command === 'plan') {
     const manifest = verifyHandoff(directory);
     const run = await api(
@@ -346,13 +465,16 @@ if (
       0,
       Math.floor((Date.now() - Date.parse(document.created_at)) / 86_400_000),
     );
-    const statuses = recoveryPlan(await inventory(manifest, repository), {
-      digest: manifest.vsixSha256,
-      ageDays,
-      attempt: document.run_attempt,
-      provenanceAvailable: true,
-      artifactAvailable: existsSync(join(directory, manifest.filename)),
-    });
+    const statuses = recoveryPlan(
+      await inventory(manifest, repository, directory),
+      {
+        digest: manifest.vsixSha256,
+        ageDays,
+        attempt: document.run_attempt,
+        provenanceAvailable: true,
+        artifactAvailable: existsSync(join(directory, manifest.filename)),
+      },
+    );
     const state = Object.fromEntries(
       statuses.map((entry) => [entry.destination, entry.status]),
     );
@@ -381,26 +503,19 @@ if (
       'Unknown destination',
     );
     if (destination === 'github') {
-      // A draft is valid here: the draft is verified before it is published.
-      const release = await api(
-        `/repos/${repository}/releases/tags/${manifest.identity.tag}`,
-      );
-      assert.ok(release.ok, `GitHub release lookup failed: ${release.status}`);
-      const document = (await release.json()) as GithubRelease & { id: number };
-      const assets = await api(
-        `/repos/${repository}/releases/${document.id}/assets`,
-      );
-      assert.ok(assets.ok, `GitHub asset lookup failed: ${assets.status}`);
-      assert.equal(
-        assetDigest((await assets.json()) as GithubAsset[], manifest.filename),
-        manifest.vsixSha256,
-        'GitHub asset bytes differ from the canonical VSIX',
-      );
-      if (args.includes('--published'))
-        assert.equal(document.draft, false, 'GitHub release is still a draft');
+      const entry = await githubInventory(manifest, repository, directory, {
+        complete: true,
+        published: args.includes('--published'),
+      });
+      assert.ok(entry.exists, 'GitHub release is missing');
     } else {
       const registry = destination as 'marketplace' | 'openvsx';
-      let entry = await destinationInventory(registry, manifest, repository);
+      let entry = await destinationInventory(
+        registry,
+        manifest,
+        repository,
+        directory,
+      );
       // Marketplace processing is asynchronous; wait before declaring a conflict.
       for (
         let wait = 0;
@@ -408,7 +523,12 @@ if (
         wait++
       ) {
         await new Promise((resolve) => setTimeout(resolve, 30_000));
-        entry = await destinationInventory(registry, manifest, repository);
+        entry = await destinationInventory(
+          registry,
+          manifest,
+          repository,
+          directory,
+        );
       }
       assert.ok(entry.exists, `${destination} has no published version`);
       assert.equal(
