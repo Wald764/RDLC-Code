@@ -17,7 +17,7 @@ import { createVSIX } from '@vscode/vsce';
 import { createManifest } from './release-artifact.js';
 
 const fixture = 'tests/fixtures/publishing-auth';
-export const authFilename = 'rdlc-code-auth-test-0.0.2.vsix';
+export const authFilename = 'rdlc-code-auth-test-0.0.3.vsix';
 // Reuse the ZIP reader from the pinned packaging tool, as in production verification.
 const { readZip } = createRequire(import.meta.url)(
   '@vscode/vsce/out/zip.js',
@@ -33,7 +33,7 @@ function authMetadata() {
   const metadata = JSON.parse(readFileSync(`${fixture}/package.json`, 'utf8'));
   assert.equal(metadata.publisher, 'Wald764');
   assert.equal(metadata.name, 'rdlc-code-auth-test');
-  assert.equal(metadata.version, '0.0.2');
+  assert.equal(metadata.version, '0.0.3');
   assert.equal(
     metadata.scripts,
     undefined,
@@ -132,7 +132,7 @@ export async function packageAuthTest(
   }
   const record = {
     identity: 'Wald764.rdlc-code-auth-test',
-    version: '0.0.2',
+    version: '0.0.3',
     ...context,
     filename: authFilename,
     sha256: createHash('sha256').update(readFileSync(path)).digest('hex'),
@@ -166,7 +166,7 @@ if (
   );
   assert.equal(
     process.env.GITHUB_REF,
-    'refs/tags/v0.0.2-publishing-test',
+    'refs/tags/v0.0.3-publishing-test',
     'Only the reserved probe tag may publish this fixture',
   );
   const record = await packageAuthTest(resolve('dist/publishing-auth'), {
@@ -176,7 +176,7 @@ if (
   const root = JSON.parse(readFileSync('package.json', 'utf8'));
   const manifest = createManifest({
     identity: {
-      tag: 'v0.0.2-publishing-test',
+      tag: 'v0.0.3-publishing-test',
       commit: record.commit,
       version: record.version,
       publisher: 'Wald764',

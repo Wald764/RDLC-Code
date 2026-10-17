@@ -89,6 +89,7 @@ jobs:
   publish:
     needs: canonical
     uses: ./.github/workflows/publish.yml
+    secrets: inherit
     permissions:
       contents: write
       actions: read

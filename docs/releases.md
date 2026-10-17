@@ -15,14 +15,19 @@ See the [CI/CD contract](../specs/001-rdlc-vscode-editor/contracts/ci-cd.md).
 
 ## Controlled three-destination test
 
-The reserved tag `v0.0.2-publishing-test` triggers `publishing-auth-test.yml` and is
+The reserved tag `v0.0.3-publishing-test` triggers `publishing-auth-test.yml` and is
 explicitly excluded from the stable release trigger. It packages only the inert
-`Wald764.rdlc-code-auth-test` fixture at registry version `0.0.2`. Marketplace
+`Wald764.rdlc-code-auth-test` fixture at registry version `0.0.3`. Marketplace
 versions stay numeric; the test suffix belongs to the Git tag, not the VSIX version.
 Both the test and the stable release call the same `publish.yml` jobs, with the
 same artifact binding, credential preflights, remote asset checks and retry logic.
 The test identity creates a GitHub prerelease and never moves the latest marker.
 Publisher environments remain restricted to `v*` tags.
+
+Both callers inherit secrets into the reusable workflow; credentials are consumed
+only in its environment-scoped jobs. The first tag (`v0.0.2-publishing-test`, run 39069396319) stopped at the Open VSX authentication preflight because the caller
+did not inherit secrets. No destination was published. That tag is retained; the
+corrected attempt uses a new tag and probe version rather than moving it.
 
 The probe's manifest gates describe its own packaging/guard tests, not application
 acceptance. It does not validate the editor's production build or replace the
