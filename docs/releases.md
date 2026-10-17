@@ -2,13 +2,15 @@
 
 ## Current state
 
-Release identity/evidence, configuration and artifact/recovery guard functions
-have local tests. `.github/workflows/release.yml` prepares the secret-free
-validation, reused CI matrix and canonical-artifact stages; it has not been run
-in GitHub Actions and current missing acceptance evidence blocks its first job.
-Publication jobs are not implemented: T071's controlled authentication proof is
-a prerequisite. No tag,
-account, GitHub ruleset, marketplace version or release is created by these tools.
+Release identity/evidence, configuration, artifact/recovery guard functions and
+the publication jobs have local tests. `.github/workflows/release.yml` prepares the
+secret-free validation, reused CI matrix and canonical-artifact stages, then runs a
+destination preflight and the GitHub, Marketplace and optional Open VSX publisher
+jobs from that single verified artifact. None of it has been run in hosted GitHub
+Actions for a production tag: missing acceptance evidence still blocks its first
+job, no `v*` tag has been pushed, and the publication path therefore remains
+**unproven** until T077–T079 are executed. No tag, account, GitHub ruleset,
+marketplace version or release is created by these tools.
 See the [CI/CD contract](../specs/001-rdlc-vscode-editor/contracts/ci-cd.md).
 
 ## GitHub setup before the first release
@@ -62,6 +64,16 @@ See the [CI/CD contract](../specs/001-rdlc-vscode-editor/contracts/ci-cd.md).
 login. Do not print its input environment. Authentication proof must identify
 the tools, controlled publisher, run and canonical VSIX digest without tokens.
 
+Job layout: `validation` (accepted evidence) → `quality` (reused CI matrix) →
+`canonical` (build, package, manifest, immutable artifact) → `preflight` (artifact
+binding, destination inventory, federated publisher check in the `marketplace`
+environment) → `github` (job-local `contents: write` only) → `marketplace`
+(`id-token: write` in the `marketplace` environment) → `openvsx` (`openvsx`
+environment) → `summary` (always runs). Publication cannot start without the
+accepted `github-auth`, `marketplace-auth`, `recovery` and `github-actions`
+records, because the evidence validator runs before the build. Only the Open VSX
+job receives its namespace credential, and only inside that job's environment.
+
 ## Version and acceptance preparation
 
 Prepare a reviewed commit synchronizing only root and extension stable SemVer
@@ -96,28 +108,49 @@ build one canonical universal VSIX and verify package contents and installed
 offline behavior. Bind its explicit SHA-256 to tag/commit, candidate, toolchain,
 lockfile, original workflow run and evidence hashes in an immutable manifest.
 Retrieve handoffs by original run and immutable artifact ID, never a latest name.
-An archive digest is not the VSIX digest; a mismatch must fail explicitly.
+An archive digest is not the VSIX digest; a mismatch must fail explicitly. The
+canonical artifact also carries the compiled verifier scripts, so publisher jobs
+never check out source and never run workspace lifecycle hooks.
 
-Inventory GitHub, Marketplace and configured Open VSX before any write. Publish
-sequentially from the same bytes, without source checkout/build hooks in publisher
-jobs. GitHub notes use explicit previous stable tag bounds; draft assets must be
-complete and verified before publishing. Do not replace assets or make an older
-maintenance version latest ahead of a newer release.
+The source-free `preflight` job downloads that artifact by ID, binds it to the
+tagged commit, the configured publisher and the original run, and inventories
+GitHub, Marketplace and configured Open VSX before any write. It resolves each
+destination to `pending`, `succeeded` or `not-configured`. A destination that
+exists without bytes matching the canonical VSIX — or without any digest to
+compare — is a conflict: the job fails closed and no publisher runs. The same job
+proves the federated identity's publisher rights with the pinned vsce
+`verify-pat --azure-credential`.
+
+Publishers run sequentially and only for a `pending` destination; a `succeeded`
+destination is an explicit verified no-op. Every publisher job re-verifies the
+handoff and re-checks the remote bytes after writing. GitHub notes use explicit
+previous stable tag bounds, the release is created as a draft, its assets are
+proven complete before it is published, assets are never replaced and the latest
+marker is never moved. Marketplace publishes the verified prebuilt VSIX with
+`--azure-credential --packagePath` and no `--skip-duplicate`; an asynchronous
+Marketplace write is waited for with bounded retries and accepted only when the
+downloaded bytes match. Open VSX verifies the configured namespace before
+publishing and uses the bootstrap PAT or the registered trusted-publisher mode.
+The final `summary` job reports every stage and destination result.
 
 On partial failure, use **Re-run failed jobs** on the original run. Do not rerun
-the successful build. Reuse a destination only with matching remote bytes or
-reliable acknowledged prior publication bound to this digest; existing version
-numbers or a lost response are insufficient. Ambiguity is a conflict. Never use
-duplicate skipping, deletion, overwrite, retagging or rebuilding as recovery.
-Guard functions require canonical bytes/provenance and inventory all destinations
-before returning any pending writes. They do not contact registries or acquire
-a same-tag lock: the prepared release workflow declares tag-scoped noncancelling
-concurrency, which still needs controlled operational proof, and publisher jobs
-must supply authenticated evidence. See [recovery proof](validation/release-recovery.md).
+the successful build. A rerun rebuilds no bytes: it reuses the original run and
+artifact ID, re-derives the same plan and resumes only the destinations still
+`pending`. Reuse of an existing version requires matching remote bytes; an
+existing version number, a lost response or duplicate skipping is insufficient.
+Ambiguity is a conflict. Never use duplicate skipping, deletion, overwrite,
+retagging or rebuilding as recovery. Guard functions require canonical
+bytes/provenance and inventory all destinations before returning any pending
+writes. They do not contact registries themselves and do not acquire a same-tag
+lock: the release workflow declares tag-scoped noncancelling concurrency, which
+still needs controlled operational proof, and the planning job supplies the
+authenticated inventory. See [recovery proof](validation/release-recovery.md).
 
 Configure 90-day retention for the canonical artifact, manifest and available
 gate/publication proof, within repository policy. Keep original GitHub VSIX and
 manifest assets durably unmodified. GitHub reruns remain limited to 30 days and
 50 attempts; longer artifact retention does not extend that window. Missing/
 expired provenance or unavailable canonical bytes blocks automatic recovery
-until a separately reviewed path exists. No recovery workflow is provided yet.
+until a separately reviewed path exists. Recovery is therefore limited to
+re-running the failed jobs of the original run while its artifact and provenance
+remain inside that window; no tooling rebuilds, deletes or retags anything.

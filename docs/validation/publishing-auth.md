@@ -63,14 +63,16 @@ Each registry was then queried directly rather than trusted from the run output:
   therefore per-build and valid only for the artifact it was measured on; this is
   one more reason recovery reuses the original artifact instead of rebuilding.
 
-Remaining T071 gaps: the GitHub job-local `GITHUB_TOKEN` publication path belongs to
-the unimplemented release publication jobs (T073), and no production tag-restricted
-release has been exercised. The probe stays public at `0.0.1` and must not be
-overwritten; Open VSX currently relies on a permanent PAT rather than trusted OIDC.
+Remaining T071 gaps: the release publication jobs now exist (T073–T076), but they
+have only been exercised as local tooling and through the manual probe, never by a
+production tag-restricted release. The GitHub job-local `GITHUB_TOKEN` publication
+path is therefore implemented but unproven. The probe stays public at `0.0.1` and
+must not be overwritten; Open VSX currently relies on a permanent PAT rather than
+trusted OIDC.
 
-The temporary `main` deployment-branch rules added for the manual runs can now be
-removed from both the `marketplace` and `openvsx` environments, leaving only the
-release-tag rules.
+The temporary `main` deployment-branch rules added for the manual runs were removed
+from both the `marketplace` and `openvsx` environments, leaving only the release-tag
+rules. That is the operator's statement; T080 covers inspecting the actual settings.
 
 ## Retrieve the Marketplace identity profile
 
