@@ -1,6 +1,10 @@
 # Installed isolation evidence
 
-Date: 2026-10-17. Status: **incomplete**; T062 remains open.
+Updated: 2026-10-18. Status: **owner acceptance reported; instrumented automation
+incomplete**. T062 remains open for the detailed checks below. The owner reported
+isolation satisfactory for the initial release; that report is recorded in the
+tagged readiness record. Production package checks and the three-OS installed
+matrix passed, but do not supply independently retained runtime isolation traces.
 
 Automated checks inspect the actual packaged HTML/JS/CSS, local resource graph,
 strict CSP, nonce-bearing script tags, source-map exclusion and absence of remote

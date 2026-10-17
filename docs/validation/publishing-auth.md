@@ -26,9 +26,19 @@ evidence below are retained. Registry hashes below describe downloads verified
 before retirement; those probe registry downloads may no longer be available.
 Any future probe publication needs a reviewed new version and tag.
 
-Date: 2026-10-17. Status: **Three-destination tagged probe and failed-job recovery
-proven; T071 still open for production acceptance**. The inert probe exercises
-the shared publication jobs, not the editor's stable-release acceptance gates.
+Current status (2026-10-18): **T071 complete for configured PAT mode**. The probe
+and production editor both published successfully through the shared jobs. See
+[release-010.md](release-010.md) for the production tag, run and remote hashes.
+The owner explicitly retained the working Open VSX PAT; OIDC remains untested
+but is not required for that selected mode. T073–T076 are complete; remaining
+hosted failure experiments are tracked under T077–T078 in
+[github-actions.md](github-actions.md).
+
+## Historical authentication and probe observations
+
+The dated observations below describe the evidence available before production
+publication. Earlier production blockers were resolved by the recorded 0.1.0 run;
+historical probe evidence is not a claim that editor acceptance gates ran there.
 
 The user reports Marketplace publisher `Wald764`, an Azure user-assigned managed
 identity, configured GitHub variables and federation for the `marketplace`
@@ -87,8 +97,8 @@ Each registry was then queried directly rather than trusted from the run output:
   therefore per-build and valid only for the artifact it was measured on; this is
   one more reason recovery reuses the original artifact instead of rebuilding.
 
-Remaining T071 gaps: the shared publication jobs have been exercised by the tagged
-probe below, but not by a production editor release. Existing probe versions must
+At the probe stage, the remaining T071 gaps were: the shared publication jobs had
+been exercised by the tagged probe below, but not by a production editor release. Existing probe versions must
 not be overwritten; Open VSX currently relies on a bootstrap PAT rather than
 trusted OIDC.
 
@@ -138,7 +148,9 @@ The follow-up code gives Open VSX the same bounded visibility wait as Marketplac
 and exhaustion. That new wait was not part of the immutable test artifact, so the
 hosted success proves recovery after visibility, not execution of the new wait.
 Production readiness, other injected failure modes, the full recovery window and
-Open VSX OIDC remain unproven; T071 and T073–T076 stay open.
+Open VSX OIDC remained unproven at this point; T071 and T073–T076 were then open.
+The later production run closes their configured-mode implementation/publication
+scope; full failure-injection work remains under T077–T078.
 
 ## Retrieve the Marketplace identity profile
 

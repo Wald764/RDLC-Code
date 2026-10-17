@@ -5,6 +5,9 @@ satisfactory. Detailed timing records and the five-author study below are option
 for the initial release, by explicit owner decision. No timed measurements or
 participant results are claimed. The procedures remain available for future use;
 keyboard accessibility and automated source-budget tests remain required.
+T063 is complete for that approved scope: candidate/release automated checks
+passed and the owner confirmed the functional and keyboard walkthrough. Optional
+protocols below do not imply actual measurements or five-author participation.
 
 ## SC-004 measurement protocol
 
@@ -58,7 +61,8 @@ add/remove columns, add/change/remove row groups and both total scopes, undo/red
 save, close and reopen. Attempt referenced renames/deletions and open their
 diagnostics/source locations. Record each action, accessible labels, visible
 focus, focus recovery after accepted snapshots, and any trap. Component tests
-do not replace this installed workflow. Outcome: unrun.
+do not replace this installed workflow. Outcome: owner-reported acceptance;
+separate per-action focus/accessibility logs were not supplied.
 
 ## SC-001 usability
 
