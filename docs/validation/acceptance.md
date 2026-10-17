@@ -1,6 +1,10 @@
 # Performance, keyboard and usability acceptance
 
-Status: **unrun**, not release evidence. T063 is incomplete. Date: 2026-10-17.
+Updated: 2026-10-18. The maintainer reports keyboard and performance checks as
+satisfactory. Detailed timing records and the five-author study below are optional
+for the initial release, by explicit owner decision. No timed measurements or
+participant results are claimed. The procedures remain available for future use;
+keyboard accessibility and automated source-budget tests remain required.
 
 ## SC-004 measurement protocol
 

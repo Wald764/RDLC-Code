@@ -213,6 +213,8 @@ test('mandatory evidence is complete, candidate-bound, tool-bound and allows onl
     },
   };
   assert.doesNotThrow(() => validateEvidence(record, context));
+  for (const optional of ['performance', 'usability', 'contributor-build'])
+    assert.ok(!requiredEvidence.some((id) => id === optional));
   for (const changed of [
     'package.json',
     'pnpm-lock.yaml',

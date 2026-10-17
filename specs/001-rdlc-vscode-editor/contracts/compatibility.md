@@ -39,7 +39,7 @@ Minimum corpus: 12 files covering supported blank/textbox/table/group/dataset ca
 - **Reference safety**: rename/delete blocked for known references and for opaque analysis that cannot exclude a dependency; diagnostics list the affected locations.
 - **Lifecycle**: source/visual edits, invalid source, stale requests, duplicate requests, split views, applyEdit refusal, dirty save conflicts, failed save, close cancel, and 20 undo/redo operations cause zero silent loss.
 - **Offline/isolation**: installed VSIX loads without network/server; no report-triggered network requests, expression/code execution, entity resolution or data-source access. Exercise local malicious references as well as remote ones.
-- **Accessibility/performance/distribution**: keyboard-only full workflow, SC-004 timings, license/attribution inventory and reproducible contributor build.
+- **Accessibility/performance/distribution**: keyboard-only full workflow, automated source-budget tests, license/attribution inventory and CI build/install checks. Detailed SC-004 timings and independent contributor reproduction are optional for the initial release (owner decision, 2026-10-18); use automated macOS coverage rather than requiring a separate interactive Mac session.
 
 Missing mandatory evidence is a failed gate. Record consumer compatibility as “not verified” unless the exact consumer/version has evidence; do not mislabel an unrun test as passing. See [plan V1–V10](../plan.md#technical-decisions-requiring-validation) for proof obligations before release.
 

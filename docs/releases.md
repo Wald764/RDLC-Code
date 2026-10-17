@@ -40,9 +40,10 @@ are checked before packaging and handoff. Existing `0.0.1` probe versions are re
 
 ## GitHub setup before the first release
 
-1. Protect `main` with reviews and required **Required checks** CI; forbid bypasses
-   for unreviewed workflow/source changes. Use squash merges with validated PR
-   titles. Protect `v*` tag creation, updates and deletion. Grant release authority
+1. In the owner-approved solo-maintainer mode, permit direct pushes to `main` but
+   block force pushes and deletion. CI runs after each push; it is not a pre-push
+   gate. The maintainer reviews changes locally, and release CI still blocks
+   publication on failure. Protect `v*` tag creation, updates and deletion. Grant release authority
    only to maintainers; review the version-preparation PR before tagging.
 2. Create isolated publisher environments restricted to protected release tags.
    Normal tag delivery has no manual environment approval gate. Build jobs use
@@ -89,6 +90,25 @@ are checked before packaging and handoff. Existing `0.0.1` probe versions are re
 login. Do not print its input environment. Authentication proof must identify
 the tools, controlled publisher, run and canonical VSIX digest without tokens.
 
+### Minimal solo-maintainer rulesets
+
+In repository Settings > Rules > Rulesets, create these active rulesets:
+
+- **main** (branch ruleset, target `main`, no bypass): block force pushes and
+  restrict deletions. Direct fast-forward pushes are allowed. Do not require PRs
+  or pre-existing status checks in this solo mode: CI runs on the pushed commit.
+  Release validation and the full CI matrix remain mandatory before publication.
+- **release-tag-creation** (tag ruleset, target `v*`): restrict creations and grant
+  only Repository admin an Always bypass. This permits the maintainer to create
+  release tags while preventing other writers from doing so.
+- **release-tag-immutability** (tag ruleset, target `v*`, no bypass): restrict
+  updates and deletions. Keep this separate from creation so the creation bypass
+  does not also grant permission to move or delete release tags.
+
+Use Active enforcement, not Evaluate or Disabled. Keep publisher environments
+restricted to tags `v*`. Repository administrators can still edit rulesets;
+these rules prevent normal ref writes, not administrative policy changes.
+
 Stable job layout: `validation` (accepted evidence) → `quality` (reused CI matrix) →
 `canonical` (build, package, manifest, immutable artifact) → `preflight` (artifact
 binding, destination inventory, federated publisher check in the `marketplace`
@@ -105,6 +125,15 @@ writer explicitly sets `GH_REPO` and a job-local `GITHUB_TOKEN` for both `gh` an
 the REST verifier, so no checkout is needed to select the repository or read drafts.
 
 ## Version and acceptance preparation
+
+For the initial release, detailed performance records, a five-author usability
+study and independent contributor reproduction are optional (owner decision,
+2026-10-18). The validator does not require `performance`, `usability` or
+`contributor-build` evidence IDs. Retain maintainer keyboard/isolation/functional
+acceptance, automated budget tests, the complete three-OS CI matrix, licenses,
+candidate binding and publication/authentication/recovery evidence. Hosted macOS
+tests satisfy the initial macOS requirement; no separate interactive Mac is needed.
+Optional tests not performed must remain recorded as unrun, not passed.
 
 Prepare a reviewed commit synchronizing only root and extension stable SemVer
 versions (and lockfile when needed). Private packages keep independent versions.

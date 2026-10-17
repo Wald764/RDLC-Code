@@ -35,7 +35,7 @@ workflow, trust, version and recovery contract is [CI/CD](contracts/ci-cd.md).
 frozen pnpm lockfile, pnpm-store cache, pinned packaging/publishing tools, SemVer release tags,
 Conventional Commits compatible with the required gitmoji prefix, and secret-free build jobs.
 
-**Performance Goals**: SC-004: ≤1 MiB (1,048,576 bytes) / 100 editable textboxes usable in ≤3 seconds for at least 19/20 opens; ≤200 ms for at least 95/100 property interactions, on a recorded reference workstation. Use SC-004's open-command-to-painted/enabled-snapshot and property-commit-to-painted-accepted-change boundaries, with VS Code running and a fresh webview for each open. Batch gesture commits and derive scenes from accepted snapshots. Workers are deferred unless measurements require them.
+**Performance Goals**: SC-004: ≤1 MiB (1,048,576 bytes) / 100 editable textboxes usable in ≤3 seconds for at least 19/20 opens; ≤200 ms for at least 95/100 property interactions. As approved on 2026-10-18, detailed reference-workstation measurements are optional for the initial release; retain automated budget tests and maintainer functional acceptance. Optional measurements use SC-004's paint boundaries and fresh webviews. Batch gesture commits and derive scenes from accepted snapshots. Workers are deferred unless measurements require them.
 
 **Constraints**: Entirely offline after VSIX installation; local AOT assets; restrictive CSP; no execution of report expressions/code, entity resolution, data queries, or remote resource retrieval; lossless untouched XML; atomic source edits; keyboard accessibility; MIT original code and reviewed dependency licenses. Initial parser budgets are documented in [module contracts](contracts/modules.md).
 

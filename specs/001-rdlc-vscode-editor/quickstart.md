@@ -72,6 +72,12 @@ Open fixtures containing embedded code, expressions, queries, remote/local exter
 
 ### 6. Accessibility and performance
 
+Initial-release policy (2026-10-18): retain keyboard acceptance and automated
+budget tests. The detailed timing protocol below, five-author usability study
+and independent contributor reproduction are optional, not release blockers.
+The required three-OS automated matrix includes macOS; a separate interactive
+Mac session is not required. See `contracts/ci-cd.md` for mandatory evidence.
+
 With the keyboard alone, complete create/select/property edit/delete, dataset/field/table/column/group/total editing, undo/redo and save; verify labels, visible focus and no focus traps. For a 1 MiB (1,048,576 bytes)/100-textbox supported fixture, measure 20 opens and 100 property interactions against SC-004: open command to painted first accepted snapshot with supported property controls enabled, each time starting with a closed report editor and fresh webview in running VS Code; valid property commit to the corresponding painted accepted document change. Record failures rather than assuming performance from the architecture.
 
 ## Completion evidence

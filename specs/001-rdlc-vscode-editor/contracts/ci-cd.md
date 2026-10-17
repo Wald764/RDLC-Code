@@ -28,7 +28,10 @@ the only CI/CD platform; using Entra as an identity provider does not introduce 
 - Fetch the release tag and required main/tag history, resolve its commit (including annotated
   tags), and check out that detached commit. Verify it is on protected `main` history. Tags MUST
   be protected against unauthorized creation, updates and deletion. GitHub rulesets MUST protect
-  main reviews and required checks; release code/workflows must come from reviewed source.
+   main against force pushes and deletion. Under the owner-approved solo-maintainer
+   policy (2026-10-18), direct pushes are allowed and changes are reviewed locally;
+   PRs and pre-push status checks are not required. CI still runs on every main
+   push, and all release quality/evidence gates must pass before publication.
 - Commit subjects use `:gitmoji: type(scope): description` per `AGENTS.md`, with an English
   imperative description. Conventional Commit interpretation removes only the leading gitmoji
   shortcode plus space. Permit the conventional breaking-change `!` and `BREAKING CHANGE:` footer.
@@ -80,9 +83,17 @@ Prepare and review the version-synchronization commit before final candidate acc
 `docs/validation/release-readiness.md` MUST identify that tested candidate commit, final
 root/extension versions, tool versions, required evidence paths and results, and applicable
 publication destinations/authentication modes. Records MUST include preservation/compatibility,
-lifecycle, offline/isolation, performance/usability/keyboard, contributor-build/license and
+lifecycle, offline/isolation, keyboard, license and
 applicable V1–V10 evidence. Open VSX may be not-configured; when configured, evidence is required
 for the authentication mode being used. Missing, failed or unrun mandatory evidence blocks release.
+
+Initial-release scope approved on 2026-10-18: detailed performance records,
+five-author usability studies and independent contributor reproduction are optional,
+not mandatory evidence categories. Automated minimum/stable desktop tests remain
+required on all three OSes; a separate interactive macOS session is not required.
+V7 retains automated source-budget correctness and maintainer acceptance, without
+requiring timed samples. Keyboard and isolation checks, licenses, source preservation,
+candidate binding, publication authentication and recovery remain mandatory.
 
 Before any artifact upload, `scripts/validate-release.ts` MUST validate these records and reject
 stale evidence. The tag MUST equal the tested candidate commit or differ only in explicitly

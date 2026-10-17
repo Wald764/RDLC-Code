@@ -4,7 +4,7 @@
 
 | Dependency                                            | License                            | Use / distribution                                                  |
 | ----------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------- |
-| saxes 6.0.0                                           | ISC                                | Strict domain XML validation; not yet imported by the scaffold host |
+| saxes 6.0.0                                           | ISC                                | Bundled strict domain XML validation; full upstream notices shipped |
 | xmlchars 2.2.0                                        | MIT                                | saxes transitive character validation                               |
 | Angular 22.2.3                                        | MIT                                | Static AOT designer; generated full notices shipped                 |
 | RxJS 7.8.2                                            | Apache-2.0                         | Angular peer; complete license included where bundled               |
@@ -24,7 +24,11 @@ Only esbuild lifecycle scripts are approved. Optional native watcher/cache,
 credential-store and signing builds are denied; they are not needed by this
 unsigned, bundled scaffold. No dependency tree is shipped in the VSIX.
 
-Distribution blockers: final bundled parser license texts must be added when
-the host starts importing parser code; complete final shipped dependency inventory
-and package-content audit belong to T064/T079. No public-distribution approval
-is implied by the foundation review.
+Initial-release review updated 2026-10-18: `THIRD_PARTY_NOTICES.md` now contains
+the complete saxes 6.0.0 upstream license (including inherited notices) and
+xmlchars 2.2.0 MIT license, checked against their versioned upstream sources.
+The build copies this file into the extension and package verification requires
+the exact reviewed bytes. Angular's generated full license inventory accompanies
+the static bundle; the original project MIT license is packaged as LICENSE.txt.
+There are no unresolved license incompatibilities in this reviewed inventory.
+Build/dev tools and Microsoft reference material are not included in the VSIX.
