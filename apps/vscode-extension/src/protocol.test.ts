@@ -16,6 +16,22 @@ const edit = {
   operation: 'setProperty',
   payload: { property: 'text', value: 'safe <text>' },
 };
+test('authoring envelopes accept only closed string-valued action payloads', () => {
+  const author = {
+    ...edit,
+    operation: 'author',
+    payload: { action: 'createField', name: 'Amount', type: 'decimal' },
+  };
+  assert.ok(validateMessage(author));
+  for (const payload of [
+    { action: 'constructor' },
+    { action: 'createField', name: 'Amount', type: 'decimal', xml: '<Field/>' },
+    { action: 'createField', name: 'Amount' },
+    { action: 'setColumnWidth', column: 1, width: '1in' },
+    { action: 'deleteDataset', path: 'other.rdlc' },
+  ])
+    assert.equal(validateMessage({ ...author, payload }), null);
+});
 test('protocol v1 accepts only bounded plain known envelopes', () => {
   assert.ok(validateMessage({ protocol: 1, kind: 'ready' }));
   assert.ok(validateMessage(edit));

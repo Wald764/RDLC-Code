@@ -45,6 +45,36 @@
     </div>
     @if (selected(); as item) {
       <rdlc-textbox-properties [item]="item" (commit)="commit($event)" />
+      @for (
+        dataset of host.snapshot()?.authoring?.datasets ?? [];
+        track dataset.id
+      ) {
+        <form (submit)="$event.preventDefault(); bindField(field.value)">
+          <label
+            >Bind selected textbox to {{ dataset.name }} field
+            <select #field>
+              @for (field of dataset.fields; track field.id) {
+                <option [value]="field.name" [disabled]="field.type === null">
+                  {{ field.name }}
+                </option>
+              }
+            </select></label
+          >
+          <button type="submit">Bind field</button>
+        </form>
+      }
+    }
+    @for (snapshot of [host.snapshot()]; track snapshot?.version) {
+      @if (
+        snapshot?.status === 'editable' && snapshot?.authoring;
+        as authoring
+      ) {
+        <rdlc-authoring
+          [state]="authoring"
+          [selected]="selected()"
+          (request)="author($event)"
+        />
+      }
     }
     <rdlc-diagnostics
       [diagnostics]="diagnostics()"

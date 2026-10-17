@@ -1,0 +1,171 @@
+<fieldset [disabled]="!table().structural">
+  <legend>Row groups and scoped totals</legend>
+  <form
+    (submit)="
+      $event.preventDefault();
+      request.emit({
+        targetId: table().id,
+        payload: {
+          action: 'addGroup',
+          name: name.value,
+          expression: expression.value,
+        },
+      })
+    "
+  >
+    <label>Group name <input #name required /></label
+    ><label
+      >Grouping expression
+      <input #expression value="=Fields!Label.Value" required /></label
+    ><button type="submit">Add group</button>
+  </form>
+  @for (group of table().groups; track group.id) {
+    @if (group.expression) {
+      <form
+        (submit)="
+          $event.preventDefault();
+          request.emit({
+            targetId: group.id,
+            payload: {
+              action: 'changeGroup',
+              name: changedName.value,
+              expression: changedExpression.value,
+            },
+          })
+        "
+      >
+        <label
+          >Group name
+          <input #changedName [value]="group.name" required /></label
+        ><label
+          >Grouping expression
+          <input
+            #changedExpression
+            [value]="group.expression"
+            required /></label
+        ><button type="submit">Change group</button>
+      </form>
+      <button
+        type="button"
+        (click)="
+          request.emit({
+            targetId: group.id,
+            payload: { action: 'removeGroup' },
+          })
+        "
+      >
+        Remove {{ group.name }}
+      </button>
+    }
+  }
+  <form
+    (submit)="
+      $event.preventDefault();
+      request.emit({
+        targetId: table().id,
+        payload: {
+          action: 'addTotal',
+          field: field.value,
+          scope: scope.value,
+          column: column.value,
+        },
+      })
+    "
+  >
+    <label
+      >Sum field
+      <select #field>
+        @for (field of fields(); track field.id) {
+          <option [value]="field.name">{{ field.name }}</option>
+        }
+      </select></label
+    >
+    <label
+      >Total scope
+      <select #scope>
+        <option [value]="table().dataset">
+          Dataset-wide report total ({{ table().dataset }})
+        </option>
+        @for (group of table().groups; track group.id) {
+          @if (group.expression) {
+            <option [value]="group.name">
+              Group subtotal: {{ group.name }}
+            </option>
+          }
+        }
+      </select></label
+    >
+    <label
+      >Column (zero-based)
+      <input
+        #column
+        type="number"
+        min="0"
+        [max]="table().columns - 1"
+        value="0"
+        required /></label
+    ><button type="submit">Add total row</button>
+  </form>
+  @for (row of table().rows; track $index; let rowIndex = $index) {
+    @if (row.total) {
+      <form
+        (submit)="
+          $event.preventDefault();
+          request.emit({
+            targetId: table().id,
+            payload: {
+              action: 'changeTotal',
+              field: field.value,
+              scope: scope.value,
+              column: column.value,
+              row: '' + rowIndex,
+            },
+          })
+        "
+      >
+        <label
+          >Sum field
+          <select #field>
+            @for (field of fields(); track field.id) {
+              <option [value]="field.name">{{ field.name }}</option>
+            }
+          </select></label
+        >
+        <label
+          >Total scope
+          <select #scope>
+            <option [value]="table().dataset">Dataset-wide report total</option>
+            @for (group of table().groups; track group.id) {
+              @if (group.expression) {
+                <option [value]="group.name">
+                  Group subtotal: {{ group.name }}
+                </option>
+              }
+            }
+          </select></label
+        >
+        <label
+          >Column (zero-based)
+          <input
+            #column
+            type="number"
+            min="0"
+            [max]="table().columns - 1"
+            value="0"
+            required /></label
+        ><button type="submit">Change total row {{ rowIndex }}</button>
+      </form>
+      <button
+        type="button"
+        (click)="
+          request.emit({
+            targetId: table().id,
+            payload: { action: 'removeTotal', row: '' + rowIndex },
+          })
+        "
+      >
+        Remove total row {{ rowIndex }}
+      </button>
+    }
+  }
+</fieldset>

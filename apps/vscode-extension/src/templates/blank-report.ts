@@ -1,0 +1,10 @@
+/** RDL 2016/01 single section; no invented data source, query or runtime metadata. */
+export const blankReport = `<?xml version="1.0" encoding="utf-8"?>
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition">
+  <ReportSections><ReportSection>
+    <Body><ReportItems></ReportItems><Height>2in</Height></Body>
+    <Width>6.5in</Width>
+    <Page><PageHeight>11in</PageHeight><PageWidth>8.5in</PageWidth><LeftMargin>1in</LeftMargin><RightMargin>1in</RightMargin><TopMargin>1in</TopMargin><BottomMargin>1in</BottomMargin></Page>
+  </ReportSection></ReportSections>
+</Report>
+`;

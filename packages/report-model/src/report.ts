@@ -5,6 +5,76 @@ import type { Diagnostic } from './diagnostics.js';
 export const RDL_2016 =
   'http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition';
 
+export const DESIGNER_NAMESPACE =
+  'http://schemas.microsoft.com/SQLServer/reporting/reportdesigner';
+export const fieldTypes = {
+  text: 'System.String',
+  Boolean: 'System.Boolean',
+  Int32: 'System.Int32',
+  Int64: 'System.Int64',
+  decimal: 'System.Decimal',
+  double: 'System.Double',
+  'date/time': 'System.DateTime',
+} as const;
+export type FieldType = keyof typeof fieldTypes;
+/** Field names are unique per dataset; existing mappings/calculated fields are source-owned. */
+export interface DatasetField {
+  readonly node: XmlNode;
+  readonly name: string;
+  readonly dataField: string | null;
+  readonly calculatedValue: string | null;
+  readonly typeName: string | null;
+  readonly type: FieldType | null;
+}
+/** No data connection or execution; new datasets are query-free local declarations. */
+export interface LocalDataset {
+  readonly node: XmlNode;
+  readonly name: string;
+  readonly fields: readonly DatasetField[];
+  readonly query: XmlNode | null;
+}
+export interface TableColumn {
+  readonly node: XmlNode;
+  readonly member: XmlNode;
+  readonly width: string;
+}
+export interface TableCell {
+  readonly node: XmlNode;
+  readonly textbox: Textbox | null;
+}
+export interface TableRow {
+  readonly node: XmlNode;
+  readonly member: XmlNode;
+  readonly height: string;
+  readonly cells: readonly TableCell[];
+}
+export interface RowGroup {
+  readonly node: XmlNode;
+  readonly member: XmlNode;
+  readonly name: string;
+  readonly expressions: readonly string[];
+}
+/** Totals are explicit static rows with unevaluated expressions and explicit scope. */
+export interface TotalDefinition {
+  readonly cell: TableCell;
+  readonly expression: string;
+  readonly scope: string;
+  readonly kind: 'group' | 'dataset';
+}
+/** Matrix, spanning and opaque structural features are preservation-only. */
+export interface Table {
+  readonly node: XmlNode;
+  readonly name: string;
+  readonly dataset: string | null;
+  readonly bounds: TextboxBounds;
+  readonly columns: readonly TableColumn[];
+  readonly rows: readonly TableRow[];
+  readonly groups: readonly RowGroup[];
+  readonly totals: readonly TotalDefinition[];
+  readonly structural: boolean;
+  readonly blockedReason: string | null;
+}
+
 export interface LengthValue {
   readonly raw: string;
   readonly pixels: number;
@@ -78,6 +148,8 @@ export interface ReportProjection {
   readonly capabilities: readonly string[];
   readonly section: ReportSection | null;
   readonly textboxes: readonly Textbox[];
+  readonly datasets: readonly LocalDataset[];
+  readonly tables: readonly Table[];
   readonly preserved: readonly PreservedRegion[];
   readonly diagnostics: readonly Diagnostic[];
 }

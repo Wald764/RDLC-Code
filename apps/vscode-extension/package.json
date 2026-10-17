@@ -1,14 +1,14 @@
 {
   "name": "rdlc-code",
   "displayName": "RDLC Code",
-  "description": "Source-preserving RDLC authoring foundations (editor features pending).",
+  "description": "Offline source-preserving RDLC report designer.",
   "publisher": "rdlc-code",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.110.0"
+    "vscode": "^1.142.0"
   },
   "categories": [
     "Other"
@@ -37,6 +37,10 @@
       }
     ],
     "commands": [
+      {
+        "command": "rdlcCode.newReport",
+        "title": "RDLC Code: New Report"
+      },
       {
         "command": "rdlcCode.openDesigner",
         "title": "RDLC Code: Open Designer"

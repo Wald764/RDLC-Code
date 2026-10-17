@@ -1,0 +1,66 @@
+<section aria-label="Report authoring">
+  <p role="status">
+    Controls reflect the accepted document. After an edit, reselect the item;
+    obsolete drafts are discarded.
+  </p>
+  <form
+    aria-label="Create textbox"
+    (submit)="
+      $event.preventDefault();
+      request.emit({
+        targetId: state().id,
+        payload: { action: 'createTextbox', name: name.value },
+      })
+    "
+  >
+    <label
+      >Textbox name
+      <input #name required pattern="[A-Za-z_][A-Za-z0-9_]*" /></label
+    ><button type="submit">Create textbox</button>
+  </form>
+  @if (selected(); as item) {
+    <form
+      aria-label="Delete textbox"
+      (submit)="
+        $event.preventDefault();
+        request.emit({
+          targetId: item.id,
+          payload: {
+            action: 'deleteTextbox',
+            confirm: confirmation.checked ? 'delete-contained-content' : '',
+          },
+        })
+      "
+    >
+      <label
+        ><input #confirmation type="checkbox" required />Delete
+        {{ item.name }} including all contained unsupported XML</label
+      ><button type="submit">Delete textbox</button>
+    </form>
+  }
+  <fieldset>
+    <legend>Page and body (RdlSize units)</legend>
+    @for (property of pageProperties; track property) {
+      <form
+        (submit)="
+          $event.preventDefault();
+          request.emit({
+            targetId: state().id,
+            payload: {
+              action: 'setPage',
+              property: property,
+              value: value.value,
+            },
+          })
+        "
+      >
+        <label
+          >{{ property }}
+          <input #value [value]="state().page[property]" required /></label
+        ><button type="submit">Apply {{ property }}</button>
+      </form>
+    }
+  </fieldset>
+  <rdlc-datasets [state]="state()" (request)="request.emit($event)" />
+  <rdlc-table-properties [state]="state()" (request)="request.emit($event)" />
+</section>

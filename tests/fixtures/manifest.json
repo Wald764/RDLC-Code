@@ -2,6 +2,83 @@
   "schemaVersion": 1,
   "fixtures": [
     {
+      "id": "local-blank",
+      "path": "datasets/blank.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": ["vendor/02-structures/2.6-reportsection.md"],
+      "operation": "Create a textbox and local dataset in a blank single-section report",
+      "editFootprint": [
+        "Insertion into Body.ReportItems and Report.DataSets only"
+      ],
+      "expectedDiagnostics": [],
+      "preservation": "Blank template has no invented query/data source; all untouched source remains exact",
+      "consumerEvidence": null
+    },
+    {
+      "id": "local-seven-types",
+      "path": "datasets/local.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.325-dataset.md",
+        "vendor/02-structures/2.328-field.md"
+      ],
+      "operation": "Project seven local field declarations; rename/remove unreferenced fields",
+      "editFootprint": [
+        "Selected Name attribute or explicitly removed Field subtree"
+      ],
+      "expectedDiagnostics": [],
+      "preservation": "Exact type metadata and DataField mappings; no Query synthesis or execution",
+      "consumerEvidence": null
+    },
+    {
+      "id": "local-preserved-metadata",
+      "path": "datasets/preserved.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.325-dataset.md",
+        "vendor/02-structures/2.328-field.md"
+      ],
+      "operation": "Append a typed field; refuse unsafe changes to referenced/unknown fields",
+      "editFootprint": ["Zero-length insertion at existing Fields closing tag"],
+      "expectedDiagnostics": [],
+      "preservation": "Query, calculated Value, application mapping, foreign metadata, comments and rebound prefixes remain exact",
+      "consumerEvidence": null
+    },
+    {
+      "id": "grouped-table-scoped-totals",
+      "path": "tables/grouped.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.27-tablixrows.md",
+        "vendor/02-structures/2.29-tablixcells.md",
+        "vendor/02-structures/2.34.5-tablixmember.group.md",
+        "vendor/02-structures/2.34.8-tablixmember.keepwithgroup.md"
+      ],
+      "operation": "Atomic column, group and scoped total-row authoring",
+      "editFootprint": [
+        "Body columns/cells, matched hierarchy members and declared Width/Height scalars only"
+      ],
+      "expectedDiagnostics": [],
+      "preservation": "Per-row counts match hierarchy leaves; group subtotal is inside ByLabel, dataset-wide total outside; untouched datasets and source remain exact",
+      "consumerEvidence": null
+    },
+    {
       "id": "lexical-extensions",
       "path": "xml/lexical.rdlc",
       "provenance": "Synthetic, authored by RDLC Code contributors",

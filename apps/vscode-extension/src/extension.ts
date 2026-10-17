@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { RdlcEditorProvider } from './editor-provider.js';
+import { newReport } from './commands/new-report.js';
 import {
   openActiveDesigner,
   openActiveSource,
@@ -7,6 +8,7 @@ import {
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
+    vscode.commands.registerCommand('rdlcCode.newReport', newReport),
     vscode.window.registerCustomEditorProvider(
       'rdlcCode.designer',
       new RdlcEditorProvider(context.extensionUri),

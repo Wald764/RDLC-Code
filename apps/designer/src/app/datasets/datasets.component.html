@@ -1,0 +1,128 @@
+<section aria-label="Local datasets">
+  <h2>Local datasets — declarations only</h2>
+  <form
+    aria-label="Create dataset"
+    (submit)="
+      $event.preventDefault();
+      request.emit({
+        targetId: state().id,
+        payload: { action: 'createDataset', name: datasetName.value },
+      })
+    "
+  >
+    <label
+      >Dataset name
+      <input #datasetName required pattern="[A-Za-z_][A-Za-z0-9_]*"
+    /></label>
+    <button type="submit">Create dataset</button>
+  </form>
+  @for (dataset of state().datasets; track dataset.id) {
+    <fieldset>
+      <legend>{{ dataset.name }}</legend>
+      <form
+        (submit)="
+          $event.preventDefault();
+          request.emit({
+            targetId: dataset.id,
+            payload: { action: 'renameDataset', name: renamed.value },
+          })
+        "
+      >
+        <label
+          >Dataset name
+          <input #renamed [value]="dataset.name" required /></label
+        ><button type="submit">Rename dataset</button>
+      </form>
+      <button
+        type="button"
+        (click)="
+          request.emit({
+            targetId: dataset.id,
+            payload: { action: 'deleteDataset' },
+          })
+        "
+      >
+        Delete dataset
+      </button>
+      <form
+        aria-label="Create field"
+        (submit)="
+          $event.preventDefault();
+          request.emit({
+            targetId: dataset.id,
+            payload: {
+              action: 'createField',
+              name: fieldName.value,
+              type: fieldType.value,
+            },
+          })
+        "
+      >
+        <label
+          >Field name
+          <input #fieldName required pattern="[A-Za-z_][A-Za-z0-9_]*"
+        /></label>
+        <label
+          >Field type
+          <select #fieldType>
+            @for (type of types; track type) {
+              <option [value]="type">{{ type }}</option>
+            }
+          </select></label
+        >
+        <button type="submit">Add field</button>
+      </form>
+      @for (field of dataset.fields; track field.id) {
+        <fieldset [disabled]="field.type === null">
+          <legend>
+            {{ field.name }} —
+            {{ field.type ?? 'unknown type: preservation-only' }}
+          </legend>
+          <form
+            (submit)="
+              $event.preventDefault();
+              request.emit({
+                targetId: field.id,
+                payload: { action: 'renameField', name: changed.value },
+              })
+            "
+          >
+            <label
+              >Field name
+              <input #changed [value]="field.name" required /></label
+            ><button type="submit">Rename field</button>
+          </form>
+          <form
+            (submit)="
+              $event.preventDefault();
+              request.emit({
+                targetId: field.id,
+                payload: { action: 'setFieldType', type: changedType.value },
+              })
+            "
+          >
+            <label
+              >Field type
+              <select #changedType [value]="field.type">
+                @for (type of types; track type) {
+                  <option [value]="type">{{ type }}</option>
+                }
+              </select></label
+            ><button type="submit">Set type</button>
+          </form>
+          <button
+            type="button"
+            (click)="
+              request.emit({
+                targetId: field.id,
+                payload: { action: 'deleteField' },
+              })
+            "
+          >
+            Delete field
+          </button>
+        </fieldset>
+      }
+    </fieldset>
+  }
+</section>

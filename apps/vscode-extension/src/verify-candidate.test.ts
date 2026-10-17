@@ -80,3 +80,37 @@ test('namespace edits cannot silently reinterpret untouched descendants', () => 
     /namespace/i,
   );
 });
+
+test('explicit subtree deletion verifies surviving sibling namespaces and untouched lexical source', () => {
+  const snapshot = {
+    uri: 'fixture:delete',
+    version: 1,
+    source: '<a xmlns:p="urn:p"><p:b/><p:c/></a>',
+    eol: '\n' as const,
+  };
+  const start = snapshot.source.indexOf('<p:b');
+  const plan: PatchPlan = {
+    version: 1,
+    patches: [
+      {
+        version: 1,
+        start,
+        end: start + 6,
+        expected: '<p:b/>',
+        replacement: '',
+      },
+    ],
+    footprint: [{ start, end: start + 6 }],
+    namespaceDependencies: [],
+  };
+  assert.equal(
+    verifyCandidate(
+      snapshot,
+      plan,
+      (candidate) =>
+        candidate.root?.children.length === 1 &&
+        candidate.root.children[0]?.expandedName.namespaceUri === 'urn:p',
+    ).source,
+    snapshot.source.replace('<p:b/>', ''),
+  );
+});

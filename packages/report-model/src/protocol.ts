@@ -1,8 +1,43 @@
-import { textboxProperties } from './editing.js';
+import {
+  authoringFields,
+  textboxProperties,
+  type AuthoringAction,
+} from './editing.js';
 import type { EditIntent } from './editing.js';
 import type { Diagnostic } from './diagnostics.js';
 import type { DesignScene } from './scene.js';
 import type { ReportProjection } from './report.js';
+
+export interface AuthoringState {
+  readonly id: string;
+  readonly page: Readonly<Record<string, string>>;
+  readonly datasets: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly fields: readonly {
+      readonly id: string;
+      readonly name: string;
+      readonly type: string | null;
+    }[];
+  }[];
+  readonly tables: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly dataset: string | null;
+    readonly structural: boolean;
+    readonly reason: string | null;
+    readonly columns: number;
+    readonly rows: readonly {
+      readonly cells: readonly { readonly id: string; readonly text: string }[];
+      readonly total: boolean;
+    }[];
+    readonly groups: readonly {
+      readonly id: string;
+      readonly name: string;
+      readonly expression: string;
+    }[];
+  }[];
+}
 
 export type ClientMessage =
   | { readonly protocol: 1; readonly kind: 'ready' }
@@ -23,6 +58,7 @@ export type HostMessage =
         'status' | 'capabilities' | 'diagnostics'
       >;
       readonly scene: DesignScene | null;
+      readonly authoring?: AuthoringState | null;
     }
   | {
       readonly protocol: 1;
@@ -181,6 +217,91 @@ function scene(value: unknown, expectedVersion: number): boolean {
   );
 }
 
+function authoring(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  return (
+    record(value) &&
+    keys(value, ['id', 'page', 'datasets', 'tables']) &&
+    id(value.id) &&
+    record(value.page) &&
+    Object.keys(value.page).every(
+      (key) =>
+        [
+          'width',
+          'height',
+          'top',
+          'right',
+          'bottom',
+          'left',
+          'bodyWidth',
+          'bodyHeight',
+        ].includes(key) && string((value.page as Record<string, unknown>)[key]),
+    ) &&
+    Array.isArray(value.datasets) &&
+    value.datasets.every(
+      (dataset) =>
+        record(dataset) &&
+        keys(dataset, ['id', 'name', 'fields']) &&
+        id(dataset.id) &&
+        string(dataset.name) &&
+        Array.isArray(dataset.fields) &&
+        dataset.fields.every(
+          (field) =>
+            record(field) &&
+            keys(field, ['id', 'name', 'type']) &&
+            id(field.id) &&
+            string(field.name) &&
+            (field.type === null || string(field.type)),
+        ),
+    ) &&
+    Array.isArray(value.tables) &&
+    value.tables.every(
+      (table) =>
+        record(table) &&
+        keys(table, [
+          'id',
+          'name',
+          'dataset',
+          'structural',
+          'reason',
+          'columns',
+          'rows',
+          'groups',
+        ]) &&
+        id(table.id) &&
+        string(table.name) &&
+        (table.dataset === null || string(table.dataset)) &&
+        typeof table.structural === 'boolean' &&
+        (table.reason === null || string(table.reason)) &&
+        version(table.columns) &&
+        Array.isArray(table.rows) &&
+        table.rows.every(
+          (row) =>
+            record(row) &&
+            keys(row, ['cells', 'total']) &&
+            typeof row.total === 'boolean' &&
+            Array.isArray(row.cells) &&
+            row.cells.every(
+              (cell) =>
+                record(cell) &&
+                keys(cell, ['id', 'text']) &&
+                id(cell.id) &&
+                string(cell.text),
+            ),
+        ) &&
+        Array.isArray(table.groups) &&
+        table.groups.every(
+          (group) =>
+            record(group) &&
+            keys(group, ['id', 'name', 'expression']) &&
+            id(group.id) &&
+            string(group.name) &&
+            string(group.expression),
+        ),
+    )
+  );
+}
+
 export function validateMessage(value: unknown): ProtocolMessage | null {
   // Host snapshots carry a full scene; client intents retain the smaller budget.
   const snapshot = record(value) && value.kind === 'snapshot';
@@ -232,13 +353,23 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
         id(value.requestId) &&
         version(value.baseVersion) &&
         id(value.targetId) &&
-        value.operation === 'setProperty' &&
         record(value.payload) &&
-        keys(value.payload, ['property', 'value']) &&
-        (textboxProperties as readonly string[]).includes(
-          String(value.payload.property),
-        ) &&
-        string(value.payload.value);
+        ((value.operation === 'setProperty' &&
+          keys(value.payload, ['property', 'value']) &&
+          (textboxProperties as readonly string[]).includes(
+            String(value.payload.property),
+          ) &&
+          string(value.payload.value)) ||
+          (value.operation === 'author' &&
+            string(value.payload.action) &&
+            Object.hasOwn(authoringFields, value.payload.action) &&
+            keys(value.payload, [
+              'action',
+              ...authoringFields[value.payload.action as AuthoringAction],
+            ]) &&
+            authoringFields[value.payload.action as AuthoringAction].every(
+              (key) => string((value.payload as Record<string, unknown>)[key]),
+            )));
       break;
     case 'openSource':
       valid =
@@ -271,7 +402,14 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
       break;
     case 'snapshot':
       valid =
-        keys(value, ['protocol', 'kind', 'version', 'projection', 'scene']) &&
+        keys(value, [
+          'protocol',
+          'kind',
+          'version',
+          'projection',
+          'scene',
+          'authoring',
+        ]) &&
         version(value.version) &&
         record(value.projection) &&
         keys(value.projection, ['status', 'capabilities', 'diagnostics']) &&
@@ -280,7 +418,8 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
         ) &&
         strings(value.projection.capabilities) &&
         diagnostics(value.projection.diagnostics) &&
-        scene(value.scene, value.version);
+        scene(value.scene, value.version) &&
+        authoring(value.authoring);
       break;
   }
   return valid ? (value as unknown as ProtocolMessage) : null;

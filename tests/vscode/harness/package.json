@@ -4,6 +4,6 @@
   "version": "0.0.0",
   "private": true,
   "engines": {
-    "vscode": "^1.110.0"
+    "vscode": "^1.142.0"
   }
 }

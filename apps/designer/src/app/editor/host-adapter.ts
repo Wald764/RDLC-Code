@@ -1,5 +1,8 @@
 import { Injectable, signal } from '@angular/core';
-import { validateMessage } from '@rdlc/report-model/protocol';
+import {
+  validateMessage,
+  type AuthoringState,
+} from '@rdlc/report-model/protocol';
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 import type { EditIntent } from '@rdlc/report-model/editing';
 import type { DesignScene } from '@rdlc/report-model/scene';
@@ -10,11 +13,13 @@ export interface EditorSnapshot {
   readonly capabilities: readonly string[];
   readonly diagnostics: readonly Diagnostic[];
   readonly scene: DesignScene | null;
+  readonly authoring?: AuthoringState | null;
 }
 export interface EditOutcome {
   readonly requestId: string;
   readonly accepted: boolean;
   readonly reason: string;
+  readonly diagnostics: readonly Diagnostic[];
 }
 
 interface VsCodeApi {
@@ -52,12 +57,14 @@ export class HostAdapter {
         capabilities: message.projection.capabilities,
         diagnostics: message.projection.diagnostics,
         scene: message.scene,
+        authoring: message.authoring ?? null,
       });
     else if (message.kind === 'editResult')
       this.outcome.set({
         requestId: message.requestId,
         accepted: message.accepted,
         reason: message.reason,
+        diagnostics: message.diagnostics,
       });
   }
 

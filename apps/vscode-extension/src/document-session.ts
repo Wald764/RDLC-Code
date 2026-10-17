@@ -55,8 +55,20 @@ export class DocumentSession {
       snapshot,
       projection,
       syntax,
-      ids: projection.textboxes.map((textbox) => textbox.node.id),
-      capabilities: projection.status === 'editable' ? ['setProperty'] : [],
+      ids: [
+        ...(syntax.root ? [syntax.root.id] : []),
+        ...projection.textboxes.map((textbox) => textbox.node.id),
+        ...projection.datasets.flatMap((dataset) => [
+          dataset.node.id,
+          ...dataset.fields.map((field) => field.node.id),
+        ]),
+        ...projection.tables.flatMap((table) => [
+          table.node.id,
+          ...table.groups.map((group) => group.node.id),
+        ]),
+      ],
+      capabilities:
+        projection.status === 'editable' ? ['setProperty', 'author'] : [],
     };
   }
 
@@ -70,7 +82,7 @@ export class DocumentSession {
   }
 
   private async publish(): Promise<void> {
-    const { snapshot, projection } = this.evaluate();
+    const { snapshot, projection, syntax } = this.evaluate();
     this.emitter.fire({
       protocol: 1,
       kind: 'snapshot',
@@ -81,6 +93,48 @@ export class DocumentSession {
         diagnostics: projection.diagnostics,
       },
       scene: renderScene(projection),
+      authoring:
+        syntax.root && projection.section?.page
+          ? {
+              id: syntax.root.id,
+              page: {
+                ...projection.section.page,
+                bodyWidth: projection.section.width ?? '',
+                bodyHeight: projection.section.height ?? '',
+              },
+              datasets: projection.datasets.map((dataset) => ({
+                id: dataset.node.id,
+                name: dataset.name,
+                fields: dataset.fields.map((field) => ({
+                  id: field.node.id,
+                  name: field.name,
+                  type: field.type,
+                })),
+              })),
+              tables: projection.tables.map((table) => ({
+                id: table.node.id,
+                name: table.name,
+                dataset: table.dataset,
+                structural: table.structural,
+                reason: table.blockedReason,
+                columns: table.columns.length,
+                rows: table.rows.map((row) => ({
+                  cells: row.cells.map((cell) => ({
+                    id: cell.textbox?.node.id ?? cell.node.id,
+                    text: cell.textbox?.value?.text ?? '',
+                  })),
+                  total: row.cells.some((cell) =>
+                    table.totals.some((total) => total.cell === cell),
+                  ),
+                })),
+                groups: table.groups.map((group) => ({
+                  id: group.node.id,
+                  name: group.name,
+                  expression: group.expressions[0] ?? '',
+                })),
+              })),
+            }
+          : null,
     });
   }
 

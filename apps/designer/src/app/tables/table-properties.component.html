@@ -1,0 +1,185 @@
+<section aria-label="Tables">
+  <h2>Tables</h2>
+  @for (dataset of state().datasets; track dataset.id) {
+    <form
+      (submit)="
+        $event.preventDefault();
+        request.emit({
+          targetId: state().id,
+          payload: {
+            action: 'createTable',
+            name: name.value,
+            dataset: dataset.name,
+            field: field.value,
+            width: width.value,
+          },
+        })
+      "
+    >
+      <label>Table name <input #name required /></label
+      ><span>Dataset: {{ dataset.name }}</span>
+      <label
+        >First column field
+        <select #field>
+          @for (field of dataset.fields; track field.id) {
+            <option [value]="field.name" [disabled]="field.type === null">
+              {{ field.name }}
+            </option>
+          }
+        </select></label
+      >
+      <label>Column width <input #width value="1in" required /></label
+      ><button type="submit">Create table</button>
+    </form>
+  }
+  @for (table of state().tables; track table.id) {
+    <fieldset [disabled]="!table.structural">
+      <legend>{{ table.name }} — {{ table.dataset }}</legend>
+      <form
+        (submit)="
+          $event.preventDefault();
+          request.emit({
+            targetId: table.id,
+            payload: {
+              action: 'deleteTable',
+              confirm: confirmation.checked ? 'delete-contained-content' : '',
+            },
+          })
+        "
+      >
+        <label
+          ><input #confirmation type="checkbox" required />Delete this table and
+          all contained XML</label
+        ><button type="submit">Delete table</button>
+      </form>
+      @for (property of ['left', 'top']; track property) {
+        <form
+          (submit)="
+            $event.preventDefault();
+            request.emit({
+              targetId: table.id,
+              payload: {
+                action: 'setTableProperty',
+                property: property,
+                value: position.value,
+              },
+            })
+          "
+        >
+          <label
+            >Table {{ property }}
+            <input #position value="0in" required /></label
+          ><button type="submit">Set {{ property }}</button>
+        </form>
+      }
+      <form
+        (submit)="
+          $event.preventDefault();
+          request.emit({
+            targetId: table.id,
+            payload: {
+              action: 'setColumnWidth',
+              column: columnIndex.value,
+              width: newWidth.value,
+            },
+          })
+        "
+      >
+        <label
+          >Column index
+          <input
+            #columnIndex
+            type="number"
+            min="0"
+            [max]="table.columns - 1"
+            value="0"
+            required /></label
+        ><label>Column width <input #newWidth value="1in" required /></label
+        ><button type="submit">Resize column</button>
+      </form>
+      <form
+        (submit)="
+          $event.preventDefault();
+          request.emit({
+            targetId: table.id,
+            payload: {
+              action: 'setRowHeight',
+              row: rowIndex.value,
+              height: newHeight.value,
+            },
+          })
+        "
+      >
+        <label
+          >Row index
+          <input
+            #rowIndex
+            type="number"
+            min="0"
+            [max]="table.rows.length - 1"
+            value="0"
+            required /></label
+        ><label>Row height <input #newHeight value="0.3in" required /></label
+        ><button type="submit">Resize row</button>
+      </form>
+      @if (table.reason) {
+        <p role="status">{{ table.reason }}</p>
+      }
+      <form
+        (submit)="
+          $event.preventDefault();
+          request.emit({
+            targetId: table.id,
+            payload: {
+              action: 'addColumn',
+              field: field.value,
+              width: width.value,
+            },
+          })
+        "
+      >
+        <label
+          >Column field
+          <select #field>
+            @for (field of fields(table.dataset); track field.id) {
+              <option [value]="field.name" [disabled]="field.type === null">
+                {{ field.name }}
+              </option>
+            }
+          </select></label
+        >
+        <label>Column width <input #width value="1in" required /></label
+        ><button type="submit">Add column</button>
+      </form>
+      <form
+        (submit)="
+          $event.preventDefault();
+          request.emit({
+            targetId: table.id,
+            payload: { action: 'removeColumn', column: column.value },
+          })
+        "
+      >
+        <label
+          >Column (zero-based, includes all its cells)
+          <input
+            #column
+            type="number"
+            min="0"
+            [max]="table.columns - 1"
+            value="0"
+            required /></label
+        ><button type="submit">Remove column</button>
+      </form>
+      <p>
+        Select any cell on the design surface to edit its literal/expression
+        text. Field bindings use =Fields!Name.Value.
+      </p>
+      <rdlc-groups-totals
+        [table]="table"
+        [fields]="fields(table.dataset)"
+        (request)="request.emit($event)"
+      />
+    </fieldset>
+  }
+</section>

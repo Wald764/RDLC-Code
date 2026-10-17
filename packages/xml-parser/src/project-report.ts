@@ -7,6 +7,8 @@ import type {
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 import { children, RDL_2016 } from './names.js';
 import { projectTextboxes } from './project-textboxes.js';
+import { projectDatasets } from './project-datasets.js';
+import { projectTables } from './project-tables.js';
 
 export { children, RDL_2016 } from './names.js';
 
@@ -113,6 +115,7 @@ export function projectReport(document: XmlSyntaxDocument): ReportProjection {
       citation:
         'vendor/02-structures/2.6-reportsection.md; vendor/02-structures/2.3.1-report.mustunderstand.md',
     });
+  const textboxes = projectTextboxes(section);
   return {
     version: document.snapshot.version,
     namespace: root?.expandedName.namespaceUri ?? null,
@@ -124,7 +127,9 @@ export function projectReport(document: XmlSyntaxDocument): ReportProjection {
           : 'source-only',
     capabilities: editable ? ['source', 'projection'] : ['source'],
     section,
-    textboxes: projectTextboxes(section),
+    textboxes,
+    datasets: projectDatasets(root),
+    tables: projectTables(section, textboxes),
     preserved,
     diagnostics,
   };

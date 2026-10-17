@@ -3,6 +3,7 @@ import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 import type {
   EditIntent,
   PatchPlan,
+  AuthoringIntent,
   TextboxProperty,
 } from '@rdlc/report-model/editing';
 import type { ReportProjection, Textbox } from '@rdlc/report-model/report';
@@ -16,6 +17,24 @@ import {
   validateTextboxRename,
 } from '@rdlc/validation/textboxes';
 import { verifyCandidate } from './verify-candidate.js';
+import { planDataset } from '@rdlc/xml-serializer/datasets';
+import {
+  planPage,
+  pageProperties,
+  type PageProperty,
+} from '@rdlc/xml-serializer/page';
+import { planCreateTextbox } from '@rdlc/xml-serializer/authoring';
+import { patchPlan, sourcePatch } from '@rdlc/xml-serializer/structure';
+import {
+  authoringError,
+  isFieldType,
+  validateDatasetName,
+  validateDataMutation,
+} from '@rdlc/validation/datasets';
+import { length, validatePage } from '@rdlc/validation/validate';
+import { validateTableAction } from '@rdlc/validation/tables';
+import { planTable } from '@rdlc/xml-serializer/tables';
+import { fieldBinding, sumExpression } from '@rdlc/expressions/totals';
 
 export type PlanOutcome =
   | {
@@ -77,6 +96,8 @@ export function planTextboxIntent(
   projection: ReportProjection,
   intent: EditIntent,
 ): PlanOutcome {
+  if (intent.operation === 'author')
+    return planAuthoringIntent(snapshot, syntax, projection, intent);
   const index = projection.textboxes.findIndex(
     (textbox) => textbox.node.id === intent.targetId,
   );
@@ -143,4 +164,391 @@ export function planTextboxIntent(
     };
   }
   return { ok: true, plan, candidate };
+}
+
+export function planAuthoringIntent(
+  snapshot: DocumentSnapshot,
+  syntax: XmlSyntaxDocument,
+  report: ReportProjection,
+  intent: AuthoringIntent,
+): PlanOutcome {
+  const root = syntax.root;
+  if (!root) return { ok: false, diagnostics: syntax.diagnostics };
+  const fail = (message: string): PlanOutcome => ({
+    ok: false,
+    diagnostics: [authoringError(root, message)],
+  });
+  if (snapshot.version !== intent.baseVersion || report.status !== 'editable')
+    return fail('Stale or unsupported report; refresh and retry.');
+  const payload = intent.payload;
+  const dataset =
+    report.datasets.find(
+      (dataset) =>
+        dataset.node.id === intent.targetId ||
+        dataset.fields.some((field) => field.node.id === intent.targetId),
+    ) ?? null;
+  const field =
+    dataset?.fields.find((field) => field.node.id === intent.targetId) ?? null;
+  const textbox = report.textboxes.find(
+    (textbox) => textbox.node.id === intent.targetId,
+  );
+  let plan: PatchPlan;
+  let verify: (candidate: ReportProjection) => boolean;
+  try {
+    if (
+      [
+        'createDataset',
+        'renameDataset',
+        'deleteDataset',
+        'createField',
+        'renameField',
+        'deleteField',
+        'setFieldType',
+      ].includes(payload.action)
+    ) {
+      if (
+        payload.action === 'createDataset'
+          ? root.id !== intent.targetId
+          : !dataset
+      )
+        return fail('Select a dataset or field in the current snapshot.');
+      if (
+        ['renameField', 'deleteField', 'setFieldType'].includes(
+          payload.action,
+        ) &&
+        (!field || !field.type)
+      )
+        return fail('Unknown or absent field types are read-only.');
+      if (
+        ['renameDataset', 'deleteDataset', 'createField'].includes(
+          payload.action,
+        ) &&
+        field
+      )
+        return fail('Select the dataset, not a field.');
+      if ('type' in payload && !isFieldType(payload.type))
+        return fail('Choose one of the seven supported field types.');
+      if ('name' in payload) {
+        const names =
+          payload.action === 'createDataset' ||
+          payload.action === 'renameDataset'
+            ? report.datasets
+                .filter((entry) => entry !== dataset)
+                .map((entry) => entry.name)
+            : dataset!.fields
+                .filter((entry) => entry !== field)
+                .map((entry) => entry.name);
+        const errors = validateDatasetName(
+          field?.node ?? dataset?.node ?? root,
+          payload.name,
+          names,
+        );
+        if (errors.length) return { ok: false, diagnostics: errors };
+      }
+      if (
+        [
+          'renameDataset',
+          'deleteDataset',
+          'renameField',
+          'deleteField',
+        ].includes(payload.action)
+      ) {
+        const target = field ?? dataset!;
+        const errors = validateDataMutation(
+          root,
+          target.node,
+          field ? 'field' : 'dataset',
+          target.name,
+        );
+        if (errors.length) return { ok: false, diagnostics: errors };
+      }
+      plan = planDataset(snapshot, root, dataset, field, payload);
+      const datasetIndex = dataset ? report.datasets.indexOf(dataset) : -1;
+      const fieldIndex = field ? dataset!.fields.indexOf(field) : -1;
+      verify = (candidate) => {
+        const next = candidate.datasets[datasetIndex];
+        switch (payload.action) {
+          case 'createDataset':
+            return candidate.datasets.some(
+              (entry) =>
+                entry.name === payload.name &&
+                entry.query === null &&
+                entry.fields.length === 0,
+            );
+          case 'renameDataset':
+            return next?.name === payload.name;
+          case 'deleteDataset':
+            return (
+              candidate.datasets.length === report.datasets.length - 1 &&
+              !candidate.datasets.some((entry) => entry.name === dataset!.name)
+            );
+          case 'createField':
+            return (
+              next?.fields.some(
+                (entry) =>
+                  entry.name === payload.name &&
+                  entry.dataField === payload.name &&
+                  entry.type === payload.type,
+              ) ?? false
+            );
+          case 'renameField':
+            return (
+              next?.fields[fieldIndex]?.name === payload.name &&
+              next.fields[fieldIndex]?.dataField === field!.dataField
+            );
+          case 'deleteField':
+            return (
+              next?.fields.length === dataset!.fields.length - 1 &&
+              !next.fields.some((entry) => entry.name === field!.name)
+            );
+          case 'setFieldType':
+            return next?.fields[fieldIndex]?.type === payload.type;
+          default:
+            return false;
+        }
+      };
+    } else if (payload.action === 'setPage') {
+      if (
+        intent.targetId !== root.id ||
+        !report.section?.page ||
+        !(pageProperties as readonly string[]).includes(payload.property)
+      )
+        return fail('Select a supported page/body property.');
+      const property = payload.property as PageProperty;
+      const errors =
+        property === 'bodyWidth' || property === 'bodyHeight'
+          ? (length(payload.value)?.pixels ?? 0) > 0
+            ? []
+            : [
+                authoringError(
+                  root,
+                  'Body dimensions must be positive RdlSize values.',
+                ),
+              ]
+          : validatePage({ ...report.section.page, [property]: payload.value });
+      if (errors.length) return { ok: false, diagnostics: errors };
+      plan = planPage(snapshot, report.section, property, payload.value);
+      verify = (candidate) =>
+        property === 'bodyWidth'
+          ? candidate.section?.width === payload.value
+          : property === 'bodyHeight'
+            ? candidate.section?.height === payload.value
+            : candidate.section?.page?.[property] === payload.value;
+    } else if (payload.action === 'createTextbox') {
+      if (intent.targetId !== root.id || !report.section)
+        return fail('Select the report to create a body textbox.');
+      const errors = validateDatasetName(
+        root,
+        payload.name,
+        reportItemNames(root),
+      );
+      if (errors.length) return { ok: false, diagnostics: errors };
+      plan = planCreateTextbox(snapshot, report.section, payload.name);
+      verify = (candidate) =>
+        candidate.textboxes.some(
+          (textbox) =>
+            textbox.context === 'body' &&
+            textbox.name === payload.name &&
+            textbox.value?.text === '',
+        );
+    } else if (
+      [
+        'createTable',
+        'setTableProperty',
+        'setColumnWidth',
+        'setRowHeight',
+        'deleteTable',
+        'addColumn',
+        'removeColumn',
+        'addGroup',
+        'changeGroup',
+        'removeGroup',
+        'addTotal',
+        'changeTotal',
+        'removeTotal',
+      ].includes(payload.action)
+    ) {
+      const table =
+        report.tables.find(
+          (table) =>
+            table.node.id === intent.targetId ||
+            table.groups.some((group) => group.node.id === intent.targetId),
+        ) ?? null;
+      const errors = validateTableAction(
+        root,
+        report,
+        table,
+        intent.targetId,
+        payload,
+      );
+      if (errors.length) return { ok: false, diagnostics: errors };
+      if (!report.section) return fail('Missing report section.');
+      if (payload.action === 'deleteTable' && table) {
+        for (const group of table.groups) {
+          const errors = validateDataMutation(
+            root,
+            table.node,
+            'group',
+            group.name,
+          );
+          if (errors.length) return { ok: false, diagnostics: errors };
+        }
+        for (const name of [
+          table.name,
+          ...table.rows.flatMap((row) =>
+            row.cells.map((cell) => cell.textbox?.name ?? ''),
+          ),
+        ]) {
+          const errors = validateDataMutation(
+            root,
+            table.node,
+            'report-item',
+            name,
+          );
+          if (errors.length) return { ok: false, diagnostics: errors };
+        }
+      }
+      if (
+        table &&
+        (payload.action === 'removeColumn' || payload.action === 'removeTotal')
+      ) {
+        const cells =
+          payload.action === 'removeColumn'
+            ? table.rows.map((row) => row.cells[Number(payload.column)]!)
+            : table.rows[Number(payload.row)]!.cells;
+        for (const cell of cells) {
+          if (!cell.textbox) return fail('Cannot delete an unsupported cell.');
+          const dependencies = validateDataMutation(
+            root,
+            cell.textbox.node,
+            'report-item',
+            cell.textbox.name ?? '',
+          );
+          if (dependencies.length)
+            return { ok: false, diagnostics: dependencies };
+        }
+      }
+      plan = planTable(
+        snapshot,
+        report.section,
+        table,
+        intent.targetId,
+        payload,
+        reportItemNames(root),
+        'field' in payload ? fieldBinding(payload.field) : '',
+        'field' in payload && 'scope' in payload
+          ? sumExpression(payload.field, payload.scope)
+          : '',
+      );
+      const tableIndex = table ? report.tables.indexOf(table) : -1;
+      verify = (candidate) => {
+        const next =
+          payload.action === 'createTable'
+            ? candidate.tables.find((entry) => entry.name === payload.name)
+            : candidate.tables[tableIndex];
+        if (payload.action === 'deleteTable')
+          return (
+            candidate.tables.length === report.tables.length - 1 &&
+            !candidate.tables.some((entry) => entry.name === table!.name)
+          );
+        if (!next?.structural) return false;
+        switch (payload.action) {
+          case 'createTable':
+            return (
+              next.dataset === payload.dataset &&
+              next.columns.length === 1 &&
+              next.rows[0]?.cells[0]?.textbox?.value?.text ===
+                fieldBinding(payload.field)
+            );
+          case 'setTableProperty':
+            return (
+              next.bounds[payload.property as 'left' | 'top'] === payload.value
+            );
+          case 'setColumnWidth':
+            return (
+              next.columns[Number(payload.column)]?.width === payload.width
+            );
+          case 'setRowHeight':
+            return next.rows[Number(payload.row)]?.height === payload.height;
+          case 'addColumn':
+            return (
+              next.columns.length === table!.columns.length + 1 &&
+              next.rows.every(
+                (row) =>
+                  row.cells.at(-1)?.textbox?.value?.text ===
+                  fieldBinding(payload.field),
+              )
+            );
+          case 'removeColumn':
+            return next.columns.length === table!.columns.length - 1;
+          case 'addGroup':
+          case 'changeGroup':
+            return next.groups.some(
+              (group) =>
+                group.name === payload.name &&
+                group.expressions[0] === payload.expression,
+            );
+          case 'removeGroup':
+            return next.groups.length === table!.groups.length - 1;
+          case 'addTotal':
+            return (
+              next.rows.length === table!.rows.length + 1 &&
+              next.totals.some(
+                (total) =>
+                  total.scope === payload.scope &&
+                  total.expression ===
+                    sumExpression(payload.field, payload.scope),
+              )
+            );
+          case 'changeTotal':
+            return (
+              next.rows.length === table!.rows.length &&
+              next.rows.some(
+                (row) =>
+                  row.cells[Number(payload.column)]?.textbox?.value?.text ===
+                  sumExpression(payload.field, payload.scope),
+              )
+            );
+          case 'removeTotal':
+            return next.rows.length === table!.rows.length - 1;
+          default:
+            return false;
+        }
+      };
+    } else {
+      if (
+        payload.action !== 'deleteTextbox' ||
+        !textbox ||
+        textbox.context !== 'body' ||
+        payload.confirm !== 'delete-contained-content'
+      )
+        return fail(
+          'Explicitly confirm deletion of this textbox and all its contained XML.',
+        );
+      const errors = validateDataMutation(
+        root,
+        textbox.node,
+        'report-item',
+        textbox.name ?? '',
+      );
+      if (errors.length) return { ok: false, diagnostics: errors };
+      plan = patchPlan(snapshot, [
+        sourcePatch(snapshot, textbox.node.range, ''),
+      ]);
+      verify = (candidate) =>
+        candidate.textboxes.length === report.textboxes.length - 1 &&
+        !candidate.textboxes.some((entry) => entry.name === textbox.name);
+    }
+    const candidate = verifyCandidate(snapshot, plan, (syntax) => {
+      const projected = projectReport(syntax);
+      return projected.status === 'editable' && verify(projected);
+    }).source;
+    return { ok: true, plan, candidate };
+  } catch (error) {
+    return fail(
+      error instanceof Error
+        ? error.message
+        : 'Authoring could not be verified.',
+    );
+  }
 }

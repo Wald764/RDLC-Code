@@ -7,6 +7,7 @@ import type {
 } from '@rdlc/report-model/scene';
 import type { XmlNode } from '@rdlc/report-model/syntax';
 import { toPixels } from './geometry.js';
+import { renderTable } from './tables.js';
 
 const defaultPage = { width: 8.5 * 96, height: 11 * 96 };
 const labelLength = 40;
@@ -75,6 +76,7 @@ export function renderScene(projection: ReportProjection): DesignScene {
 
   const items = [];
   for (const textbox of projection.textboxes) {
+    if (textbox.context === 'table-cell') continue;
     const editable =
       textbox.context === 'body' && textbox.capabilities.includes('text');
     items.push({
@@ -95,6 +97,11 @@ export function renderScene(projection: ReportProjection): DesignScene {
     'ReportItems',
   );
   for (const child of reportItems?.children ?? []) {
+    const table = projection.tables.find((table) => table.node.id === child.id);
+    if (table?.structural) {
+      items.push(...renderTable(table));
+      continue;
+    }
     if (
       child.expandedName.namespaceUri === RDL_2016 &&
       child.expandedName.localName === 'Textbox'

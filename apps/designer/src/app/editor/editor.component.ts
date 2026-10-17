@@ -5,7 +5,12 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import type { EditIntent, TextboxProperty } from '@rdlc/report-model/editing';
+import type {
+  AuthoringRequest,
+  EditIntent,
+  TextboxProperty,
+} from '@rdlc/report-model/editing';
+import { AuthoringComponent } from '../authoring/authoring.component';
 import type { DesignScene } from '@rdlc/report-model/scene';
 import { DiagnosticsComponent } from '../diagnostics/diagnostics.component';
 import {
@@ -17,7 +22,11 @@ import { HostAdapter } from './host-adapter';
 @Component({
   selector: 'rdlc-editor',
   standalone: true,
-  imports: [DiagnosticsComponent, TextboxPropertiesComponent],
+  imports: [
+    DiagnosticsComponent,
+    TextboxPropertiesComponent,
+    AuthoringComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './editor.component.html',
   styleUrl: './editor.component.scss',
@@ -43,9 +52,10 @@ export class EditorComponent {
     return index === null ? null : (this.scene()?.items[index] ?? null);
   });
   readonly status = computed(() => this.host.snapshot()?.status ?? 'waiting');
-  readonly diagnostics = computed(
-    () => this.host.snapshot()?.diagnostics ?? [],
-  );
+  readonly diagnostics = computed(() => [
+    ...(this.host.snapshot()?.diagnostics ?? []),
+    ...(this.host.outcome()?.diagnostics ?? []),
+  ]);
 
   select(index: number): void {
     const version = this.host.snapshot()?.version;
@@ -54,6 +64,21 @@ export class EditorComponent {
 
   openSource(): void {
     this.host.openSource(this.selected()?.id);
+  }
+
+  author(request: AuthoringRequest): void {
+    const snapshot = this.host.snapshot();
+    if (!snapshot || snapshot.status !== 'editable') return;
+    this.host.sendEdit({
+      requestId: crypto.randomUUID(),
+      baseVersion: snapshot.version,
+      operation: 'author',
+      ...request,
+    });
+  }
+
+  bindField(name: string): void {
+    this.commit({ property: 'text', value: `=Fields!${name}.Value` });
   }
 
   /** Typed intent only; the host validates, patches, reparses and applies. */

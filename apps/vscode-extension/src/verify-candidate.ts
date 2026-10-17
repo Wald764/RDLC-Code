@@ -42,6 +42,16 @@ export function verifyCandidate(
         0,
       );
   const verifyNamespaces = (node: XmlNode) => {
+    // Explicit structural replacements own their descendants; untouched siblings still reconcile.
+    if (
+      plan.patches.some(
+        (patch) =>
+          patch.start <= node.range.start &&
+          patch.end >= node.range.end &&
+          patch.end > patch.start,
+      )
+    )
+      return;
     const untouched = !plan.patches.some(
       (patch) =>
         (patch.start < node.openRange.end &&
