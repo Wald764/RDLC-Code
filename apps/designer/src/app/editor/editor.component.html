@@ -1,11 +1,15 @@
 <section class="editor" aria-label="Report design surface">
+  @if (host.notice()) {
+    <p role="status">{{ host.notice() }}</p>
+  }
   @if (scene(); as design) {
     <p class="status" role="status">
       Design surface — {{ status() }} · {{ design.items.length }} item(s)
     </p>
     @if (host.outcome(); as outcome) {
       <p class="outcome" role="status" [attr.data-accepted]="outcome.accepted">
-        {{ outcome.accepted ? 'Saved' : 'Blocked' }}: {{ outcome.reason }}
+        {{ outcome.accepted ? 'Applied to document' : 'Blocked' }}:
+        {{ outcome.reason }}
       </p>
     }
     <div

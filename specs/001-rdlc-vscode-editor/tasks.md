@@ -12,7 +12,9 @@
 [`docs/validation/us1.md`](../../docs/validation/us1.md) and
 [`docs/validation/us2.md`](../../docs/validation/us2.md) for executed checks and
 remaining evidence boundaries. The tested VS Code minimum is now 1.142.0 after the
-1.110.0 untitled-document acceptance failure. Phases 5–6 remain pending. No accounts or
+1.110.0 untitled-document acceptance failure. Phase 5 implementation and automated checks are
+present; T053's native dirty-close dialog choices and T061's final acceptance remain pending
+(see [`docs/validation/us3.md`](../../docs/validation/us3.md)). Phase 6 remains pending. No accounts or
 releases are created by this implementation.
 
 **Tests**: Required by FR-020 and constitution III–IV. Use compiled TypeScript with Node's
@@ -168,16 +170,21 @@ zero pending changes are silently lost.
 ### Tests for User Story 3
 
 - [ ] T053 [P] [US3] Add lifecycle checks in `tests/vscode/lifecycle.test.ts` for 20 edit/undo/redo operations, dirty indicators, normal save/Save As, clean reload, close save/discard/cancel and failed/read-only saves that retain pending edits.
-- [ ] T054 [P] [US3] Add race/protocol checks in `tests/vscode/synchronization.test.ts` for split views, asynchronous source edits, invalid-to-valid transitions, duplicate/delayed requests, stale IDs/version mismatches and a refused applyEdit; assert no speculative success, duplicate mutation or stale retry.
-- [ ] T055 [P] [US3] Add encoding/EOL/external-change checks in `tests/vscode/persistence.test.ts`; verify no-op bytes for supported encodings/BOM/CRLF, normal dirty-file conflict resolution and no direct disk overwrite or lossy forced reload.
-- [ ] T056 [P] [US3] Add Angular lifecycle-state checks in `apps/designer/src/app/editor/lifecycle.spec.ts` for multiple-view snapshots, invalid-source disabled writes, stale draft/gesture cancellation with explanation and selection/focus remaining disposable rather than persisted report state.
+- [X] T054 [P] [US3] Add race/protocol checks in `tests/vscode/synchronization.test.ts` for split views, asynchronous source edits, invalid-to-valid transitions, duplicate/delayed requests, stale IDs/version mismatches and a refused applyEdit; assert no speculative success, duplicate mutation or stale retry.
+- [X] T055 [P] [US3] Add encoding/EOL/external-change checks in `tests/vscode/persistence.test.ts`; verify no-op bytes for supported encodings/BOM/CRLF, normal dirty-file conflict resolution and no direct disk overwrite or lossy forced reload.
+- [X] T056 [P] [US3] Add Angular lifecycle-state checks in `apps/designer/src/app/editor/lifecycle.spec.ts` for multiple-view snapshots, invalid-source disabled writes, stale draft/gesture cancellation with explanation and selection/focus remaining disposable rather than persisted report state.
+
+T053's automated undo/redo, structural-edit lifecycle, save/reopen, explicit native
+discard and save-permission failure checks pass. Native dirty-close dialog choices
+and interactive Save As cancellation remain unrun; keep T053 and the final T061
+checkpoint open until the manual procedure in `docs/validation/us3.md` is recorded.
 
 ### Implementation for User Story 3
 
-- [ ] T057 [US3] Complete session serialization, duplicate-result handling and last-moment version checks in `apps/vscode-extension/src/document-session.ts` and `edit-controller.ts` against T054; every snapshot/ID/range remains document-version-scoped, and authoritative success/state follows accepted document changes rather than optimistic UI mutation.
-- [ ] T058 [US3] Complete source/visual/split-view synchronization and source-access commands in `apps/vscode-extension/src/editor-provider.ts`, `commands/open-source.ts` and `apps/designer/src/app/editor/host-adapter.ts`; invalid source disables visual writes but may be deliberately saved as text, and source changes invalidate stale IDs/drafts without discarding source access.
-- [ ] T059 [US3] Complete native document-service delegation and listener/session disposal in `apps/vscode-extension/src/document-session.ts` and `editor-provider.ts`; rely on VS Code for dirty/save/Save As/close/external conflict resolution, retain dirty state on errors/cancellation and never add a parallel saved document, filesystem writer or visual undo stack.
-- [ ] T060 [US3] Complete gesture/form commit and stale-draft behavior in `apps/designer/src/app/editor/editor.component.ts` and `authoring/authoring.component.ts`; selection/focus/zoom remain Signals-only preferences, pointer gestures commit once, host snapshots cancel obsolete work with a visible explanation and undo/redo reflect source changes.
+- [X] T057 [US3] Complete session serialization, duplicate-result handling and last-moment version checks in `apps/vscode-extension/src/document-session.ts` and `edit-controller.ts` against T054; every snapshot/ID/range remains document-version-scoped, and authoritative success/state follows accepted document changes rather than optimistic UI mutation.
+- [X] T058 [US3] Complete source/visual/split-view synchronization and source-access commands in `apps/vscode-extension/src/editor-provider.ts`, `commands/open-source.ts` and `apps/designer/src/app/editor/host-adapter.ts`; invalid source disables visual writes but may be deliberately saved as text, and source changes invalidate stale IDs/drafts without discarding source access.
+- [X] T059 [US3] Complete native document-service delegation and listener/session disposal in `apps/vscode-extension/src/document-session.ts` and `editor-provider.ts`; rely on VS Code for dirty/save/Save As/close/external conflict resolution, retain dirty state on errors/cancellation and never add a parallel saved document, filesystem writer or visual undo stack.
+- [X] T060 [US3] Complete gesture/form commit and stale-draft behavior in `apps/designer/src/app/editor/editor.component.ts` and `authoring/authoring.component.ts`; selection/focus/zoom remain Signals-only preferences, pointer gestures commit once, host snapshots cancel obsolete work with a visible explanation and undo/redo reflect source changes.
 - [ ] T061 [US3] Execute T053–T056 and record V8 lifecycle/encoding/EOL/multiple-view/failure outcomes in `docs/validation/us3.md`; require zero silent loss and treat any failing save/conflict/undo safeguard as a release blocker.
 
 **Checkpoint**: US3 is independently tested using an existing-report fixture and needs no US2

@@ -5,11 +5,7 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import type {
-  AuthoringRequest,
-  EditIntent,
-  TextboxProperty,
-} from '@rdlc/report-model/editing';
+import type { AuthoringRequest, EditIntent } from '@rdlc/report-model/editing';
 import { AuthoringComponent } from '../authoring/authoring.component';
 import type { DesignScene } from '@rdlc/report-model/scene';
 import { DiagnosticsComponent } from '../diagnostics/diagnostics.component';
@@ -85,9 +81,9 @@ export class EditorComponent {
   commit(edit: TextboxCommit): void {
     const snapshot = this.host.snapshot();
     const item = this.selected();
-    if (!snapshot || !item) return;
+    if (!snapshot || snapshot.status !== 'editable' || !item) return;
     const intent: EditIntent = {
-      requestId: requestId(snapshot.version, edit.property),
+      requestId: crypto.randomUUID(),
       baseVersion: snapshot.version,
       targetId: item.id,
       operation: 'setProperty',
@@ -95,8 +91,4 @@ export class EditorComponent {
     };
     this.host.sendEdit(intent);
   }
-}
-
-function requestId(version: number, property: TextboxProperty): string {
-  return `${version}-${property}-${Date.now().toString(36)}`;
 }

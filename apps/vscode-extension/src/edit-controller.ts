@@ -96,6 +96,18 @@ export function planTextboxIntent(
   projection: ReportProjection,
   intent: EditIntent,
 ): PlanOutcome {
+  if (snapshot.version !== intent.baseVersion)
+    return {
+      ok: false,
+      diagnostics: [
+        diagnostic(
+          'STALE_EDIT',
+          'The document changed; select the item again.',
+          'stale-edit',
+          { start: 0, end: 0 },
+        ),
+      ],
+    };
   if (intent.operation === 'author')
     return planAuthoringIntent(snapshot, syntax, projection, intent);
   const index = projection.textboxes.findIndex(

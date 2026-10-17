@@ -30,8 +30,11 @@ export class RdlcEditorProvider implements vscode.CustomTextEditorProvider {
     const subscription = session.onMessage((message) => {
       void panel.webview.postMessage(message);
     });
-    panel.webview.onDidReceiveMessage((message) => session.receive(message));
+    const receiver = panel.webview.onDidReceiveMessage((message) =>
+      session.receive(message),
+    );
     panel.onDidDispose(() => {
+      receiver.dispose();
       subscription.dispose();
       session.dispose();
     });

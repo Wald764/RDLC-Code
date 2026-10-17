@@ -1,4 +1,4 @@
-import { Injectable, signal } from '@angular/core';
+import { DestroyRef, inject, Injectable, signal } from '@angular/core';
 import {
   validateMessage,
   type AuthoringState,
@@ -35,14 +35,18 @@ export class HostAdapter {
   readonly snapshot = signal<EditorSnapshot | null>(null);
   readonly outcome = signal<EditOutcome | null>(null);
   readonly sent = signal<readonly unknown[]>([]);
+  readonly notice = signal('');
+  private blocked = false;
   private readonly api: VsCodeApi | null;
 
   constructor() {
     const acquire = (globalThis as { acquireVsCodeApi?: () => VsCodeApi })
       .acquireVsCodeApi;
     this.api = typeof acquire === 'function' ? acquire() : null;
-    globalThis.addEventListener('message', (event: MessageEvent) =>
-      this.ingest(event.data),
+    const listener = (event: MessageEvent) => this.ingest(event.data);
+    globalThis.addEventListener('message', listener);
+    inject(DestroyRef).onDestroy(() =>
+      globalThis.removeEventListener('message', listener),
     );
     if (this.api) this.post({ protocol: 1, kind: 'ready' });
   }
@@ -50,7 +54,17 @@ export class HostAdapter {
   ingest(input: unknown): void {
     const message = validateMessage(input);
     if (!message) return;
-    if (message.kind === 'snapshot')
+    if (message.kind === 'snapshot') {
+      const previous = this.snapshot();
+      if (previous && message.version < previous.version) return;
+      this.blocked = false;
+      if (previous && message.version === previous.version) return;
+      if (previous) {
+        this.notice.set(
+          'The document changed. Obsolete drafts were cancelled; select an item and start a new edit.',
+        );
+        this.outcome.set(null);
+      }
       this.snapshot.set({
         version: message.version,
         status: message.projection.status,
@@ -59,16 +73,31 @@ export class HostAdapter {
         scene: message.scene,
         authoring: message.authoring ?? null,
       });
-    else if (message.kind === 'editResult')
+    } else if (message.kind === 'protocolError') {
+      this.blocked = true;
+      this.notice.set(
+        `Blocked: ${message.reason}. Refreshing the document; the edit will not be retried.`,
+      );
+      this.post({ protocol: 1, kind: 'ready' });
+    } else if (message.kind === 'editResult') {
+      if (message.version < (this.snapshot()?.version ?? 0)) return;
       this.outcome.set({
         requestId: message.requestId,
         accepted: message.accepted,
         reason: message.reason,
         diagnostics: message.diagnostics,
       });
+    }
   }
 
   sendEdit(intent: EditIntent): void {
+    const snapshot = this.snapshot();
+    if (
+      this.blocked ||
+      snapshot?.status !== 'editable' ||
+      intent.baseVersion !== snapshot.version
+    )
+      return;
     this.post({ protocol: 1, kind: 'edit', ...intent });
   }
 
@@ -83,7 +112,8 @@ export class HostAdapter {
   }
 
   private post(message: unknown): void {
-    this.sent.update((messages) => [...messages, message]);
+    // Keep only bounded diagnostic history, never a second document or undo stack.
+    this.sent.update((messages) => [...messages.slice(-99), message]);
     this.api?.postMessage(message);
   }
 }

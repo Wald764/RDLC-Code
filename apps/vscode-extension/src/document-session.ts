@@ -19,12 +19,21 @@ function snapshotOf(document: vscode.TextDocument): DocumentSnapshot {
 
 /** One host session per open custom-editor document; the webview never owns source. */
 export class DocumentSession {
+  // Views of the same TextDocument share a queue, including while applyEdit is pending.
+  private static readonly queues = new WeakMap<
+    vscode.TextDocument,
+    Promise<void>
+  >();
+  private disposed = false;
   private readonly binding: DocumentBinding;
   private readonly emitter = new vscode.EventEmitter<HostMessage>();
   private readonly subscriptions: vscode.Disposable[] = [];
   readonly onMessage = this.emitter.event;
 
-  constructor(private readonly document: vscode.TextDocument) {
+  constructor(
+    private readonly document: vscode.TextDocument,
+    private readonly applyWorkspaceEdit = vscode.workspace.applyEdit,
+  ) {
     const current = this.evaluate();
     this.binding = new DocumentBinding(
       document.uri.toString(),
@@ -139,7 +148,30 @@ export class DocumentSession {
   }
 
   receive(input: unknown): void {
-    void this.handle(input);
+    if (this.disposed) return;
+    const previous =
+      DocumentSession.queues.get(this.document) ?? Promise.resolve();
+    const next = previous.then(async () => {
+      if (this.disposed || this.document.isClosed) return;
+      try {
+        this.sync();
+        await this.handle(input);
+      } catch {
+        this.emitter.fire({
+          protocol: 1,
+          kind: 'protocolError',
+          supportedVersion: 1,
+          reason:
+            'Document operation failed; inspect the current source before retrying.',
+        });
+        await this.publish();
+      }
+    });
+    DocumentSession.queues.set(this.document, next);
+    void next.finally(() => {
+      if (DocumentSession.queues.get(this.document) === next)
+        DocumentSession.queues.delete(this.document);
+    });
   }
 
   private async handle(input: unknown): Promise<void> {
@@ -221,21 +253,50 @@ export class DocumentSession {
     );
     const workspaceEdit = new vscode.WorkspaceEdit();
     workspaceEdit.set(this.document.uri, edits);
-    const accepted = await vscode.workspace.applyEdit(workspaceEdit);
+    if (this.document.version !== message.baseVersion || this.disposed) {
+      this.emitter.fire({
+        protocol: 1,
+        kind: 'editResult',
+        version: this.document.version,
+        requestId: message.requestId,
+        accepted: false,
+        reason: 'STALE_EDIT',
+        diagnostics: [],
+      });
+      await this.publish();
+      return;
+    }
+    let applied = false;
+    let reason = 'REJECTED_BY_HOST';
+    try {
+      applied = await this.applyWorkspaceEdit(workspaceEdit);
+    } catch {
+      reason = 'HOST_EDIT_FAILED';
+    }
+    // Intervening changes make success uncertain even if someone restores the candidate text.
+    const accepted =
+      applied &&
+      !this.document.isClosed &&
+      this.document.version <= message.baseVersion + 1 &&
+      this.document.getText() === outcome.candidate;
+    if (applied && !accepted) reason = 'DOCUMENT_CHANGED_DURING_APPLY';
     // Bind the new version before reporting success so the next intent cannot race the change event.
     this.sync();
+    await this.publish();
     this.emitter.fire({
       protocol: 1,
       kind: 'editResult',
       version: this.document.version,
       requestId: message.requestId,
       accepted,
-      reason: accepted ? 'APPLIED' : 'REJECTED_BY_HOST',
+      reason: accepted ? 'APPLIED' : reason,
       diagnostics: [],
     });
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     for (const subscription of this.subscriptions) subscription.dispose();
     this.emitter.dispose();
   }

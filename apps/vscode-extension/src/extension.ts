@@ -12,7 +12,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerCustomEditorProvider(
       'rdlcCode.designer',
       new RdlcEditorProvider(context.extensionUri),
-      { webviewOptions: { retainContextWhenHidden: true } },
+      {
+        webviewOptions: { retainContextWhenHidden: true },
+        supportsMultipleEditorsPerDocument: true,
+      },
     ),
     vscode.commands.registerCommand('rdlcCode.openSource', openActiveSource),
     vscode.commands.registerCommand(

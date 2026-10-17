@@ -8,18 +8,29 @@ import { planTextboxIntent } from './edit-controller.js';
 
 const source = readFileSync('tests/fixtures/textboxes/supported.rdlc', 'utf8');
 
-function plan(source: string, property: TextboxProperty, value: string) {
+function plan(
+  source: string,
+  property: TextboxProperty,
+  value: string,
+  baseVersion = 1,
+) {
   const snapshot = { uri: 'test:edit', version: 1, source, eol: '\n' as const };
   const syntax = parse(snapshot);
   const projection = projectReport(syntax);
   return planTextboxIntent(snapshot, syntax, projection, {
     requestId: 'test-edit',
-    baseVersion: 1,
+    baseVersion,
     targetId: projection.textboxes[0]!.node.id,
     operation: 'setProperty',
     payload: { property, value },
   });
 }
+
+test('the shared planner refuses stale scalar edits before creating patches', () => {
+  const outcome = plan(source, 'text', 'Stale value', 0);
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.equal(outcome.diagnostics[0]?.code, 'STALE_EDIT');
+});
 
 test('rename refuses referenced textboxes and opaque dependencies, but allows safe renames and unrelated edits', () => {
   for (const [content, code] of [
