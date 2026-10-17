@@ -1,6 +1,8 @@
 # Publishing authentication prerequisites
 
-Date: 2026-10-17. Status: **partially proven / blocked**. T071 is incomplete.
+Date: 2026-10-17. Status: **Marketplace and Open VSX publication proven; T071 still
+open**. T071 is incomplete: the GitHub token path and production conditions are not
+proven.
 
 The user reports Marketplace publisher `Wald764`, an Azure user-assigned managed
 identity, configured GitHub variables and federation for the `marketplace`
@@ -34,7 +36,41 @@ run time; repository settings themselves are not observable from here.
 Reported, not observed: the Marketplace profile ID retrieved by that run was added
 as a **Contributor** member of publisher `Wald764`, and an Open VSX account,
 namespace `Wald764` and PAT now exist. The profile UUID and the Azure Principal ID
-are deliberately not recorded. No publication has succeeded yet.
+are deliberately not recorded.
+
+## Observed publication
+
+Run [39051575697](https://github.com/Wald764/RDLC-Code/actions/runs/39051575697)
+(workflow commit `f9d6491`) completed with all four jobs successful and published
+the probe `Wald764.rdlc-code-auth-test` `0.0.1`. The steps
+`vsce verify-pat Wald764 --azure-credential`,
+`vsce publish --azure-credential --skip-duplicate --packagePath` and
+`ovsx publish --skip-duplicate` each reported success in that run.
+
+| Destination               | Registered state observed 2026-10-17                     |
+| ------------------------- | -------------------------------------------------------- |
+| Visual Studio Marketplace | `Wald764.rdlc-code-auth-test` 0.0.1, updated 17:01:43Z   |
+| Open VSX                  | `Wald764.rdlc-code-auth-test` 0.0.1, published 16:57:58Z |
+
+Each registry was then queried directly rather than trusted from the run output:
+
+- The Marketplace package, the Open VSX download and Open VSX's own published
+  `.sha256` file for `0.0.1` are the same bytes, SHA-256
+  `b3c741e403856bc3e2fd786b4633b741e9f0a53a2c680573f79918f81380c694`.
+- Every file inside that VSIX is byte-identical to a local rebuild of the committed
+  fixture with the pinned toolchain. Only the ZIP entry timestamps differ, so two
+  builds of the same source produce different archive digests. A recorded digest is
+  therefore per-build and valid only for the artifact it was measured on; this is
+  one more reason recovery reuses the original artifact instead of rebuilding.
+
+Remaining T071 gaps: the GitHub job-local `GITHUB_TOKEN` publication path belongs to
+the unimplemented release publication jobs (T073), and no production tag-restricted
+release has been exercised. The probe stays public at `0.0.1` and must not be
+overwritten; Open VSX currently relies on a permanent PAT rather than trusted OIDC.
+
+The temporary `main` deployment-branch rules added for the manual runs can now be
+removed from both the `marketplace` and `openvsx` environments, leaving only the
+release-tag rules.
 
 ## Retrieve the Marketplace identity profile
 
@@ -112,6 +148,6 @@ publication, and a skipped duplicate is not a fresh upload. If one destination
 fails, fix only its configuration and re-run failed jobs; the successful `package`
 job is never rebuilt.
 
-Not yet done: this workflow has never been run, so no upload is proven, and Open
-VSX trusted publishing (`OPENVSX_AUTH_MODE=oidc`) is untested. The probe is
+Not yet done: the tag-restricted production conditions and the GitHub release path.
+Open VSX trusted publishing (`OPENVSX_AUTH_MODE=oidc`) is untested. The probe is
 expected to be publicly visible on both registries.
