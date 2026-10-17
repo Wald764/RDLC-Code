@@ -266,8 +266,9 @@ test('source-free CLI authenticates draft reads, requires both assets and re-inv
     },
   ];
   const routes: Record<string, unknown> = {
-    [`${base}/releases/tags/${identity.tag}`]: {
-      json: { id: 1, tag_name: identity.tag, draft: true },
+    [`${base}/releases/tags/${identity.tag}`]: { json: null, status: 404 },
+    [`${base}/releases`]: {
+      json: [{ id: 1, tag_name: identity.tag, draft: true }],
     },
     [`${base}/releases/1/assets`]: { json: assets },
     [`${base}/actions/runs/123`]: {

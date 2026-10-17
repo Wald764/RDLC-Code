@@ -217,10 +217,28 @@ async function githubInventory(
   const release = await api(
     `/repos/${repository}/releases/tags/${manifest.identity.tag}`,
   );
-  if (release.status === 404)
+  let document: (GithubRelease & { id: number }) | undefined;
+  if (release.status === 404) {
+    // GitHub's tag endpoint omits drafts, even when the writer can list them.
+    for (let page = 1; ; page++) {
+      const response = await api(
+        `/repos/${repository}/releases?per_page=100&page=${page}`,
+      );
+      assert.ok(response.ok, `GitHub draft lookup failed: ${response.status}`);
+      const releases = (await response.json()) as (GithubRelease & {
+        id: number;
+      })[];
+      document = releases.find(
+        (entry) => entry.tag_name === manifest.identity.tag,
+      );
+      if (document || releases.length < 100) break;
+    }
+  } else {
+    assert.ok(release.ok, `GitHub release lookup failed: ${release.status}`);
+    document = (await release.json()) as GithubRelease & { id: number };
+  }
+  if (!document)
     return { destination: 'github', configured: true, exists: false };
-  assert.ok(release.ok, `GitHub release lookup failed: ${release.status}`);
-  const document = (await release.json()) as GithubRelease & { id: number };
   if (options.published)
     assert.equal(document.draft, false, 'GitHub release is still a draft');
   const assets = await api(
