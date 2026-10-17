@@ -1,0 +1,27 @@
+{
+  "name": "rdlc-code-auth-test",
+  "displayName": "RDLC Code Authentication Test",
+  "description": "Inert theme used only to verify RDLC Code registry authentication and prebuilt VSIX handoff.",
+  "publisher": "Wald764",
+  "version": "0.0.1",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.142.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Wald764/RDLC-Code.git"
+  },
+  "categories": [
+    "Themes"
+  ],
+  "contributes": {
+    "themes": [
+      {
+        "label": "RDLC Code Authentication Test",
+        "uiTheme": "vs",
+        "path": "./theme.json"
+      }
+    ]
+  }
+}
