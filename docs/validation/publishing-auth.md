@@ -1,5 +1,31 @@
 # Publishing authentication prerequisites
 
+## Probe retirement (2026-10-18)
+
+At the owner's request, the inert probe `Wald764.rdlc-code-auth-test` was retired
+after the production `0.1.0` publication. Run
+[39076203081](https://github.com/Wald764/RDLC-Code/actions/runs/39076203081),
+tag `vprobe-cleanup-20261018`, completed both source-free environment-scoped jobs
+successfully. The manual workflow is restricted to that exact maintenance tag;
+it cannot target an arbitrary extension and checks production bytes before/after.
+
+- Marketplace: the authenticated Gallery client set and read back **Unpublished**
+  and **Hidden**, preserving the extension identity, versions and statistics.
+  This is not the destructive `vsce unpublish` operation. Store/API caches may
+  retain historical metadata; retirement is not a claim that every URL returns 404.
+- Open VSX: the pinned client withdrew all published probe versions (`0.0.1` and
+  `0.0.4`); the public probe metadata endpoint subsequently returned HTTP 404.
+  The publisher client offers version withdrawal rather than an equivalent
+  Marketplace-style hiding operation. Retired version numbers must not be reused.
+- Independent production downloads from Marketplace and Open VSX still matched
+  `13d7ed0be2110f81600615988b45e22eb596b3bdb37ff8b3b05f31503b5127f6`.
+  Production identity `Wald764.rdlc-code` was not modified.
+
+Probe fixture/workflows, Git tags, GitHub prerelease assets and the historical
+evidence below are retained. Registry hashes below describe downloads verified
+before retirement; those probe registry downloads may no longer be available.
+Any future probe publication needs a reviewed new version and tag.
+
 Date: 2026-10-17. Status: **Three-destination tagged probe and failed-job recovery
 proven; T071 still open for production acceptance**. The inert probe exercises
 the shared publication jobs, not the editor's stable-release acceptance gates.
