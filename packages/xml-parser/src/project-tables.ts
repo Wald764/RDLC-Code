@@ -191,6 +191,7 @@ export function projectTables(
       'DataSetName',
       'Left',
       'Top',
+      'ZIndex',
       'Style',
     ]);
     const inspect = (current: XmlNode) => {
@@ -239,8 +240,8 @@ export function projectTables(
       groups,
       totals,
       bounds: {
-        left: children(node, 'Left')[0]?.text ?? '0in',
-        top: children(node, 'Top')[0]?.text ?? '0in',
+        left: children(node, 'Left')[0]?.text ?? null,
+        top: children(node, 'Top')[0]?.text ?? null,
         width: children(node, 'Width')[0]?.text ?? null,
         height: children(node, 'Height')[0]?.text ?? null,
       },

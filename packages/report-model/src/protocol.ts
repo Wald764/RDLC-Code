@@ -1,12 +1,15 @@
 import {
   authoringFields,
   textboxProperties,
+  resizeHandles,
+  alignModes,
   type AuthoringAction,
 } from './editing.js';
-import type { EditIntent } from './editing.js';
+import type { EditIntent, TargetMapping } from './editing.js';
 import type { Diagnostic } from './diagnostics.js';
 import type { DesignScene } from './scene.js';
 import type { ReportProjection } from './report.js';
+import { sizeUnits } from './geometry.js';
 
 export interface AuthoringState {
   readonly id: string;
@@ -64,6 +67,9 @@ export type HostMessage =
       readonly protocol: 1;
       readonly kind: 'editResult';
       readonly version: number;
+      readonly baseVersion: number;
+      readonly changed: boolean;
+      readonly mappings: readonly TargetMapping[];
       readonly requestId: string;
       readonly accepted: boolean;
       readonly reason: string;
@@ -97,6 +103,68 @@ function version(value: unknown): value is number {
 }
 function id(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9:_-]{1,128}$/.test(value);
+}
+function nodeId(value: unknown, expectedVersion: number): value is string {
+  return (
+    id(value) && new RegExp(`^${expectedVersion}:[1-9][0-9]*$`).test(value)
+  );
+}
+function finite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+function layout(value: Record<string, unknown>, baseVersion: number): boolean {
+  const ids = value.targetIds;
+  if (
+    !Array.isArray(ids) ||
+    ids.length < 1 ||
+    ids.length > 1000 ||
+    !ids.every((target) => nodeId(target, baseVersion)) ||
+    new Set(ids).size !== ids.length ||
+    !sizeUnits.includes(value.unit as never)
+  )
+    return false;
+  const common = ['action', 'targetIds', 'unit'];
+  switch (value.action) {
+    case 'move':
+      return (
+        keys(value, [...common, 'dxPt', 'dyPt']) &&
+        finite(value.dxPt) &&
+        finite(value.dyPt)
+      );
+    case 'resize': {
+      if (ids.length !== 1 || !resizeHandles.includes(value.handle as never))
+        return false;
+      const handle = value.handle as string;
+      const x = /[ew]/.test(handle);
+      const y = /[ns]/.test(handle);
+      return (
+        keys(value, [
+          ...common,
+          'handle',
+          ...(x ? ['xPt'] : []),
+          ...(y ? ['yPt'] : []),
+        ]) &&
+        (!x || (finite(value.xPt) && value.xPt >= 0)) &&
+        (!y || (finite(value.yPt) && value.yPt >= 0))
+      );
+    }
+    case 'align':
+      return (
+        ids.length >= 2 &&
+        keys(value, [...common, 'primaryId', 'mode']) &&
+        string(value.primaryId) &&
+        ids.includes(value.primaryId) &&
+        alignModes.includes(value.mode as never)
+      );
+    case 'distribute':
+      return (
+        ids.length >= 3 &&
+        keys(value, [...common, 'axis']) &&
+        ['horizontal', 'vertical'].includes(String(value.axis))
+      );
+    default:
+      return false;
+  }
 }
 function string(value: unknown): value is string {
   return typeof value === 'string';
@@ -158,7 +226,9 @@ function bounds(value: unknown): boolean {
       (key) => typeof value[key] === 'number' && Number.isFinite(value[key]),
     ) &&
     (value.width as number) >= 0 &&
-    (value.height as number) >= 0
+    (value.height as number) >= 0 &&
+    (value.left as number) >= 0 &&
+    (value.top as number) >= 0
   );
 }
 function sceneItem(value: unknown): boolean {
@@ -174,9 +244,27 @@ function sceneItem(value: unknown): boolean {
       'geometry',
       'style',
       'capabilities',
+      'kind',
+      'parentTableId',
+      'sourceOrder',
+      'zIndex',
+      'resolvedGeometry',
+      'operations',
     ]) &&
     id(value.id) &&
-    bounds(value.bounds) &&
+    (value.bounds === null ||
+      (bounds(value.bounds) &&
+        (value.bounds as Record<string, number>).width! > 0 &&
+        (value.bounds as Record<string, number>).height! > 0)) &&
+    (value.kind === undefined ||
+      ['textbox', 'table', 'cell', 'preserved'].includes(String(value.kind))) &&
+    (value.parentTableId === undefined ||
+      (value.kind === 'cell' && id(value.parentTableId))) &&
+    (value.sourceOrder === undefined || version(value.sourceOrder)) &&
+    (value.zIndex === undefined || version(value.zIndex)) &&
+    (value.resolvedGeometry === undefined ||
+      resolvedGeometry(value.resolvedGeometry)) &&
+    (value.operations === undefined || operations(value.operations)) &&
     string(value.label) &&
     typeof value.placeholder === 'boolean' &&
     (value.name === undefined || value.name === null || string(value.name)) &&
@@ -197,6 +285,48 @@ function sceneItem(value: unknown): boolean {
       ]))
   );
 }
+function resolvedGeometry(value: unknown): boolean {
+  return (
+    record(value) &&
+    keys(value, ['left', 'top', 'width', 'height']) &&
+    ['left', 'top', 'width', 'height'].every((key) => {
+      const property = value[key];
+      return (
+        record(property) &&
+        keys(property, ['raw', 'unit', 'provenance', 'points']) &&
+        (property.raw === null || string(property.raw)) &&
+        (property.unit === null ||
+          sizeUnits.includes(property.unit as never)) &&
+        (property.provenance === 'unknown'
+          ? property.points === null
+          : ['explicit', 'derived'].includes(String(property.provenance)) &&
+            finite(property.points) &&
+            (['width', 'height'].includes(key)
+              ? property.points > 0
+              : property.points >= 0)) &&
+        (property.provenance !== 'derived' || property.raw === null) &&
+        (property.provenance !== 'explicit' || string(property.raw))
+      );
+    })
+  );
+}
+function operations(value: unknown): boolean {
+  return (
+    record(value) &&
+    keys(value, ['moveX', 'moveY', 'resizeX', 'resizeY']) &&
+    ['moveX', 'moveY', 'resizeX', 'resizeY'].every((key) => {
+      const operation = value[key];
+      return (
+        record(operation) &&
+        keys(operation, ['eligible', 'reason']) &&
+        typeof operation.eligible === 'boolean' &&
+        (operation.eligible
+          ? operation.reason === null
+          : string(operation.reason))
+      );
+    })
+  );
+}
 function nullableStrings(value: unknown, fields: readonly string[]): boolean {
   return (
     record(value) &&
@@ -205,15 +335,27 @@ function nullableStrings(value: unknown, fields: readonly string[]): boolean {
   );
 }
 function scene(value: unknown, expectedVersion: number): boolean {
+  if (value === null) return true;
+  if (!record(value)) return false;
+  const items = value.items;
   return (
-    value === null ||
-    (record(value) &&
-      keys(value, ['version', 'page', 'body', 'items']) &&
-      value.version === expectedVersion &&
-      bounds(value.page) &&
-      bounds(value.body) &&
-      Array.isArray(value.items) &&
-      value.items.every(sceneItem))
+    keys(value, ['version', 'page', 'body', 'items']) &&
+    value.version === expectedVersion &&
+    bounds(value.page) &&
+    bounds(value.body) &&
+    Array.isArray(items) &&
+    items.every(sceneItem) &&
+    new Set(items.map((item) => item.id)).size === items.length &&
+    items.every(
+      (item) =>
+        item.kind === undefined ||
+        (nodeId(item.id, expectedVersion) &&
+          (item.kind !== 'cell' ||
+            items.some(
+              (parent: Record<string, unknown>) =>
+                parent.kind === 'table' && parent.id === item.parentTableId,
+            ))),
+    )
   );
 }
 
@@ -346,20 +488,22 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
           'kind',
           'requestId',
           'baseVersion',
-          'targetId',
+          ...(value.operation === 'layout' ? [] : ['targetId']),
           'operation',
           'payload',
         ]) &&
         id(value.requestId) &&
         version(value.baseVersion) &&
-        id(value.targetId) &&
+        (value.operation === 'layout' || id(value.targetId)) &&
         record(value.payload) &&
-        ((value.operation === 'setProperty' &&
-          keys(value.payload, ['property', 'value']) &&
-          (textboxProperties as readonly string[]).includes(
-            String(value.payload.property),
-          ) &&
-          string(value.payload.value)) ||
+        ((value.operation === 'layout' &&
+          layout(value.payload, value.baseVersion as number)) ||
+          (value.operation === 'setProperty' &&
+            keys(value.payload, ['property', 'value']) &&
+            (textboxProperties as readonly string[]).includes(
+              String(value.payload.property),
+            ) &&
+            string(value.payload.value)) ||
           (value.operation === 'author' &&
             string(value.payload.action) &&
             Object.hasOwn(authoringFields, value.payload.action) &&
@@ -393,8 +537,30 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
           'accepted',
           'reason',
           'diagnostics',
+          'baseVersion',
+          'changed',
+          'mappings',
         ]) &&
         version(value.version) &&
+        version(value.baseVersion) &&
+        value.version >= value.baseVersion &&
+        typeof value.changed === 'boolean' &&
+        (!value.changed ||
+          (value.accepted === true && value.version > value.baseVersion)) &&
+        (!value.accepted ||
+          value.changed ||
+          value.version === value.baseVersion) &&
+        mappings(
+          value.mappings,
+          value.baseVersion,
+          value.version,
+          value.accepted === true,
+        ) &&
+        (value.changed ||
+          !value.accepted ||
+          (value.mappings as TargetMapping[]).every(
+            (mapping) => mapping.sourceId === mapping.resultId,
+          )) &&
         id(value.requestId) &&
         typeof value.accepted === 'boolean' &&
         string(value.reason) &&
@@ -423,4 +589,34 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
       break;
   }
   return valid ? (value as unknown as ProtocolMessage) : null;
+}
+
+function mappings(
+  value: unknown,
+  baseVersion: number,
+  resultVersion: number,
+  accepted: boolean,
+): boolean {
+  if (
+    !Array.isArray(value) ||
+    value.length > 1000 ||
+    (!accepted && value.length > 0)
+  )
+    return false;
+  const sources = new Set<string>();
+  const results = new Set<string>();
+  return value.every((entry) => {
+    if (
+      !record(entry) ||
+      !keys(entry, ['sourceId', 'resultId']) ||
+      !nodeId(entry.sourceId, baseVersion) ||
+      !(entry.resultId === null || nodeId(entry.resultId, resultVersion)) ||
+      sources.has(entry.sourceId) ||
+      (entry.resultId !== null && results.has(entry.resultId))
+    )
+      return false;
+    sources.add(entry.sourceId);
+    if (entry.resultId !== null) results.add(entry.resultId);
+    return true;
+  });
 }

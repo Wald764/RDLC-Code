@@ -67,26 +67,30 @@ export function projectTextboxes(
 ): readonly Textbox[] {
   if (!section) return [];
   const result: Textbox[] = [];
-  const visit = (node: XmlNode, inTablix: boolean) => {
+  const body = next(section.node, 'Body');
+  const bodyItems = body ? next(body, 'ReportItems') : null;
+  const visit = (node: XmlNode, inTablix: boolean, parent: XmlNode | null) => {
     if (
       node.expandedName.namespaceUri === RDL_2016 &&
       node.expandedName.localName === 'Textbox'
     )
-      result.push(projectTextbox(node, inTablix ? 'table-cell' : 'body'));
+      result.push(
+        projectTextbox(
+          node,
+          inTablix ? 'table-cell' : parent === bodyItems ? 'body' : 'preserved',
+        ),
+      );
     const nested =
       inTablix ||
       (node.expandedName.namespaceUri === RDL_2016 &&
         tablixContainers.has(node.expandedName.localName));
-    for (const child of node.children) visit(child, nested);
+    for (const child of node.children) visit(child, nested, node);
   };
-  visit(section.node, false);
+  visit(section.node, false, null);
   return result;
 }
 
-function projectTextbox(
-  node: XmlNode,
-  context: 'body' | 'table-cell',
-): Textbox {
+function projectTextbox(node: XmlNode, context: Textbox['context']): Textbox {
   const capabilities: string[] = ['textbox'];
   const nameAttribute = attribute(node, 'Name');
   if (nameAttribute) capabilities.push('name');
@@ -147,7 +151,7 @@ function projectTextbox(
     value,
     style: readStyle(styleNode),
     styleNode,
-    capabilities,
+    capabilities: context === 'preserved' ? [] : capabilities,
   };
 }
 

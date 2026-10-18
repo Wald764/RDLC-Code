@@ -6,7 +6,7 @@ import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
 import { renderScene } from '@rdlc/renderer/render';
 import { DocumentBinding } from './protocol.js';
-import { planTextboxIntent } from './edit-controller.js';
+import { planTextboxIntent, correlateTargets } from './edit-controller.js';
 
 function snapshotOf(document: vscode.TextDocument): DocumentSnapshot {
   return {
@@ -234,12 +234,41 @@ export class DocumentSession {
       this.emitter.fire({
         protocol: 1,
         kind: 'editResult',
+        baseVersion: message.baseVersion,
+        changed: false,
+        mappings: [],
         version: this.document.version,
         requestId: message.requestId,
         accepted: false,
         reason: outcome.diagnostics[0]?.code ?? 'REJECTED',
         diagnostics: outcome.diagnostics,
       });
+      await this.publish();
+      return;
+    }
+    if (!outcome.changed) {
+      const targets =
+        message.operation === 'layout'
+          ? message.payload.targetIds
+          : [message.targetId];
+      this.emitter.fire({
+        protocol: 1,
+        kind: 'editResult',
+        baseVersion: message.baseVersion,
+        version: current.snapshot.version,
+        requestId: message.requestId,
+        accepted: true,
+        changed: false,
+        mappings: correlateTargets(
+          current.syntax,
+          current.syntax,
+          outcome.plan,
+          targets,
+        ),
+        reason: 'UNCHANGED',
+        diagnostics: [],
+      });
+      await this.publish();
       return;
     }
     const edits = outcome.plan.patches.map((patch) =>
@@ -257,6 +286,9 @@ export class DocumentSession {
       this.emitter.fire({
         protocol: 1,
         kind: 'editResult',
+        baseVersion: message.baseVersion,
+        changed: false,
+        mappings: [],
         version: this.document.version,
         requestId: message.requestId,
         accepted: false,
@@ -274,11 +306,12 @@ export class DocumentSession {
       reason = 'HOST_EDIT_FAILED';
     }
     // Intervening changes make success uncertain even if someone restores the candidate text.
+    const actual = this.evaluate();
     const accepted =
       applied &&
       !this.document.isClosed &&
-      this.document.version <= message.baseVersion + 1 &&
-      this.document.getText() === outcome.candidate;
+      actual.snapshot.version === message.baseVersion + 1 &&
+      actual.snapshot.source === outcome.candidate;
     if (applied && !accepted) reason = 'DOCUMENT_CHANGED_DURING_APPLY';
     // Bind the new version before reporting success so the next intent cannot race the change event.
     this.sync();
@@ -286,7 +319,19 @@ export class DocumentSession {
     this.emitter.fire({
       protocol: 1,
       kind: 'editResult',
-      version: this.document.version,
+      baseVersion: message.baseVersion,
+      changed: accepted,
+      mappings: accepted
+        ? correlateTargets(
+            current.syntax,
+            actual.syntax,
+            outcome.plan,
+            message.operation === 'layout'
+              ? message.payload.targetIds
+              : [message.targetId],
+          )
+        : [],
+      version: actual.snapshot.version,
       requestId: message.requestId,
       accepted,
       reason: accepted ? 'APPLIED' : reason,

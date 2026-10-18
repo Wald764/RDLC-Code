@@ -117,7 +117,7 @@ export interface TextboxStyle {
  */
 export interface Textbox {
   readonly node: XmlNode;
-  readonly context: 'body' | 'table-cell';
+  readonly context: 'body' | 'table-cell' | 'preserved';
   readonly name: string | null;
   readonly nameRange: SourceRange | null;
   readonly bounds: TextboxBounds;

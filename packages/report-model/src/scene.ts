@@ -1,3 +1,5 @@
+import type { ResolvedGeometry } from './geometry.js';
+
 export interface Bounds {
   readonly left: number;
   readonly top: number;
@@ -30,7 +32,18 @@ export interface DesignScene {
   readonly body: Bounds;
   readonly items: readonly {
     readonly id: string;
-    readonly bounds: Bounds;
+    readonly bounds: Bounds | null;
+    readonly kind?: 'textbox' | 'table' | 'cell' | 'preserved';
+    readonly parentTableId?: string;
+    readonly sourceOrder?: number;
+    readonly zIndex?: number;
+    readonly resolvedGeometry?: ResolvedGeometry;
+    readonly operations?: Readonly<
+      Record<
+        'moveX' | 'moveY' | 'resizeX' | 'resizeY',
+        { readonly eligible: boolean; readonly reason: string | null }
+      >
+    >;
     readonly label: string;
     readonly placeholder: boolean;
     readonly name?: string | null;

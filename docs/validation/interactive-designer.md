@@ -2,7 +2,7 @@
 
 ## Current status
 
-Phase 1 setup (T001–T003) completed on 2026-10-18. Interactive foundation, stories and feature acceptance remain pending. Baseline success does not establish the new controls, clipboard operations or latency targets.
+Phase 1 setup (T001–T003) and Phase 2 foundation (T004–T013) completed on 2026-10-18. User stories and full-feature acceptance remain pending. Foundation success does not establish direct manipulation, clipboard operations or latency targets.
 
 The [implementation ledger](../../specs/002-interactive-visual-designer/checklists/implementation.md) records baseline details, fixture provenance and all FR/SC task/test mappings. Procedures and the presentation-timing collection protocol are in the [validation guide](../../specs/002-interactive-visual-designer/quickstart.md).
 
@@ -20,6 +20,32 @@ The [implementation ledger](../../specs/002-interactive-visual-designer/checklis
 | Fixture checks                 | Both manifest tests and assert-based parse/projection/token-reconstruction smoke check pass                               |
 | Pre-existing baseline failures | None observed                                                                                                             |
 | Installed VSIX identity        | Pending; no new VSIX built/installed for this phase                                                                       |
+
+## Foundation evidence (T004–T013)
+
+Checkout: `0ea7803d2da58bc4fb3aa029879656afd3983f63` plus the local foundation changes. Environment: Windows NT 10.0.26300.0, isolated Node 24.22.0 / pnpm 11.28.2, native development tests in VS Code 1.142.0. The existing wildcard report-model exports already expose the new geometry subpath. Ignore files were verified against the current Node/Angular workspace; no additions were necessary.
+
+| Tasks           | Implementation and regression evidence                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T004–T006       | Shared point/CSS-pixel conversions and unit-preserving decimal formatting; all five units, tiny positive sizes, unchanged lexemes, missing versus expression geometry and 0.01pt tolerance in `packages/report-model/src/geometry.test.ts`.                                                                                                                                                                                      |
+| T005, T007–T008 | Renderer tests cover derived textbox bounds, explicit/unknown geometry, axis-local eligibility, source-only mutation refusal, source order/ZIndex, preserved placeholders, distinct table frames/parent-linked cells and derived table sizes independent of position. The designer omits unknown hit rectangles and retains list access; existing forms remain compatible.                                                       |
+| T009–T010       | Protocol tests cover all eight handles, six alignments, both distribution axes, complete bounded target sets, version-scoped IDs, strict result mappings, unknown keys, malformed numbers/units and existing message budgets. Layout is a transport foundation; its planning/capability activation belongs to the following stories and is explicitly refused until then.                                                        |
+| T011–T012       | Serializer tests cover deterministic same-offset insertions, overlap/stale-plan refusal, namespace union/conflicts and exact outside-footprint equality. A real prefixed textbox test composes four absent properties while preserving comments, attribute quotes and CDATA.                                                                                                                                                     |
+| T013            | Controller tests prove explicit/implicit scalar geometric no-ops, exact source spelling, deleted identities and source-offset correspondence after insertions shift sibling node ordinals. Native synchronization tests prove zero WorkspaceEdit calls/version/dirty/source changes for a no-op and validate accepted base/result versions and mappings. Existing queue, stale/duplicate guards and uncertain-apply checks pass. |
+
+Tests were introduced before their implementations: geometry/scene and result production initially failed compilation for the missing contracts; protocol/result and composition tests then demonstrated the expected runtime failures before their validators/normalization were completed. One expanded identity test initially hit the existing opaque-reference refusal in its duplicated neighbor; removing that neighbor's opaque metadata isolated correspondence without weakening production guards.
+
+| Check                     | Result                                                                                                                                       |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm lint`               | PASS                                                                                                                                         |
+| `pnpm typecheck`          | PASS; root TypeScript and Angular                                                                                                            |
+| `pnpm test:unit`          | PASS; 58 Node and 14 Angular tests; the subsequently added real compound textbox regression also passes in the focused 4-test serializer run |
+| `pnpm test:roundtrip`     | PASS; 14 tests                                                                                                                               |
+| `pnpm test:compatibility` | PASS; 10 tests                                                                                                                               |
+| `pnpm build`              | PASS; extension and Angular production output                                                                                                |
+| `pnpm test:vscode`        | PASS; all six native development suites, including the new no-op/result checks                                                               |
+
+No new dependency, vendor change or installed-release claim. The checklist gate files remain read-only. Full installed/packaged, cross-platform and timed acceptance below remains pending for the user stories and final phase.
 
 ## Pending installed and timed evidence
 
@@ -54,6 +80,8 @@ All entries are **Pending**, not passed or waived. Record actual candidate commi
 DOM mutation, host completion and animation callbacks alone are not painted-result evidence. Synthetic records test only the collector/validator, never satisfy acceptance.
 
 ## Final automated gates
+
+Phase 2 final checks passed: `pnpm format:check` and `git diff --check`; T004–T013 are marked complete. The post-implementation hooks check found no `.specify/extensions.yml`. No vendor, dependency or lockfile changes were introduced.
 
 Phase 1 final checks passed: `pnpm format:check`, `git diff --check`, complete 27-FR/8-SC ledger coverage and T001–T003 completion markers. No vendor files changed; no extension hooks file was present.
 

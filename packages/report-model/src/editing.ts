@@ -1,4 +1,5 @@
 import type { SourceRange } from './document.js';
+import type { SizeUnit } from './geometry.js';
 
 /** Authored textbox value/style/geometry properties. FR-005. */
 export const textboxProperties = [
@@ -82,7 +83,55 @@ export interface AuthoringIntent {
   readonly operation: 'author';
   readonly payload: AuthoringPayload;
 }
-export type EditIntent = TextboxIntent | AuthoringIntent;
+export const resizeHandles = [
+  'n',
+  'ne',
+  'e',
+  'se',
+  's',
+  'sw',
+  'w',
+  'nw',
+] as const;
+export const alignModes = [
+  'left',
+  'center',
+  'right',
+  'top',
+  'middle',
+  'bottom',
+] as const;
+export interface LayoutIntent {
+  readonly requestId: string;
+  readonly baseVersion: number;
+  readonly operation: 'layout';
+  readonly payload: {
+    readonly targetIds: readonly string[];
+    readonly unit: SizeUnit;
+  } & (
+    | { readonly action: 'move'; readonly dxPt: number; readonly dyPt: number }
+    | {
+        readonly action: 'resize';
+        readonly handle: (typeof resizeHandles)[number];
+        readonly xPt?: number;
+        readonly yPt?: number;
+      }
+    | {
+        readonly action: 'align';
+        readonly primaryId: string;
+        readonly mode: (typeof alignModes)[number];
+      }
+    | {
+        readonly action: 'distribute';
+        readonly axis: 'horizontal' | 'vertical';
+      }
+  );
+}
+export interface TargetMapping {
+  readonly sourceId: string;
+  readonly resultId: string | null;
+}
+export type EditIntent = TextboxIntent | AuthoringIntent | LayoutIntent;
 export interface AuthoringRequest {
   readonly targetId: string;
   readonly payload: AuthoringIntent['payload'];

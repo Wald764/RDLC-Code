@@ -58,7 +58,14 @@ export class DocumentBinding {
       return { ok: true, message };
     }
     if (message.kind !== 'edit') return reject('Host-only message');
-    if (message.baseVersion !== this.version || !this.ids.has(message.targetId))
+    const targets =
+      message.operation === 'layout'
+        ? message.payload.targetIds
+        : [message.targetId];
+    if (
+      message.baseVersion !== this.version ||
+      targets.some((id) => !this.ids.has(id))
+    )
       return reject('Stale edit or foreign target');
     if (!this.capabilities.has(message.operation))
       return reject('Operation capability is disabled');

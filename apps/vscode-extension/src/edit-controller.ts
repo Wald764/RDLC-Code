@@ -5,9 +5,11 @@ import type {
   PatchPlan,
   AuthoringIntent,
   TextboxProperty,
+  TargetMapping,
 } from '@rdlc/report-model/editing';
 import type { ReportProjection, Textbox } from '@rdlc/report-model/report';
-import type { XmlSyntaxDocument } from '@rdlc/report-model/syntax';
+import type { XmlNode, XmlSyntaxDocument } from '@rdlc/report-model/syntax';
+import { toPoints, resolveGeometry } from '@rdlc/report-model/geometry';
 import { projectReport } from '@rdlc/xml-parser/project-report';
 import { planTextboxProperty } from '@rdlc/xml-serializer/textboxes';
 import {
@@ -41,6 +43,7 @@ export type PlanOutcome =
       readonly ok: true;
       readonly plan: PatchPlan;
       readonly candidate: string;
+      readonly changed: boolean;
     }
   | { readonly ok: false; readonly diagnostics: readonly Diagnostic[] };
 
@@ -110,6 +113,30 @@ export function planTextboxIntent(
     };
   if (intent.operation === 'author')
     return planAuthoringIntent(snapshot, syntax, projection, intent);
+  if (intent.operation === 'layout')
+    return {
+      ok: false,
+      diagnostics: [
+        diagnostic(
+          'LAYOUT_UNAVAILABLE',
+          'Layout planning is not available yet.',
+          'unsupported',
+          { start: 0, end: 0 },
+        ),
+      ],
+    };
+  if (projection.status !== 'editable')
+    return {
+      ok: false,
+      diagnostics: [
+        diagnostic(
+          'SOURCE_ONLY',
+          'Fix source diagnostics before editing visually.',
+          'unsupported',
+          { start: 0, end: 0 },
+        ),
+      ],
+    };
   const index = projection.textboxes.findIndex(
     (textbox) => textbox.node.id === intent.targetId,
   );
@@ -150,6 +177,31 @@ export function planTextboxIntent(
   });
   if (authored.length > 0) return { ok: false, diagnostics: authored };
 
+  const currentValue = textboxValue(textbox, property);
+  const geometry = resolveGeometry(textbox.bounds, {
+    width:
+      textbox.context === 'body'
+        ? toPoints(projection.section?.width ?? null)
+        : null,
+    height:
+      textbox.context === 'body'
+        ? toPoints(projection.section?.height ?? null)
+        : null,
+  });
+  const currentPoints = geometry[property as keyof typeof geometry]?.points;
+  const sameGeometry =
+    ['left', 'top', 'width', 'height'].includes(property) &&
+    currentPoints !== null &&
+    currentPoints !== undefined &&
+    currentPoints === toPoints(value);
+  if (currentValue === value || sameGeometry)
+    return {
+      ok: true,
+      changed: false,
+      plan: patchPlan(snapshot, []),
+      candidate: snapshot.source,
+    };
+
   let plan: PatchPlan;
   let candidate: string;
   try {
@@ -175,7 +227,7 @@ export function planTextboxIntent(
       ],
     };
   }
-  return { ok: true, plan, candidate };
+  return { ok: true, plan, candidate, changed: candidate !== snapshot.source };
 }
 
 export function planAuthoringIntent(
@@ -555,7 +607,12 @@ export function planAuthoringIntent(
       const projected = projectReport(syntax);
       return projected.status === 'editable' && verify(projected);
     }).source;
-    return { ok: true, plan, candidate };
+    return {
+      ok: true,
+      plan,
+      candidate,
+      changed: candidate !== snapshot.source,
+    };
   } catch (error) {
     return fail(
       error instanceof Error
@@ -563,4 +620,66 @@ export function planAuthoringIntent(
         : 'Authoring could not be verified.',
     );
   }
+}
+
+/** Reconcile parsed nodes by preserved source location and parent, never scene order. */
+export function correlateTargets(
+  original: XmlSyntaxDocument,
+  result: XmlSyntaxDocument,
+  plan: PatchPlan,
+  targetIds: readonly string[],
+): readonly TargetMapping[] {
+  const index = (root: XmlNode | null) => {
+    const nodes: { node: XmlNode; parent: XmlNode | null }[] = [];
+    const visit = (node: XmlNode, parent: XmlNode | null) => {
+      nodes.push({ node, parent });
+      node.children.forEach((child) => visit(child, node));
+    };
+    if (root) visit(root, null);
+    return nodes;
+  };
+  const before = new Map(
+    index(original.root).map((entry) => [entry.node.id, entry]),
+  );
+  const after = new Map(
+    index(result.root).map((entry) => [entry.node.range.start, entry]),
+  );
+  const translated = (start: number) =>
+    start +
+    plan.patches
+      .filter((patch) => patch.end <= start)
+      .reduce(
+        (delta, patch) =>
+          delta + patch.replacement.length - (patch.end - patch.start),
+        0,
+      );
+  const mappings: TargetMapping[] = [];
+  for (const sourceId of targetIds) {
+    const entry = before.get(sourceId);
+    if (!entry) continue;
+    const { node, parent } = entry;
+    const replacement = plan.patches.find(
+      (patch) =>
+        patch.start <= node.range.start &&
+        patch.end >= node.range.end &&
+        patch.end > patch.start,
+    );
+    if (replacement) {
+      if (replacement.replacement === '')
+        mappings.push({ sourceId, resultId: null });
+      continue;
+    }
+    const candidate = after.get(translated(node.range.start));
+    if (
+      candidate &&
+      candidate.node.expandedName.localName === node.expandedName.localName &&
+      candidate.node.expandedName.namespaceUri ===
+        node.expandedName.namespaceUri &&
+      (parent
+        ? candidate.parent?.range.start === translated(parent.range.start)
+        : candidate.parent === null)
+    )
+      mappings.push({ sourceId, resultId: candidate.node.id });
+  }
+  return mappings;
 }

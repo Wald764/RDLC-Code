@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import type { TextboxProperty } from '@rdlc/report-model/editing';
 import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
-import { planTextboxIntent } from './edit-controller.js';
+import { planTextboxIntent, correlateTargets } from './edit-controller.js';
 
 const source = readFileSync('tests/fixtures/textboxes/supported.rdlc', 'utf8');
 
@@ -30,6 +30,97 @@ test('the shared planner refuses stale scalar edits before creating patches', ()
   const outcome = plan(source, 'text', 'Stale value', 0);
   assert.equal(outcome.ok, false);
   if (!outcome.ok) assert.equal(outcome.diagnostics[0]?.code, 'STALE_EDIT');
+});
+
+test('geometric scalar no-op preserves original lexemes and creates no patches', () => {
+  const original = source.replace(
+    '<Left>0.25in</Left>',
+    '<Left>00.250in</Left>',
+  );
+  const outcome = plan(original, 'left', '18pt');
+  assert.ok(outcome.ok);
+  assert.equal(outcome.changed, false);
+  assert.equal(outcome.candidate, original);
+  assert.equal(outcome.plan.patches.length, 0);
+  assert.equal(plan(source, 'text', 'Hello & welcome').ok, true);
+  const implicit = source.replace(/<Left>[^<]+<\/Left>/, '');
+  const implicitOutcome = plan(implicit, 'left', '0pt');
+  assert.ok(implicitOutcome.ok);
+  assert.equal(implicitOutcome.changed, false);
+  assert.equal(implicitOutcome.candidate, implicit);
+});
+
+test('result identities follow source offsets across inserted nodes, not ordinals', () => {
+  const sibling = source
+    .match(/<Textbox\b[\s\S]*?<\/Textbox>/)![0]
+    .replaceAll('Title', 'Other')
+    .replace(' rd:DefaultName="Other"', '')
+    .replace(/<x:Opaque\b[^>]*>[\s\S]*?<\/x:Opaque>/, '');
+  const original = source
+    .replace(/<Left>[^<]+<\/Left>/, '')
+    .replace('</ReportItems>', `${sibling}</ReportItems>`);
+  const snapshot = {
+    uri: 'test:correlation',
+    version: 1,
+    source: original,
+    eol: '\n' as const,
+  };
+  const syntax = parse(snapshot);
+  const report = projectReport(syntax);
+  const target = report.textboxes[0]!.node.id;
+  const siblingId = report.textboxes[1]!.node.id;
+  const outcome = planTextboxIntent(snapshot, syntax, report, {
+    operation: 'setProperty',
+    requestId: 'map',
+    baseVersion: 1,
+    targetId: target,
+    payload: { property: 'left', value: '1in' },
+  });
+  assert.ok(outcome.ok);
+  assert.equal(outcome.changed, true);
+  const accepted = parse({
+    ...snapshot,
+    version: 2,
+    source: outcome.candidate,
+  });
+  assert.deepEqual(
+    correlateTargets(syntax, accepted, outcome.plan, [target, siblingId]),
+    [
+      {
+        sourceId: target,
+        resultId: projectReport(accepted).textboxes[0]!.node.id,
+      },
+      {
+        sourceId: siblingId,
+        resultId: projectReport(accepted).textboxes[1]!.node.id,
+      },
+    ],
+  );
+  assert.notEqual(
+    siblingId.split(':')[1],
+    projectReport(accepted).textboxes[1]!.node.id.split(':')[1],
+  );
+  assert.deepEqual(
+    correlateTargets(syntax, accepted, outcome.plan, ['1:99999']),
+    [],
+  );
+  const removed = planTextboxIntent(snapshot, syntax, report, {
+    operation: 'author',
+    requestId: 'delete',
+    baseVersion: 1,
+    targetId: target,
+    payload: { action: 'deleteTextbox', confirm: 'delete-contained-content' },
+  });
+  assert.ok(removed.ok);
+  assert.deepEqual(
+    correlateTargets(
+      syntax,
+      parse({ ...snapshot, version: 2, source: removed.candidate }),
+      removed.plan,
+      [target],
+    ),
+    [{ sourceId: target, resultId: null }],
+  );
 });
 
 test('rename refuses referenced textboxes and opaque dependencies, but allows safe renames and unrelated edits', () => {

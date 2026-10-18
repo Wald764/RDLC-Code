@@ -4,6 +4,7 @@ import { readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { observe, replaceSource, until } from './session-checks.js';
+import { validateMessage } from '@rdlc/report-model/protocol';
 
 export async function run(): Promise<void> {
   const source = readFileSync(
@@ -43,6 +44,41 @@ export async function run(): Promise<void> {
   const a = observe(document);
   const b = observe(document);
   try {
+    let noOpApplies = 0;
+    const noOp = observe(document, async () => {
+      noOpApplies++;
+      return false;
+    });
+    try {
+      const version = document.version;
+      const dirty = document.isDirty;
+      const intent = {
+        ...noOp.intent('geometric-no-op', ''),
+        payload: { property: 'left', value: '18pt' },
+      };
+      noOp.session.receive(intent);
+      await until(
+        () => noOp.messages.some((message) => message.kind === 'editResult'),
+        'Geometric no-op settles',
+      );
+      const result = noOp.messages.find(
+        (message) => message.kind === 'editResult',
+      );
+      assert.ok(result?.kind === 'editResult' && result.accepted);
+      assert.equal(result.changed, false);
+      assert.equal(result.baseVersion, version);
+      assert.equal(result.version, version);
+      assert.deepEqual(result.mappings, [
+        { sourceId: intent.targetId, resultId: intent.targetId },
+      ]);
+      assert.ok(validateMessage(result));
+      assert.equal(noOpApplies, 0, 'No WorkspaceEdit for a geometric no-op');
+      assert.equal(document.version, version);
+      assert.equal(document.isDirty, dirty);
+      assert.equal(document.getText(), source);
+    } finally {
+      noOp.dispose();
+    }
     const first = a.intent('race-a', 'First view');
     const second = b.intent('race-b', 'Second view');
     a.session.receive(first);
@@ -58,6 +94,19 @@ export async function run(): Promise<void> {
     assert.ok(document.getText().includes('First view'));
     assert.ok(!document.getText().includes('Second view'));
     assert.ok(!b.messages.some((m) => m.kind === 'editResult' && m.accepted));
+    const accepted = a.messages.find(
+      (message) => message.kind === 'editResult',
+    );
+    assert.ok(
+      accepted?.kind === 'editResult' && accepted.accepted && accepted.changed,
+    );
+    assert.equal(accepted.baseVersion, first.baseVersion);
+    assert.equal(accepted.version, document.version);
+    assert.equal(accepted.mappings[0]?.sourceId, first.targetId);
+    assert.ok(
+      accepted.mappings[0]?.resultId?.startsWith(`${document.version}:`),
+    );
+    assert.ok(validateMessage(accepted));
     const after = document.getText();
     a.session.receive(first);
     await until(

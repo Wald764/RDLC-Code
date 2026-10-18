@@ -25,6 +25,9 @@ describe('document lifecycle transport', () => {
     host.ingest({
       protocol: 1,
       kind: 'editResult',
+      baseVersion: 1,
+      changed: false,
+      mappings: [],
       version: 2,
       requestId: 'delayed',
       accepted: true,

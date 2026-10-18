@@ -1,13 +1,14 @@
 import type { ReportProjection, Textbox } from '@rdlc/report-model/report';
 import { RDL_2016 } from '@rdlc/report-model/report';
 import type {
-  Bounds,
   DesignScene,
+  DesignSceneItem,
   SceneTextStyle,
 } from '@rdlc/report-model/scene';
 import type { XmlNode } from '@rdlc/report-model/syntax';
-import { toPixels } from './geometry.js';
-import { renderTable } from './tables.js';
+import { toPixels, geometryBounds, geometryOperations } from './geometry.js';
+import { resolveGeometry, toPoints } from '@rdlc/report-model/geometry';
+import { renderTable, tableGeometry } from './tables.js';
 
 const defaultPage = { width: 8.5 * 96, height: 11 * 96 };
 const labelLength = 40;
@@ -22,12 +23,12 @@ function rdlChild(node: XmlNode, name: string): XmlNode | null {
   );
 }
 
-function boundsOf(node: XmlNode): Bounds {
+function rawBounds(node: XmlNode) {
   return {
-    left: toPixels(rdlChild(node, 'Left')?.text ?? null) ?? 0,
-    top: toPixels(rdlChild(node, 'Top')?.text ?? null) ?? 0,
-    width: toPixels(rdlChild(node, 'Width')?.text ?? null) ?? 0,
-    height: toPixels(rdlChild(node, 'Height')?.text ?? null) ?? 0,
+    left: rdlChild(node, 'Left')?.text ?? null,
+    top: rdlChild(node, 'Top')?.text ?? null,
+    width: rdlChild(node, 'Width')?.text ?? null,
+    height: rdlChild(node, 'Height')?.text ?? null,
   };
 }
 
@@ -74,42 +75,127 @@ export function renderScene(projection: ReportProjection): DesignScene {
   };
   if (!section) return scene;
 
-  const items = [];
-  for (const textbox of projection.textboxes) {
-    if (textbox.context === 'table-cell') continue;
-    const editable =
-      textbox.context === 'body' && textbox.capabilities.includes('text');
-    items.push({
-      id: textbox.node.id,
-      bounds: boundsOf(textbox.node),
-      label: `${textbox.name ?? 'Textbox'}: ${preview(textbox)}`,
-      placeholder: !editable,
-      name: textbox.name,
-      text: textbox.value ? textbox.value.text : null,
-      geometry: textbox.bounds,
-      style: textboxStyle(textbox),
-      capabilities: textbox.capabilities,
-    });
-  }
-
+  const items: DesignSceneItem[] = [];
   const reportItems = rdlChild(
     rdlChild(section.node, 'Body') ?? section.node,
     'ReportItems',
   );
-  for (const child of reportItems?.children ?? []) {
-    const table = projection.tables.find((table) => table.node.id === child.id);
-    if (table?.structural) {
-      items.push(...renderTable(table));
+  for (const [sourceOrder, child] of (reportItems?.children ?? []).entries()) {
+    const priority = rdlChild(child, 'ZIndex')?.text.trim();
+    const zIndex =
+      priority &&
+      /^\d+$/.test(priority) &&
+      Number.isSafeInteger(Number(priority))
+        ? Number(priority)
+        : 0;
+    const metadata = { sourceOrder, zIndex };
+    const textbox = projection.textboxes.find(
+      (textbox) => textbox.node.id === child.id && textbox.context === 'body',
+    );
+    if (textbox) {
+      const editable =
+        projection.status === 'editable' &&
+        textbox.capabilities.includes('text');
+      const geometry = resolveGeometry(textbox.bounds, {
+        width: toPoints(section.width),
+        height: toPoints(section.height),
+      });
+      const capabilities =
+        projection.status === 'editable' ? textbox.capabilities : [];
+      items.push({
+        ...metadata,
+        kind: 'textbox',
+        id: textbox.node.id,
+        bounds: geometryBounds(geometry),
+        resolvedGeometry: geometry,
+        operations: geometryOperations(
+          geometry,
+          capabilities,
+          projection.status !== 'editable'
+            ? 'Report is source-only; inspect source diagnostics.'
+            : null,
+        ),
+        label: `${textbox.name ?? 'Textbox'}: ${preview(textbox)}`,
+        placeholder: !editable,
+        name: textbox.name,
+        text: textbox.value ? textbox.value.text : null,
+        geometry: textbox.bounds,
+        style: textboxStyle(textbox),
+        capabilities,
+      });
       continue;
     }
-    if (
-      child.expandedName.namespaceUri === RDL_2016 &&
-      child.expandedName.localName === 'Textbox'
-    )
+    const table = projection.tables.find((table) => table.node.id === child.id);
+    if (table?.structural) {
+      const resolved = tableGeometry(table);
+      const reason =
+        projection.status === 'editable'
+          ? null
+          : 'Report is source-only; inspect source diagnostics.';
+      const operations = geometryOperations(
+        resolved,
+        ['left', 'top', 'width', 'height'],
+        reason,
+      );
+      const inconsistent = {
+        eligible: false,
+        reason:
+          'Table outer size disagrees with its rows/columns; correct the dimensions in source before resizing.',
+      };
+      const width = table.columns.reduce(
+        (sum, column) => sum + (toPoints(column.width) ?? NaN),
+        0,
+      );
+      const height = table.rows.reduce(
+        (sum, row) => sum + (toPoints(row.height) ?? NaN),
+        0,
+      );
+      items.push({
+        ...metadata,
+        kind: 'table',
+        id: table.node.id,
+        bounds: geometryBounds(resolved),
+        resolvedGeometry: resolved,
+        geometry: table.bounds,
+        label: table.name,
+        name: table.name,
+        placeholder: false,
+        capabilities: [],
+        operations: {
+          ...operations,
+          resizeX:
+            resolved.width.points !== null &&
+            Math.abs(resolved.width.points - width) > 0.01
+              ? inconsistent
+              : operations.resizeX,
+          resizeY:
+            resolved.height.points !== null &&
+            Math.abs(resolved.height.points - height) > 0.01
+              ? inconsistent
+              : operations.resizeY,
+        },
+      });
+      items.push(
+        ...renderTable(table, projection.status === 'editable').map((cell) => ({
+          ...cell,
+          ...metadata,
+        })),
+      );
       continue;
+    }
+    const raw = rawBounds(child);
+    const geometry = resolveGeometry(raw, { width: null, height: null });
     items.push({
+      ...metadata,
+      kind: 'preserved',
       id: child.id,
-      bounds: boundsOf(child),
+      bounds: geometryBounds(geometry),
+      resolvedGeometry: geometry,
+      operations: geometryOperations(
+        geometry,
+        [],
+        'Unsupported construct; edit this item in source.',
+      ),
       label: `${child.expandedName.localName} (unsupported)`,
       placeholder: true,
       name: null,

@@ -6,6 +6,7 @@ import type { PatchPlan, SourcePatch } from '@rdlc/report-model/editing';
 import { RDL_2016 } from '@rdlc/report-model/report';
 import type { XmlNode } from '@rdlc/report-model/syntax';
 import { escapeText } from './textboxes.js';
+import { normalizePatches } from './patches.js';
 
 export function child(node: XmlNode, name: string): XmlNode | null {
   const matches = node.children.filter(
@@ -94,32 +95,48 @@ export function setScalar(
 export function patchPlan(
   snapshot: DocumentSnapshot,
   patches: readonly SourcePatch[],
+  namespaceDependencies: PatchPlan['namespaceDependencies'] = [],
 ): PatchPlan {
-  const sorted: SourcePatch[] = [];
-  for (const patch of [...patches].sort((a, b) => a.start - b.start)) {
-    const previous = sorted.at(-1);
-    if (previous?.start === patch.start) {
-      if (previous.end !== previous.start && patch.end !== patch.start)
-        throw new Error('Overlapping structural changes.');
-      sorted[sorted.length - 1] = {
-        ...sourcePatch(
-          snapshot,
-          { start: patch.start, end: Math.max(previous.end, patch.end) },
-          '',
-        ),
-        replacement:
-          patch.start === patch.end && previous.start !== previous.end
-            ? patch.replacement + previous.replacement
-            : previous.replacement + patch.replacement,
-      };
-    } else sorted.push(patch);
+  const sorted = normalizePatches(snapshot, patches);
+  const dependencies: PatchPlan['namespaceDependencies'][number][] = [];
+  for (const dependency of namespaceDependencies) {
+    const existing = dependencies.find(
+      (entry) =>
+        entry.nodeId === dependency.nodeId &&
+        entry.prefix === dependency.prefix,
+    );
+    if (existing && existing.uri !== dependency.uri)
+      throw new Error('Conflicting namespace dependencies.');
+    if (!existing) dependencies.push(dependency);
   }
   return {
     version: snapshot.version,
     patches: sorted,
     footprint: sorted.map(({ start, end }) => ({ start, end })),
-    namespaceDependencies: [],
+    namespaceDependencies: dependencies,
   };
+}
+export function composePlans(
+  snapshot: DocumentSnapshot,
+  plans: readonly PatchPlan[],
+): PatchPlan {
+  for (const plan of plans)
+    if (
+      plan.version !== snapshot.version ||
+      plan.patches.some(
+        (patch) =>
+          !plan.footprint.some(
+            (range) => range.start <= patch.start && range.end >= patch.end,
+          ),
+      )
+    )
+      throw new Error('Stale plan or patch outside footprint.');
+  const composed = patchPlan(
+    snapshot,
+    plans.flatMap((plan) => plan.patches),
+    plans.flatMap((plan) => plan.namespaceDependencies),
+  );
+  return { ...composed, footprint: plans.flatMap((plan) => plan.footprint) };
 }
 export function renameNode(
   snapshot: DocumentSnapshot,
