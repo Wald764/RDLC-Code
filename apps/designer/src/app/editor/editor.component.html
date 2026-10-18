@@ -18,8 +18,66 @@
   </div>
   @if (scene(); as design) {
     <p class="status" role="status">
-      Design surface — {{ status() }} · {{ design.items.length }} item(s)
+      Design surface — {{ status() }} · {{ design.items.length }} item(s) ·
+      {{ selectedIds().length }} selected
+      @if (primary(); as item) {
+        · Primary: {{ item.label }}
+      }
     </p>
+    <div role="group" aria-label="Selection and arrangement">
+      <button type="button" (click)="selectAll()" [disabled]="!!host.pending()">
+        Select All body items
+      </button>
+      <button
+        type="button"
+        (click)="clearSelection()"
+        [disabled]="!!host.pending()"
+      >
+        Clear selection
+      </button>
+      @if (selectedIds().length > 1) {
+        @for (mode of alignModes; track mode) {
+          <button
+            type="button"
+            (click)="arrange('align', mode)"
+            [disabled]="
+              !!host.pending() ||
+              !!bulkReason(
+                ['left', 'center', 'right'].includes(mode)
+                  ? 'horizontal'
+                  : 'vertical'
+              )
+            "
+          >
+            Align {{ mode }}
+          </button>
+        }
+        @for (axis of ['horizontal', 'vertical']; track axis) {
+          <button
+            type="button"
+            (click)="
+              arrange(
+                'distribute',
+                axis === 'horizontal' ? 'horizontal' : 'vertical'
+              )
+            "
+            [disabled]="
+              !!host.pending() ||
+              selectedIds().length < 3 ||
+              !!bulkReason(axis === 'horizontal' ? 'horizontal' : 'vertical')
+            "
+          >
+            Distribute {{ axis }}
+          </button>
+        }
+        @if (bulkReason('horizontal')) {
+          <p role="status">Horizontal: {{ bulkReason('horizontal') }}</p>
+        }
+        @if (bulkReason('vertical')) {
+          <p role="status">Vertical: {{ bulkReason('vertical') }}</p>
+        }
+      }
+    </div>
     <div
       class="page"
       role="group"
@@ -35,22 +93,23 @@
         [style.top.px]="design.body.top"
         [style.width.px]="design.body.width"
         [style.height.px]="design.body.height"
+        (pointerdown)="startMarquee($event)"
       >
         @for (item of design.items; track $index) {
           @if (item.bounds; as bounds) {
             <button
               type="button"
               class="item"
-              [class.selected]="$index === selectedIndex()"
+              [class.selected]="isSelected(item)"
               [class.placeholder]="item.placeholder"
               [attr.data-item]="$index"
-              [attr.aria-pressed]="$index === selectedIndex()"
+              [attr.aria-pressed]="isSelected(item)"
               [style.left.px]="bounds.left"
               [style.top.px]="bounds.top"
               [style.width.px]="bounds.width"
               [style.height.px]="bounds.height"
               [style.z-index]="item.zIndex ?? 0"
-              (click)="select($index)"
+              (click)="selectClick($event, $index)"
               (pointerdown)="startGesture($event, $index)"
             >
               {{ item.label }}
@@ -97,7 +156,7 @@
             }
           }
         }
-        @if (previewPixels(); as bounds) {
+        @for (bounds of groupPreviewPixels(); track $index) {
           <div
             class="preview"
             [class.invalid]="!preview()?.valid"
@@ -108,6 +167,18 @@
             aria-hidden="true"
           ></div>
         }
+        @if (marquee(); as state) {
+          @if (state.active) {
+            <div
+              class="marquee"
+              [style.left.px]="state.rect.left"
+              [style.top.px]="state.rect.top"
+              [style.width.px]="state.rect.width"
+              [style.height.px]="state.rect.height"
+              aria-hidden="true"
+            ></div>
+          }
+        }
       </div>
     </div>
     @if (design.items.length) {
@@ -116,11 +187,24 @@
           <li>
             <button
               type="button"
-              (click)="select($index)"
-              [attr.aria-pressed]="$index === selectedIndex()"
+              (click)="select($index, $event.shiftKey)"
+              [attr.aria-pressed]="isSelected(item)"
             >
               {{ item.label }}{{ item.bounds ? '' : ' — unknown bounds' }}
+              {{ primary()?.id === item.id ? ' — primary' : '' }}
             </button>
+            @if (item.kind !== 'cell') {
+              <label
+                ><input
+                  type="checkbox"
+                  data-membership
+                  [checked]="isSelected(item)"
+                  [disabled]="!!host.pending()"
+                  (change)="select($index, true)"
+                />
+                Include {{ item.label }} in selection</label
+              >
+            }
           </li>
         }
       </ul>
@@ -155,18 +239,20 @@
         </form>
       }
     }
-    @for (snapshot of [host.snapshot()]; track snapshot?.version) {
-      @if (
-        snapshot?.status === 'editable' && snapshot?.authoring;
-        as authoring
-      ) {
-        <fieldset [disabled]="!!host.pending()">
-          <rdlc-authoring
-            [state]="authoring"
-            [selected]="selected()"
-            (request)="author($event)"
-          />
-        </fieldset>
+    @if (selectedIds().length < 2) {
+      @for (snapshot of [host.snapshot()]; track snapshot?.version) {
+        @if (
+          snapshot?.status === 'editable' && snapshot?.authoring;
+          as authoring
+        ) {
+          <fieldset [disabled]="!!host.pending()">
+            <rdlc-authoring
+              [state]="authoring"
+              [selected]="selected()"
+              (request)="author($event)"
+            />
+          </fieldset>
+        }
       }
     }
     <rdlc-diagnostics

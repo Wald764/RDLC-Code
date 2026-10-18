@@ -206,6 +206,249 @@ describe('editor surface', () => {
     }
   }
 
+  function multipleSnapshot() {
+    const message = directSnapshot();
+    const item = message.scene.items[0]!;
+    return {
+      ...message,
+      scene: {
+        ...message.scene,
+        items: [
+          { ...item, sourceOrder: 0 },
+          {
+            ...item,
+            id: '2:4',
+            kind: 'table',
+            label: 'Other',
+            name: 'Other',
+            sourceOrder: 1,
+            bounds: { left: 340, top: 100, width: 100, height: 40 },
+          },
+          {
+            id: '2:5',
+            kind: 'preserved',
+            label: 'Locked',
+            sourceOrder: 2,
+            placeholder: true,
+            bounds: null,
+          },
+          {
+            ...item,
+            id: '2:6',
+            kind: 'cell',
+            parentTableId: '2:4',
+            label: 'Cell',
+          },
+        ],
+      },
+    };
+  }
+
+  it('toggles body membership and primary, hides scalar forms and includes locked placeholders in Select All', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest(multipleSnapshot());
+    await settle();
+    const component = fixture.componentInstance;
+    component.select(0);
+    component.select(1, true);
+    await settle();
+    expect(component.selectedIds()).toEqual(['2:3', '2:4']);
+    expect(element.textContent).toContain('2 selected');
+    expect(element.querySelector('rdlc-textbox-properties')).toBeNull();
+    expect(element.querySelector('rdlc-authoring')).toBeNull();
+    expect(element.querySelectorAll('[data-handle]')).toHaveLength(0);
+    component.arrange('align', 'right');
+    expect(host.sent()[0]).toMatchObject({
+      payload: {
+        action: 'align',
+        targetIds: ['2:3', '2:4'],
+        primaryId: '2:4',
+        mode: 'right',
+      },
+    });
+  });
+
+  it('Select All, cell exclusivity, Escape and accessible list membership leave the host untouched', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest(multipleSnapshot());
+    await settle();
+    const component = fixture.componentInstance;
+    component.selectAll();
+    await settle();
+    expect(component.selectedIds()).toEqual(['2:3', '2:4', '2:5']);
+    expect(component.bulkReason('horizontal')).toContain('Locked');
+    component.select(3, true);
+    expect(component.selected()?.kind).toBe('cell');
+    expect(component.selectedIds()).toEqual([]);
+    component.keydown(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(component.selected()).toBeNull();
+    const toggles = element.querySelectorAll<HTMLInputElement>(
+      'input[data-membership]',
+    );
+    expect(toggles).toHaveLength(3);
+    toggles[0]!.click();
+    toggles[1]!.click();
+    expect(component.selectedIds()).toEqual(['2:3', '2:4']);
+    expect(host.sent()).toHaveLength(0);
+  });
+
+  it('moves every selected member from immutable origins and refuses an invalid group preview', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest(multipleSnapshot());
+    await settle();
+    const component = fixture.componentInstance;
+    component.select(0);
+    component.select(1, true);
+    const item = element.querySelector('button.item') as HTMLElement;
+    item.setPointerCapture = () => {};
+    item.hasPointerCapture = () => false;
+    const event = {
+      button: 0,
+      pointerId: 1,
+      currentTarget: item,
+      clientX: 0,
+      clientY: 0,
+      preventDefault() {},
+      stopPropagation() {},
+    } as unknown as PointerEvent;
+    component.startGesture(event, 0);
+    component.moveGesture({ ...event, clientX: 8 });
+    await settle();
+    expect(element.querySelectorAll('.preview')).toHaveLength(2);
+    component.moveGesture({ ...event, clientX: 200 });
+    expect(component.gestureNotice()).toContain('beyond the body');
+    component.finishGesture({ ...event, clientX: -1000 });
+    expect(host.sent()).toHaveLength(0);
+    component.startGesture(event, 0);
+    component.finishGesture({ ...event, clientX: 8, clientY: 4 });
+    expect(host.sent()[0]).toMatchObject({
+      payload: { targetIds: ['2:3', '2:4'], dxPt: 6, dyPt: 3 },
+    });
+  });
+
+  it('marquees only complete body bounds, adds with Shift, clears on blank click and cancels without XML', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest(multipleSnapshot());
+    await settle();
+    const component = fixture.componentInstance;
+    const body = element.querySelector('.body') as HTMLElement;
+    body.setPointerCapture = () => {};
+    body.hasPointerCapture = () => false;
+    const event = {
+      button: 0,
+      pointerId: 1,
+      target: body,
+      currentTarget: body,
+      clientX: 10,
+      clientY: 10,
+      preventDefault() {},
+    } as unknown as PointerEvent;
+    component.startMarquee(event);
+    component.moveGesture({ ...event, clientX: 12 });
+    expect(component.marquee()?.active).toBe(false);
+    component.finishGesture({ ...event, clientX: 320, clientY: 80 });
+    expect(component.selectedIds()).toEqual(['2:3']);
+    component.startMarquee({
+      ...event,
+      clientX: 330,
+      clientY: 90,
+      shiftKey: true,
+    });
+    component.finishGesture({ ...event, clientX: 450, clientY: 150 });
+    expect(component.selectedIds()).toEqual(['2:3', '2:4']);
+    expect(component.primary()?.id).toBe('2:4');
+    component.startMarquee(event);
+    component.finishGesture(event);
+    expect(component.selectedIds()).toEqual([]);
+    component.select(0);
+    component.startMarquee(event);
+    component.moveGesture({ ...event, clientX: 500, clientY: 180 });
+    component.keydown(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(component.selectedIds()).toEqual(['2:3']);
+    expect(component.marquee()).toBeNull();
+    expect(host.sent()).toHaveLength(0);
+  });
+
+  it('does not collapse a group on the synthetic click after drag or toggle Shift twice', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest(multipleSnapshot());
+    await settle();
+    const component = fixture.componentInstance;
+    const item = element.querySelector('button.item') as HTMLElement;
+    const event = {
+      button: 0,
+      pointerId: 1,
+      currentTarget: item,
+      clientX: 0,
+      clientY: 0,
+      shiftKey: true,
+      preventDefault() {},
+      stopPropagation() {},
+    } as unknown as PointerEvent;
+    component.select(1);
+    component.startGesture(event, 0);
+    component.selectClick(
+      new MouseEvent('click', { detail: 1, shiftKey: true }),
+      0,
+    );
+    expect(component.selectedIds()).toEqual(['2:4', '2:3']);
+    component.selectClick(
+      new MouseEvent('click', { detail: 0, shiftKey: true }),
+      0,
+    );
+    expect(component.selectedIds()).toEqual(['2:4']);
+  });
+
+  for (const snapshotFirst of [true, false])
+    it(`retains ordered group selection and primary through result/snapshot order ${snapshotFirst}`, async () => {
+      const { fixture, host, settle } = mount();
+      const initial = multipleSnapshot();
+      host.ingest(initial);
+      await settle();
+      const component = fixture.componentInstance;
+      component.select(1);
+      component.select(0, true);
+      component.arrange('align', 'left');
+      const requestId = (host.sent()[0] as { requestId: string }).requestId;
+      const next = {
+        ...initial,
+        version: 3,
+        scene: {
+          ...initial.scene,
+          version: 3,
+          items: initial.scene.items.map((i, index) => ({
+            ...i,
+            id: `3:${index + 10}`,
+            ...(i.kind === 'cell' ? { parentTableId: '3:11' } : {}),
+          })),
+        },
+      };
+      const result = {
+        protocol: 1,
+        kind: 'editResult',
+        requestId,
+        baseVersion: 2,
+        version: 3,
+        accepted: true,
+        changed: true,
+        mappings: [
+          { sourceId: '2:4', resultId: '3:11' },
+          { sourceId: '2:3', resultId: '3:10' },
+        ],
+        reason: 'APPLIED',
+        diagnostics: [],
+      };
+      host.ingest(snapshotFirst ? next : result);
+      await settle();
+      host.ingest(snapshotFirst ? result : next);
+      await settle();
+      expect(component.selectedIds()).toEqual(['3:11', '3:10']);
+      expect(component.primary()?.id).toBe('3:10');
+      host.ingest(next);
+      await settle();
+      expect(component.selectedIds()).toEqual(['3:11', '3:10']);
+    });
+
   it('previews after three CSS pixels, captures/releases once and submits one immutable move', async () => {
     const { fixture, host, element, settle } = mount();
     host.ingest(directSnapshot());

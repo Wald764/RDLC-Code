@@ -7,6 +7,7 @@ import { observe, replaceSource, until } from './session-checks.js';
 import { FailingFileSystem } from './failing-file-system.js';
 import {
   resizeHandles,
+  alignModes,
   type AuthoringIntent,
   type LayoutIntent,
 } from '@rdlc/report-model/editing';
@@ -127,6 +128,7 @@ async function directManipulation(): Promise<void> {
 
 export async function run(): Promise<void> {
   await directManipulation();
+  await arrangement();
   const source = readFileSync(
     resolve(__dirname, '../../../tests/fixtures/textboxes/supported.rdlc'),
     'utf8',
@@ -306,5 +308,109 @@ export async function run(): Promise<void> {
     failureView.dispose();
     registration.dispose();
     volume.dispose();
+  }
+}
+
+async function arrangement(): Promise<void> {
+  const source = readFileSync(
+    resolve(__dirname, '../../../tests/fixtures/interactive/mixed.rdlc'),
+    'utf8',
+  )
+    .replace(
+      '<Top>18pt</Top><Left>12pt</Left><Height>36pt</Height><Width>144pt</Width>',
+      '<Top>160pt</Top><Left>240pt</Left><Height>36pt</Height><Width>144pt</Width>',
+    )
+    .replace('<Top>1in</Top><Left>12pt', '<Top>320pt</Top><Left>480pt');
+  const file = join(
+    mkdtempSync(join(tmpdir(), 'rdlc-arrange-')),
+    'report.rdlc',
+  );
+  writeFileSync(file, source);
+  const document = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(document);
+  const view = observe(document);
+  try {
+    for (const action of [
+      'move',
+      ...alignModes,
+      'horizontal',
+      'vertical',
+    ] as const) {
+      const report = projectReport(
+        parse({
+          uri: document.uri.toString(),
+          version: document.version,
+          source: document.getText(),
+          eol: '\n',
+        }),
+      );
+      const targetIds = [
+        report.textboxes.find((t) => t.name === 'Front')!.node.id,
+        report.textboxes.find((t) => t.name === 'LaterTie')!.node.id,
+        report.tables[0]!.node.id,
+      ];
+      const common = { targetIds, unit: 'pt' as const };
+      const payload: LayoutIntent['payload'] =
+        action === 'move'
+          ? { ...common, action, dxPt: 9, dyPt: 7 }
+          : action === 'horizontal' || action === 'vertical'
+            ? { ...common, action: 'distribute', axis: action }
+            : {
+                ...common,
+                action: 'align',
+                mode: action,
+                primaryId: targetIds[1]!,
+              };
+      const requestId = `arrange-${action}`;
+      view.session.receive({
+        protocol: 1,
+        kind: 'edit',
+        requestId,
+        baseVersion: document.version,
+        operation: 'layout',
+        payload,
+      });
+      await until(
+        () =>
+          view.messages.some(
+            (m) => m.kind === 'editResult' && m.requestId === requestId,
+          ),
+        requestId,
+      );
+      const result = view.messages.find(
+        (m) => m.kind === 'editResult' && m.requestId === requestId,
+      );
+      assert.ok(
+        result?.kind === 'editResult' && result.accepted && result.changed,
+        JSON.stringify(result),
+      );
+      assert.deepEqual(
+        result.mappings.map((m) => m.sourceId),
+        targetIds,
+      );
+      const scene = view.messages.findLast(
+        (m) => m.kind === 'snapshot' && m.version === result.version,
+      );
+      assert.ok(scene?.kind === 'snapshot');
+      assert.ok(
+        result.mappings.every((m) =>
+          scene.scene?.items.some((i) => i.id === m.resultId),
+        ),
+      );
+      const candidate = document.getText();
+      assert.notEqual(candidate, source);
+      await vscode.commands.executeCommand('undo');
+      assert.equal(document.getText(), source, `One-step group Undo ${action}`);
+      await vscode.commands.executeCommand('redo');
+      assert.equal(
+        document.getText(),
+        candidate,
+        `One-step group Redo ${action}`,
+      );
+      await vscode.commands.executeCommand('undo');
+      assert.equal(document.getText(), source);
+    }
+  } finally {
+    view.dispose();
   }
 }

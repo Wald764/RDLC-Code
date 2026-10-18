@@ -6,8 +6,11 @@ import { tmpdir } from 'node:os';
 import { observe, replaceSource, until } from './session-checks.js';
 import { validateMessage } from '@rdlc/report-model/protocol';
 import { FailingFileSystem } from './failing-file-system.js';
+import { parse } from '@rdlc/xml-parser/parser';
+import { projectReport } from '@rdlc/xml-parser/project-report';
 
 export async function run(): Promise<void> {
+  await groupSynchronization();
   const source = readFileSync(
     resolve(__dirname, '../../../tests/fixtures/textboxes/supported.rdlc'),
     'utf8',
@@ -343,6 +346,133 @@ export async function run(): Promise<void> {
       a.messages.length,
       count,
       'Disposed view has no listeners or queued writes',
+    );
+  } finally {
+    a.dispose();
+    b.dispose();
+  }
+}
+
+async function groupSynchronization(): Promise<void> {
+  const source = readFileSync(
+    resolve(__dirname, '../../../tests/fixtures/interactive/mixed.rdlc'),
+    'utf8',
+  );
+  const file = join(
+    mkdtempSync(join(tmpdir(), 'rdlc-group-sync-')),
+    'report.rdlc',
+  );
+  writeFileSync(file, source);
+  const document = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(document);
+  const a = observe(document),
+    b = observe(document);
+  try {
+    const report = projectReport(
+      parse({
+        uri: document.uri.toString(),
+        version: document.version,
+        source,
+        eol: '\n',
+      }),
+    );
+    const ids = [
+      report.textboxes.find((t) => t.name === 'Front')!.node.id,
+      report.textboxes.find((t) => t.name === 'LaterTie')!.node.id,
+      report.tables[0]!.node.id,
+    ];
+    await until(
+      () => a.messages.some((m) => m.kind === 'snapshot'),
+      'Initial group scene',
+    );
+    const scene = a.messages.find((m) => m.kind === 'snapshot');
+    assert.ok(scene?.kind === 'snapshot');
+    const locked = scene.scene!.items.find(
+      (i) => i.kind === 'preserved' && i.bounds,
+    )!.id;
+    const base = {
+      protocol: 1,
+      kind: 'edit',
+      baseVersion: document.version,
+      operation: 'layout',
+    };
+    const invalid = [
+      {
+        action: 'move',
+        targetIds: [...ids, locked],
+        dxPt: 3,
+        dyPt: 4,
+        unit: 'pt',
+      },
+      { action: 'move', targetIds: ids, dxPt: -1000, dyPt: 0, unit: 'pt' },
+      { action: 'distribute', targetIds: ids, axis: 'horizontal', unit: 'pt' },
+    ];
+    for (const [index, payload] of invalid.entries()) {
+      const version = document.version;
+      const requestId = `invalid-group-${index}`;
+      const errors = a.messages.filter(
+        (m) => m.kind === 'protocolError',
+      ).length;
+      a.session.receive({ ...base, requestId, payload });
+      await until(
+        () =>
+          a.messages.some(
+            (m) => m.kind === 'editResult' && m.requestId === requestId,
+          ) ||
+          a.messages.filter((m) => m.kind === 'protocolError').length > errors,
+        requestId,
+      );
+      assert.ok(
+        a.messages.some(
+          (m) =>
+            m.kind === 'editResult' && m.requestId === requestId && !m.accepted,
+        ) ||
+          a.messages.filter((m) => m.kind === 'protocolError').length > errors,
+      );
+      assert.equal(document.getText(), source);
+      assert.equal(document.version, version);
+      assert.equal(document.isDirty, false);
+    }
+    const payload = {
+      action: 'move',
+      targetIds: ids,
+      dxPt: 3,
+      dyPt: 4,
+      unit: 'pt',
+    };
+    a.session.receive({ ...base, requestId: 'group-a', payload });
+    b.session.receive({ ...base, requestId: 'group-b-stale', payload });
+    await until(
+      () =>
+        a.messages.some(
+          (m) => m.kind === 'editResult' && m.requestId === 'group-a',
+        ) &&
+        b.messages.some(
+          (m) =>
+            m.kind === 'protocolError' ||
+            (m.kind === 'editResult' && m.requestId === 'group-b-stale'),
+        ),
+      'Group race settles',
+    );
+    assert.ok(
+      a.messages.some(
+        (m) =>
+          m.kind === 'editResult' && m.requestId === 'group-a' && m.accepted,
+      ),
+    );
+    assert.ok(
+      !b.messages.some(
+        (m) =>
+          m.kind === 'editResult' &&
+          m.requestId === 'group-b-stale' &&
+          m.accepted,
+      ),
+    );
+    await vscode.commands.executeCommand('undo');
+    assert.equal(
+      document.getText(),
+      source,
+      'Refused groups add no Undo steps',
     );
   } finally {
     a.dispose();

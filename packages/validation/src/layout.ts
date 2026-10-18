@@ -66,11 +66,135 @@ export function validateLayout(
   if (report.status !== 'editable')
     throw new Error('Fix source diagnostics before editing visually.');
   if (
-    payload.targetIds.length !== 1 ||
-    !['move', 'resize'].includes(payload.action)
+    !payload.targetIds.length ||
+    new Set(payload.targetIds).size !== payload.targetIds.length ||
+    (payload.action === 'resize' && payload.targetIds.length !== 1)
   )
-    throw new Error('Select one body item for direct manipulation.');
-  const id = payload.targetIds[0];
+    throw new Error(
+      'Select unique body items; resize requires exactly one item.',
+    );
+  const targets = payload.targetIds.map((id) => {
+    const table = report.tables.find((t) => t.node.id === id);
+    const item =
+      table ??
+      report.textboxes.find((t) => t.node.id === id && t.context === 'body');
+    if (!item || (table && !table.structural))
+      throw new Error(
+        `${id}: select a supported body textbox or table; inspect the construct in source.`,
+      );
+    return {
+      id,
+      item,
+      table,
+      original: acceptedGeometry(report, item, !!table),
+    };
+  });
+  const displacements = new Map<string, { dxPt: number; dyPt: number }>();
+  if (payload.action === 'align' || payload.action === 'distribute') {
+    const horizontal =
+      payload.action === 'align'
+        ? ['left', 'center', 'right'].includes(payload.mode)
+        : payload.axis === 'horizontal';
+    const position = horizontal ? 'left' : 'top';
+    const size = horizontal ? 'width' : 'height';
+    const known = (target: (typeof targets)[number], key: keyof Bounds) => {
+      const value = target.original[key].points;
+      if (
+        value === null ||
+        !Number.isFinite(value) ||
+        value < 0 ||
+        (key === size && value === 0)
+      )
+        throw new Error(
+          `${target.id}: ${key} is unknown or invalid; correct geometry in source.`,
+        );
+      return value;
+    };
+    for (const target of targets) {
+      known(target, position);
+      known(target, size);
+      if (
+        !target.table &&
+        !(target.item as Textbox).capabilities.includes(position)
+      )
+        throw new Error(
+          `${target.id}: ${position} is locked; inspect this property in source.`,
+        );
+    }
+    const setPosition = (target: (typeof targets)[number], value: number) => {
+      const start = known(target, position);
+      // Ignore arithmetic round-off, not real sub-point movements.
+      const delta =
+        Math.abs(value - start) <=
+        Number.EPSILON * 8 * Math.max(1, Math.abs(value), Math.abs(start))
+          ? 0
+          : value - start;
+      displacements.set(target.id, {
+        dxPt: horizontal ? delta : 0,
+        dyPt: horizontal ? 0 : delta,
+      });
+    };
+    if (payload.action === 'align') {
+      const primary = targets.find((t) => t.id === payload.primaryId);
+      if (!primary)
+        throw new Error('The primary must belong to the selection.');
+      const factor = ['center', 'middle'].includes(payload.mode)
+        ? 0.5
+        : ['right', 'bottom'].includes(payload.mode)
+          ? 1
+          : 0;
+      const line = known(primary, position) + factor * known(primary, size);
+      targets.forEach((t) => setPosition(t, line - factor * known(t, size)));
+    } else {
+      if (targets.length < 3)
+        throw new Error('Select at least three items to distribute.');
+      const sorted = [...targets].sort(
+        (a, b) =>
+          known(a, position) - known(b, position) ||
+          a.item.node.range.start - b.item.node.range.start,
+      );
+      const first = sorted[0]!,
+        last = sorted.at(-1)!;
+      const gap =
+        (known(last, position) +
+          known(last, size) -
+          known(first, position) -
+          sorted.reduce((s, t) => s + known(t, size), 0)) /
+        (sorted.length - 1);
+      if (!Number.isFinite(gap) || gap < 0)
+        throw new Error(
+          `${last.id}: distribution would create negative gaps; separate the outer items first.`,
+        );
+      let cursor = known(first, position);
+      sorted.forEach((target, index) => {
+        setPosition(
+          target,
+          index === sorted.length - 1 ? known(last, position) : cursor,
+        );
+        cursor += known(target, size) + gap;
+      });
+    }
+  }
+  return targets.map(({ id }) =>
+    validateItem(
+      report,
+      payload.action === 'align' || payload.action === 'distribute'
+        ? {
+            action: 'move',
+            targetIds: [id],
+            unit: payload.unit,
+            ...displacements.get(id)!,
+          }
+        : { ...payload, targetIds: [id] },
+    ),
+  );
+}
+
+function validateItem(
+  report: ReportProjection,
+  payload: LayoutIntent['payload'],
+): LayoutChange {
+  const id = payload.targetIds[0]!;
   const table = report.tables.find((t) => t.node.id === id);
   const item =
     table ??
@@ -154,5 +278,5 @@ export function validateLayout(
         );
     }
   }
-  return [{ item, table: !!table, original, values }];
+  return { item, table: !!table, original, values };
 }

@@ -25,6 +25,7 @@
   border: 1px solid #999;
 }
 .body {
+  touch-action: none;
   position: absolute;
   border: 1px dashed #666;
   background: #f6f6f6;
@@ -40,12 +41,17 @@
   cursor: pointer;
 }
 .selection-frame,
-.preview {
+.preview,
+.marquee {
   position: absolute;
   pointer-events: none;
   border: 2px solid #3366cc;
   box-sizing: border-box;
   z-index: 2147483647;
+}
+.marquee {
+  border-style: dashed;
+  background: #3366cc22;
 }
 .preview {
   background: #3366cc22;
