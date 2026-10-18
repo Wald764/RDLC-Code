@@ -4,15 +4,16 @@
 - **Tested**: 2026-10-18
 - **Assessment**: ./assessment.md
 - **Fix**: ./fix.md
-- **Result**: partial
+- **Result**: verified
+- **Status**: closed
 
 ## Summary
 
-The original Windows clipboard assertion no longer fails: explicit LF and CRLF cases pass in both development and installed-VSIX Electron runs. All local regression and static checks pass, but the original macOS reproduction and the complete GitHub desktop matrix were not exercised, so cross-platform CI recovery remains unverified.
+The original Windows clipboard assertion no longer fails, and the complete GitHub CI matrix now passes for the submitted fix, including macOS stable. Development and installed-VSIX Electron tests succeed on all six desktop entries, and the aggregate required check passes. The bug is verified and closed.
 
 Slug resolution was explicit (`slug=ci-github-failure`). The assessment and fix report were read in full. No source files were modified during verification. `.specify/extensions.yml` contains `hooks: {}`, with no pre/post-verification hooks to execute.
 
-## Checks Performed
+## Initial Local Checks
 
 Environment: Windows, Node `v24.22.0`, Corepack-managed pnpm `11.28.2`, cached VS Code `1.142.0`. Electron commands used `VSCODE_VERSION=1.142.0`, with `TEMP` and `TMP` set to the existing workspace `.vscode-test/tmp` directory. Checks used existing dependencies, generated bundles and VSIX; no install, download, remote workflow dispatch or full rebuild was required.
 
@@ -73,13 +74,36 @@ PASS current-source bundle (ignoring formatting): clipboard.test.ts
 PASS current-source bundle (ignoring formatting): lifecycle.test.ts
 ```
 
+## GitHub CI Verification
+
+The fix was committed and pushed to `main` as `a98c6edfe8915961a15e2e69d3fb82be17cd3f36` (`:bug: fix(ci): stabilize cross-platform Electron assertions`).
+
+- **Run**: https://github.com/Wald764/RDLC-Code/actions/runs/39126902730
+- **Conclusion**: success
+- **Completed / updated**: 2026-10-18T12:24:07Z
+- **Evidence**: GitHub Actions REST run/job responses, including individual test-step conclusions, checked after completion against the exact pushed commit SHA.
+
+| CI job | Development Electron tests | Packaged tests | Job result |
+| --- | --- | --- | --- |
+| quality | N/A | N/A | success |
+| desktop (ubuntu-24.04, stable) | success | success | success |
+| desktop (ubuntu-24.04, 1.142.0) | success | success | success |
+| desktop (windows-2022, stable) | success | success | success |
+| desktop (windows-2022, 1.142.0) | success | success | success |
+| desktop (macos-14, stable) | success | success | success |
+| desktop (macos-14, 1.142.0) | success | success | success |
+| Required checks | N/A | N/A | success |
+
+Linux runs the test commands under `xvfb-run`; Windows/macOS run them directly. Only the mutually exclusive, other-platform variants of these steps are skipped. All applicable development and packaged test steps actually succeeded. Fresh checkout, dependency installation, build and package prerequisites also succeeded in each desktop job.
+
+This remote run resolves the initial local report's missing Linux/macOS/floating-stable coverage and demonstrates that both previously failing Windows entries and macOS stable now pass.
+
 ## Residual Risks
 
-- The assessment's macOS stable failure was not reproduced post-fix on macOS. Whether bounded document synchronization resolves it remains inconclusive.
-- GitHub runner differences, a fresh checkout/install and the floating `stable` version were not exercised. The local cached release matches the pinned matrix version and the stable release observed during assessment.
+- One complete successful CI run establishes recovery for the submitted fix; it cannot guarantee the absence of future intermittent timing failures or changes to the floating `stable` release.
 - Windows passing both complete Electron modes answers the assessment's question about later Windows failures locally: none appeared after the original clipboard assertion was corrected.
 - Waiting for exact text still fails if one command does not reach the expected state; no command retries or weaker preservation comparisons were introduced. A macOS timeout must prompt investigation of command routing/document events and undo boundaries.
 
 ## Recommendation
 
-Hold closure pending the full GitHub CI run for the submitted fix, especially macOS arm64, with all six desktop entries, packaged tests and `Required checks` successful. The Windows defect is locally resolved and no local regressions were observed. If macOS still fails, capture its exact-state timeout and surrounding document-change evidence, then rerun `/speckit.bug.assess` rather than weakening the history checks.
+Close the bug — verified end-to-end through the complete GitHub CI matrix for the pushed fix. No regression was observed locally or in CI. If a future native-history wait times out, capture the exact-state timeout and surrounding document-change evidence and reassess rather than weakening the history checks.
