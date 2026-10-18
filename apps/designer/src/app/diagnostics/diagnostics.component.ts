@@ -15,5 +15,5 @@ import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 })
 export class DiagnosticsComponent {
   readonly diagnostics = input<readonly Diagnostic[]>([]);
-  readonly openSource = output<void>();
+  readonly openSource = output<string | undefined>();
 }

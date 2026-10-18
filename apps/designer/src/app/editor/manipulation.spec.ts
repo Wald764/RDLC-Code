@@ -52,6 +52,39 @@ describe('immutable report-space direct manipulation', () => {
       );
       expect(origin).toEqual({ left: 10, top: 20, width: 100, height: 50 });
     });
+  for (const zoom of [0.25, 0.5, 1, 2, 4])
+    it(`keeps all eight resize anchors accurate with offsets at ${zoom * 100}%`, () => {
+      const frame = {
+        left: 242,
+        top: 60,
+        width: 700,
+        height: 640,
+        scrollLeft: 173,
+        scrollTop: 91,
+      };
+      const body = { left: 96, top: 48 };
+      const anchor = clientToBody(400, 300, frame, zoom, body);
+      const moved = clientToBody(
+        400 + 3 * zoom,
+        300 + 4 * zoom,
+        frame,
+        zoom,
+        body,
+      );
+      for (const handle of resizeHandles) {
+        const actual = directProposal(
+          origin,
+          handle,
+          moved.x - anchor.x,
+          moved.y - anchor.y,
+        );
+        const expected = directProposal(origin, handle, 3, 4);
+        for (const key of ['left', 'top', 'width', 'height'] as const)
+          expect(
+            Math.abs(actual.bounds[key] - expected.bounds[key]),
+          ).toBeLessThanOrEqual(0.01);
+      }
+    });
   it('keeps invalid proposals visible without clamping', () => {
     expect(directProposal(origin, 'move', -11, 0)).toMatchObject({
       valid: false,

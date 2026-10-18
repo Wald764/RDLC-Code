@@ -1,38 +1,40 @@
 <section aria-label="Tables">
   <h2>Tables</h2>
-  @for (dataset of state().datasets; track dataset.id) {
-    <form
-      (submit)="
-        $event.preventDefault();
-        request.emit({
-          targetId: state().id,
-          payload: {
-            action: 'createTable',
-            name: name.value,
-            dataset: dataset.name,
-            field: field.value,
-            width: width.value,
-          },
-        })
-      "
-    >
-      <label>Table name <input #name required /></label
-      ><span>Dataset: {{ dataset.name }}</span>
-      <label
-        >First column field
-        <select #field>
-          @for (field of dataset.fields; track field.id) {
-            <option [value]="field.name" [disabled]="field.type === null">
-              {{ field.name }}
-            </option>
-          }
-        </select></label
+  @if (selectedId() === undefined) {
+    @for (dataset of state().datasets; track dataset.id) {
+      <form
+        (submit)="
+          $event.preventDefault();
+          request.emit({
+            targetId: state().id,
+            payload: {
+              action: 'createTable',
+              name: name.value,
+              dataset: dataset.name,
+              field: field.value,
+              width: width.value,
+            },
+          })
+        "
       >
-      <label>Column width <input #width value="1in" required /></label
-      ><button type="submit">Create table</button>
-    </form>
+        <label>Table name <input #name required /></label
+        ><span>Dataset: {{ dataset.name }}</span>
+        <label
+          >First column field
+          <select #field>
+            @for (field of dataset.fields; track field.id) {
+              <option [value]="field.name" [disabled]="field.type === null">
+                {{ field.name }}
+              </option>
+            }
+          </select></label
+        >
+        <label>Column width <input #width value="1in" required /></label
+        ><button type="submit">Create table</button>
+      </form>
+    }
   }
-  @for (table of state().tables; track table.id) {
+  @for (table of tables(); track table.id) {
     <fieldset [disabled]="!table.structural">
       <legend>{{ table.name }} — {{ table.dataset }}</legend>
       <form
@@ -68,7 +70,14 @@
         >
           <label
             >Table {{ property }}
-            <input #position value="0in" required /></label
+            <input
+              #position
+              [value]="
+                property === 'left'
+                  ? (this.position()?.left ?? '')
+                  : (this.position()?.top ?? '')
+              "
+              required /></label
           ><button type="submit">Set {{ property }}</button>
         </form>
       }

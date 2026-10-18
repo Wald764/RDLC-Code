@@ -1,6 +1,7 @@
 :root {
   color-scheme: light dark;
   font-family: var(--vscode-font-family, system-ui, sans-serif);
+  font-size: var(--vscode-font-size, 13px);
   color: var(--vscode-foreground, #222);
   background: var(--vscode-editor-background, #fff);
 }
@@ -13,4 +14,46 @@ main {
 :focus-visible {
   outline: 2px solid currentColor;
   outline-offset: 2px;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+button,
+summary {
+  min-height: 24px;
+}
+button {
+  color: var(--vscode-button-secondaryForeground, #222);
+  background: var(--vscode-button-secondaryBackground, #eee);
+  border: 1px solid var(--vscode-contrastBorder, #888);
+}
+button:disabled {
+  opacity: 1;
+  color: var(--vscode-disabledForeground, #666);
+}
+input,
+select,
+textarea {
+  color: var(--vscode-input-foreground, #222);
+  background: var(--vscode-input-background, #fff);
+  border: 1px solid var(--vscode-input-border, #888);
+  max-width: 100%;
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
+@media (forced-colors: active) {
+  button,
+  input,
+  select,
+  textarea {
+    border-color: ButtonText;
+  }
+  :focus-visible {
+    outline-color: Highlight;
+  }
 }

@@ -7,8 +7,6 @@ describe('scaffold', () => {
     const fixture = TestBed.createComponent(AppComponent);
     await fixture.whenStable();
     expect(fixture.nativeElement.querySelector('rdlc-editor')).toBeTruthy();
-    expect(fixture.nativeElement.textContent).toContain(
-      'Waiting for the RDLC host',
-    );
+    expect(fixture.nativeElement.textContent).toContain('No report connected');
   });
 });

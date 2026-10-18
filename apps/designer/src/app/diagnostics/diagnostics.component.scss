@@ -8,8 +8,11 @@
   margin-bottom: 0.5rem;
 }
 .diagnostics li[data-severity='error'] strong {
-  color: #b00020;
+  color: var(--vscode-errorForeground, #b00020);
 }
 .diagnostics .action {
-  color: #555;
+  color: var(--vscode-descriptionForeground, #555);
+}
+.diagnostics {
+  overflow-wrap: anywhere;
 }

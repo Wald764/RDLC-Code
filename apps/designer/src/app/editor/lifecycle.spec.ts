@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { HostAdapter } from './host-adapter';
 import { EditorComponent } from './editor.component';
 
@@ -470,18 +470,17 @@ describe('document lifecycle transport', () => {
     const draft = element.querySelector<HTMLInputElement>('fieldset input')!;
     draft.value = 'Obsolete';
     draft.focus();
-    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
     accept(2);
     await settle();
-    try {
-      expect(focus).not.toHaveBeenCalled();
-    } finally {
-      focus.mockRestore();
-    }
     expect(element.contains(draft)).toBe(false);
+    // The destroyed draft field must not strand focus on body or re-enter the
+    // obsolete form; it moves to the labeled canvas control (FR-033).
+    expect(document.activeElement).toBe(
+      element.querySelector<HTMLElement>('.viewport'),
+    );
     expect(
       element.querySelector<HTMLInputElement>('fieldset input')!.value,
-    ).toBe('');
+    ).toBe('8in');
     expect(document.activeElement?.tagName.toLowerCase()).not.toBe(
       'rdlc-authoring',
     );

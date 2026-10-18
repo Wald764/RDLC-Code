@@ -28,6 +28,7 @@ export class AuthoringComponent {
   readonly request = output<AuthoringRequest>();
   readonly creation = input<'textbox' | 'dataset' | 'table' | null>(null);
   readonly compact = input(false);
+  readonly pageOnly = input(false);
   readonly pending = input(false);
   readonly cancel = output<void>();
   readonly prerequisite = output<void>();

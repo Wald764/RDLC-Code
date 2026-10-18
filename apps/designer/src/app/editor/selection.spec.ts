@@ -7,7 +7,88 @@ import {
   marqueeSelection,
   mapSelection,
   hitTest,
+  selectStructure,
+  reconcileStructureSelection,
 } from './selection';
+import type { StructureNode } from '@rdlc/report-model/protocol';
+
+const node = (
+  id: string,
+  kind: StructureNode['kind'],
+  name: string | null,
+  parentId: string | null = null,
+): StructureNode => ({
+  id,
+  kind,
+  name,
+  parentId,
+  label: name ?? kind,
+  range: { start: 0, end: 0 },
+  preservedReason: null,
+});
+
+describe('version-scoped structural selection', () => {
+  it('joins scene IDs and keeps data, cells and body membership exclusive', () => {
+    const body = selectAll(1, items);
+    const data = selectStructure(body, 'dataset', items, false);
+    expect(data.bodyItemIds).toEqual([]);
+    expect(data.structureTargetId).toBe('dataset');
+    expect(selectStructure(data, '1:4', items, true).cellTargetId).toBe('1:4');
+    const next = selectStructure(data, '1:1', items, true);
+    expect(next.structureTargetId).toBeFalsy();
+    expect(next.bodyItemIds).toContain(next.primaryId);
+    const nodes = [
+      node('1:c', 'cell', null),
+      node('1:4', 'textbox', 'CellValue', '1:c'),
+    ];
+    expect(selectStructure(data, '1:c', items, false, nodes).cellTargetId).toBe(
+      '1:4',
+    );
+  });
+  it('retains only unique dataset/field identities in both versions, never IDs or positions', () => {
+    const before = [
+      node('1:d', 'dataset', 'Sales'),
+      node('1:f', 'field', 'Amount', '1:d'),
+    ];
+    const after = [
+      node('2:d', 'dataset', 'Sales'),
+      node('2:f', 'field', 'Amount', '2:d'),
+    ];
+    const selection = selectStructure(emptySelection(1), '1:f', [], false);
+    expect(
+      reconcileStructureSelection(selection, before, after, 2)
+        ?.structureTargetId,
+    ).toBe('2:f');
+    expect(
+      reconcileStructureSelection(
+        selection,
+        before,
+        [...after, node('2:x', 'field', 'Amount', '2:d')],
+        2,
+      ),
+    ).toBeNull();
+    expect(
+      reconcileStructureSelection(
+        selection,
+        [...before, node('1:x', 'dataset', 'Sales')],
+        after,
+        2,
+      ),
+    ).toBeNull();
+    expect(
+      reconcileStructureSelection(
+        selectStructure(emptySelection(1), '1:r', [], false),
+        [node('1:r', 'row', null)],
+        [node('2:r', 'row', null)],
+        2,
+      ),
+    ).toBeNull();
+    expect(
+      mapSelection(selection, 2, [{ sourceId: '1:f', resultId: '2:f' }])
+        .structureTargetId,
+    ).toBe('2:f');
+  });
+});
 
 const items: DesignSceneItem[] = [
   {

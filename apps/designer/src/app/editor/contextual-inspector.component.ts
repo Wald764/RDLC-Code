@@ -5,7 +5,13 @@ import {
   output,
 } from '@angular/core';
 import type { DesignScene, DesignSceneItem } from '@rdlc/report-model/scene';
-import type { AuthoringState } from '@rdlc/report-model/protocol';
+import type {
+  AuthoringState,
+  StructureNode,
+} from '@rdlc/report-model/protocol';
+import type { AuthoringRequest } from '@rdlc/report-model/editing';
+import { DatasetsComponent } from '../datasets/datasets.component';
+import { TablePropertiesComponent } from '../tables/table-properties.component';
 import {
   TextboxPropertiesComponent,
   type TextboxCommit,
@@ -14,20 +20,32 @@ import {
 @Component({
   selector: 'rdlc-contextual-inspector',
   standalone: true,
-  imports: [TextboxPropertiesComponent],
+  imports: [
+    TextboxPropertiesComponent,
+    DatasetsComponent,
+    TablePropertiesComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (dataset(); as definition) {
       <h2>Dataset: {{ definition.name }}</h2>
+      <p>Local declarations only; no data is fetched or evaluated.</p>
+      @if (state(); as accepted) {
+        <rdlc-datasets
+          [state]="accepted"
+          [selectedId]="structureNode()?.id ?? definition.id"
+          (request)="request.emit($event)"
+        />
+      }
+    } @else if (structureNode(); as node) {
+      <h2>{{ node.label }}</h2>
       <p>
-        Local definition only. Add or edit typed fields in Report authoring →
-        Local datasets below.
+        {{ node.kind }} —
+        {{
+          node.preservedReason ??
+            'Structural target; no independent canvas geometry. Use Code XML for unsupported properties.'
+        }}
       </p>
-      <ul>
-        @for (field of definition.fields; track field.id) {
-          <li>{{ field.name }} — {{ field.type ?? 'preserved type' }}</li>
-        }
-      </ul>
     } @else if (count() > 1) {
       <h2>{{ count() }} selected</h2>
       <p>
@@ -48,9 +66,41 @@ import {
           (commit)="commit.emit($event)"
         />
       } @else {
-        <p>
-          Whole table selected. Existing table controls are available below.
-        </p>
+        @if (state(); as accepted) {
+          <rdlc-table-properties
+            [state]="accepted"
+            [selectedId]="selected.id"
+            [position]="selected.geometry ?? null"
+            (request)="request.emit($event)"
+          />
+        }
+      }
+      @if (
+        !selected.placeholder &&
+        selected.kind !== 'cell' &&
+        selected.kind !== 'table' &&
+        selected.capabilities?.includes('textbox')
+      ) {
+        <form
+          aria-label="Delete textbox"
+          (submit)="
+            $event.preventDefault();
+            request.emit({
+              targetId: selected.id,
+              payload: {
+                action: 'deleteTextbox',
+                confirm: confirmation.checked ? 'delete-contained-content' : '',
+              },
+            })
+          "
+        >
+          <label
+            ><input #confirmation type="checkbox" required />Delete
+            {{ selected.name ?? selected.label }} including all contained
+            unsupported XML</label
+          >
+          <button type="submit">Delete textbox</button>
+        </form>
       }
     } @else {
       <h2>Report</h2>
@@ -67,10 +117,13 @@ import {
 })
 export class ContextualInspectorComponent {
   readonly scene = input<DesignScene | null>(null);
+  readonly state = input<AuthoringState | null>(null);
   readonly item = input<DesignSceneItem | null>(null);
   readonly primary = input<DesignSceneItem | null>(null);
   readonly count = input(0);
   readonly refusal = input('');
   readonly dataset = input<AuthoringState['datasets'][number] | null>(null);
+  readonly structureNode = input<StructureNode | null>(null);
   readonly commit = output<TextboxCommit>();
+  readonly request = output<AuthoringRequest>();
 }

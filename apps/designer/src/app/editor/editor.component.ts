@@ -49,6 +49,7 @@ import {
   type CreationKind,
 } from './components-catalog.component';
 import { ContextualInspectorComponent } from './contextual-inspector.component';
+import { StructureTreeComponent } from './structure-tree.component';
 import type { DesignScene } from '@rdlc/report-model/scene';
 import { DiagnosticsComponent } from '../diagnostics/diagnostics.component';
 import type { TextboxCommit } from '../properties/textbox-properties.component';
@@ -60,6 +61,8 @@ import {
   marqueeSelection,
   mapSelection,
   reconcileSelection,
+  reconcileStructureSelection,
+  selectStructure,
   hitTest,
   type Selection,
 } from './selection';
@@ -94,6 +97,24 @@ const union = (all: readonly Bounds[]): Bounds => {
     height: Math.max(...all.map((b) => b.top + b.height)) - top,
   };
 };
+const leftTabs = ['components', 'structure'] as const;
+/** Wrapping roving-focus target for a key, or null when the key does not move focus. */
+const rovingIndex = (
+  key: string,
+  index: number,
+  length: number,
+  previous: string,
+  next: string,
+): number | null =>
+  key === 'Home'
+    ? 0
+    : key === 'End'
+      ? length - 1
+      : key === next
+        ? (index + 1) % length
+        : key === previous
+          ? (index - 1 + length) % length
+          : null;
 
 @Component({
   selector: 'rdlc-editor',
@@ -103,6 +124,7 @@ const union = (all: readonly Bounds[]): Bounds => {
     ContextualInspectorComponent,
     AuthoringComponent,
     ComponentsCatalogComponent,
+    StructureTreeComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './editor.component.html',
@@ -113,6 +135,7 @@ export class EditorComponent {
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   readonly handles = resizeHandles;
   readonly alignModes = alignModes;
+  readonly leftTabs = leftTabs;
   readonly units = sizeUnits;
   readonly toggles = [
     ['gridVisible', 'Show grid'],
@@ -173,6 +196,83 @@ export class EditorComponent {
   readonly workspaceWidth = signal(1280);
   readonly overlay = signal<'left' | 'right' | null>(null);
   readonly creation = signal<CreationKind | null>(null);
+  readonly leftTab = signal<'components' | 'structure'>('components');
+  readonly diagnosticsOpen = signal(false);
+  private diagnosticsInvoker: HTMLElement | null = null;
+  readonly contextMenu = signal<{
+    x: number;
+    y: number;
+    invoker: HTMLElement | null;
+  } | null>(null);
+  readonly contextActions = computed(() => {
+    const selection = this.acceptedSelection();
+    const count = selection.bodyItemIds.length;
+    const selected = this.selected();
+    const busy =
+      this.status() === 'editable' && !this.host.pending()
+        ? ''
+        : 'Report is unavailable or busy.';
+    const clipboardReason = !count
+      ? 'Select whole body items; cells and data have no item clipboard.'
+      : busy ||
+        (this.scene()?.items.some(
+          (item) => selection.bodyItemIds.includes(item.id) && item.placeholder,
+        )
+          ? 'Preservation-only members cannot be copied or deleted; use Code XML.'
+          : '');
+    return [
+      ...(['copy', 'cut', 'paste', 'duplicate'] as const).map((action) => ({
+        label: action[0]!.toUpperCase() + action.slice(1),
+        reason: action === 'paste' ? busy : clipboardReason,
+        run: () => this.clipboard(action),
+      })),
+      ...alignModes.map((mode) => ({
+        label: `Align ${mode}`,
+        reason:
+          busy ||
+          (count < 2
+            ? 'Select at least two body items.'
+            : this.bulkReason(
+                ['left', 'center', 'right'].includes(mode)
+                  ? 'horizontal'
+                  : 'vertical',
+              )),
+        run: () => this.arrange('align', mode),
+      })),
+      ...(['horizontal', 'vertical'] as const).map((axis) => ({
+        label: `Distribute ${axis}`,
+        reason:
+          busy ||
+          (count < 3
+            ? 'Select at least three body items.'
+            : this.bulkReason(axis)),
+        run: () => this.arrange('distribute', axis),
+      })),
+      {
+        label: 'Reveal selection',
+        reason: this.treeSelectedIds().length ? '' : 'Select a target first.',
+        run: () => this.revealSelection(),
+      },
+      { label: 'Properties', reason: '', run: () => this.focusProperties() },
+      ...(selected && selected.kind !== 'cell' && !selected.placeholder
+        ? [
+            {
+              label: 'Delete… (confirm contained content)',
+              reason: busy,
+              run: () => {
+                this.gestureNotice.set(
+                  'Confirm deletion of contained XML in Properties. Reference and preservation guards still apply.',
+                );
+                this.focusProperties(
+                  '.inspector input[type=checkbox][required]',
+                );
+              },
+            },
+          ]
+        : []),
+      { label: 'Code XML', reason: '', run: () => this.openSource() },
+    ];
+  });
   private creating: {
     requestId: string;
     kind: CreationKind;
@@ -218,6 +318,9 @@ export class EditorComponent {
   private readonly originals = new WeakMap<DraftControl, string>();
   private pointerGuard = false;
   private submitted: EventTarget | null = null;
+  private focusedControl: HTMLElement | null = null;
+  private refusedForm: { requestId: string; form: HTMLFormElement } | null =
+    null;
   private readonly reconciled = computed(() => {
     const selection = this.selection();
     const snapshot = this.host.snapshot();
@@ -247,6 +350,15 @@ export class EditorComponent {
     }
     const empty = { selection: emptySelection(version ?? 0), lost: false };
     const previous = this.host.previousScene();
+    if (selection.structureTargetId && !this.host.pending() && snapshot) {
+      const next = reconcileStructureSelection(
+        selection,
+        this.host.previousStructure()?.nodes ?? [],
+        snapshot.structure?.nodes ?? [],
+        snapshot.version,
+      );
+      return next ? { selection: next, lost: false } : { ...empty, lost: true };
+    }
     // Own pending results resolve through their mapping; never guess by name meanwhile.
     if (
       this.host.pending() ||
@@ -267,9 +379,52 @@ export class EditorComponent {
         .snapshot()
         ?.authoring?.datasets.find(
           (dataset) =>
-            dataset.id === this.acceptedSelection().structureTargetId,
+            dataset.id === this.acceptedSelection().structureTargetId ||
+            dataset.fields.some(
+              (field) =>
+                field.id === this.acceptedSelection().structureTargetId,
+            ),
         ) ?? null,
   );
+  readonly structureNode = computed(
+    () =>
+      this.host
+        .snapshot()
+        ?.structure?.nodes.find(
+          (node) => node.id === this.acceptedSelection().structureTargetId,
+        ) ?? null,
+  );
+  readonly treeSelectedIds = computed(() => {
+    const selection = this.acceptedSelection();
+    return selection.structureTargetId
+      ? [selection.structureTargetId]
+      : selection.cellTargetId
+        ? [selection.cellTargetId]
+        : selection.bodyItemIds;
+  });
+  readonly treeEditableIds = computed(() => {
+    if (this.status() !== 'editable') return [];
+    const definitions = this.host.snapshot()?.authoring?.datasets ?? [];
+    return [
+      ...(this.scene()
+        ?.items.filter(
+          (item) =>
+            !item.placeholder &&
+            ((item.capabilities?.some((capability) => capability !== 'name') ??
+              false) ||
+              Object.values(item.operations ?? {}).some(
+                (operation) => operation.eligible,
+              )),
+        )
+        .map((item) => item.id) ?? []),
+      ...definitions.flatMap((dataset) => [
+        dataset.id,
+        ...dataset.fields
+          .filter((field) => field.type !== null)
+          .map((field) => field.id),
+      ]),
+    ];
+  });
   readonly primary = computed(
     () =>
       this.scene()?.items.find(
@@ -311,6 +466,35 @@ export class EditorComponent {
     ...(this.host.snapshot()?.diagnostics ?? []),
     ...(this.host.outcome()?.diagnostics ?? []),
   ]);
+  readonly diagnosticSummary = computed(() => {
+    const diagnostics = this.diagnostics();
+    const severity = diagnostics.some((item) => item.severity === 'error')
+      ? 'error'
+      : diagnostics.some((item) => item.severity === 'warning')
+        ? 'warning'
+        : 'information';
+    return `${diagnostics.length} diagnostics${diagnostics.length ? ` · ${severity}` : ''}`;
+  });
+
+  toggleDiagnostics(): void {
+    if (this.diagnosticsOpen()) {
+      this.diagnosticsOpen.set(false);
+      this.diagnosticsInvoker?.focus({ preventScroll: true });
+    } else {
+      this.diagnosticsInvoker =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      this.diagnosticsOpen.set(true);
+      afterNextRender(
+        () =>
+          this.element.nativeElement
+            .querySelector<HTMLElement>('.diagnostic-overlay button')
+            ?.focus(),
+        { injector: this.injector },
+      );
+    }
+  }
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.cancelGesture());
@@ -347,6 +531,13 @@ export class EditorComponent {
       (event) => (this.submitted = event.target),
       true,
     );
+    root.addEventListener('focusout', (event) => {
+      if (
+        event.relatedTarget instanceof Node &&
+        !root.contains(event.relatedTarget)
+      )
+        this.focusedControl = null;
+    });
     effect(() => {
       const version = this.host.snapshot()?.version;
       const draft = this.draft();
@@ -363,6 +554,53 @@ export class EditorComponent {
         `Ignored invalid saved view settings (${this.host.restoredView.invalid.join(', ')}); defaults apply.`,
       );
     effect(() => this.host.saveView(this.view()));
+    effect(() => {
+      const outcome = this.host.outcome();
+      const submitted = this.refusedForm;
+      if (
+        !outcome ||
+        outcome.accepted ||
+        !submitted ||
+        outcome.requestId !== submitted.requestId ||
+        !submitted.form.isConnected
+      )
+        return;
+      submitted.form.setAttribute('aria-describedby', 'report-refusal');
+      for (const control of submitted.form.querySelectorAll(
+        'input, select, textarea',
+      )) {
+        control.setAttribute('aria-invalid', 'true');
+        control.setAttribute('aria-describedby', 'report-refusal');
+      }
+    });
+    effect(() => {
+      this.scene();
+      this.host.snapshot();
+      afterNextRender(
+        () => {
+          this.configureToolbar();
+          const previous = this.focusedControl;
+          if (
+            previous &&
+            !previous.isConnected &&
+            document.activeElement === document.body
+          ) {
+            const property = previous.dataset['property'];
+            const field = property
+              ? root.querySelector<HTMLElement>(
+                  `[data-property="${CSS.escape(property)}"]`,
+                )
+              : null;
+            (
+              field ??
+              this.viewport()?.nativeElement ??
+              root.querySelector<HTMLElement>('.empty-state button')
+            )?.focus({ preventScroll: true });
+          }
+        },
+        { injector: this.injector },
+      );
+    });
     effect(() => {
       // Restore the saved scroll whenever the canvas is (re)created.
       if (this.viewport()) {
@@ -435,7 +673,8 @@ export class EditorComponent {
             ...emptySelection(snapshot.version),
             structureTargetId: datasets[0]!.id,
           });
-          afterNextRender(() => this.pageSetup(), { injector: this.injector });
+          this.leftTab.set('structure');
+          if (this.workspaceWidth() < 800) this.overlay.set('right');
         }
       }
     });
@@ -444,7 +683,9 @@ export class EditorComponent {
       const snapshot = this.host.snapshot();
       const selection = this.selection();
       if (
-        (accepted.primaryId !== null || accepted.cellTargetId !== null) &&
+        (accepted.primaryId !== null ||
+          accepted.cellTargetId !== null ||
+          !!accepted.structureTargetId) &&
         snapshot &&
         selection?.version !== snapshot.version
       ) {
@@ -507,6 +748,135 @@ export class EditorComponent {
       return;
     }
     this.select(index, event.shiftKey);
+  }
+
+  selectTree(target: { id: string; additive: boolean }): void {
+    if (this.host.pending() || this.held(() => this.selectTree(target))) return;
+    if (
+      !this.host
+        .snapshot()
+        ?.structure?.nodes.some((node) => node.id === target.id)
+    )
+      return;
+    this.cancelGesture();
+    this.selection.set(
+      selectStructure(
+        this.acceptedSelection(),
+        target.id,
+        this.scene()?.items ?? [],
+        target.additive,
+        this.host.snapshot()?.structure?.nodes ?? [],
+      ),
+    );
+    this.revealSelection();
+  }
+
+  showContextMenu(event: MouseEvent): void {
+    event.preventDefault();
+    if (this.host.pending() || this.held(() => this.showContextMenu(event)))
+      return;
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const item = target?.closest<HTMLElement>('[data-item]');
+    if (
+      item &&
+      !this.isSelected(this.scene()!.items[Number(item.dataset['item'])]!)
+    )
+      this.select(Number(item.dataset['item']));
+    const rect = this.element.nativeElement.getBoundingClientRect();
+    this.contextMenu.set({
+      x: Math.max(0, Math.min(event.clientX - rect.left, rect.width - 280)),
+      y: Math.max(40, Math.min(event.clientY - rect.top, rect.height - 360)),
+      invoker:
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null,
+    });
+    afterNextRender(
+      () =>
+        this.element.nativeElement
+          .querySelector<HTMLElement>('[role=menuitem]')
+          ?.focus(),
+      { injector: this.injector },
+    );
+  }
+
+  closeContextMenu(): void {
+    const invoker = this.contextMenu()?.invoker;
+    this.contextMenu.set(null);
+    if (invoker?.isConnected) invoker.focus({ preventScroll: true });
+    else this.viewport()?.nativeElement.focus({ preventScroll: true });
+  }
+
+  runContext(entry: { reason: string; run: () => void }): void {
+    if (entry.reason) return;
+    this.closeContextMenu();
+    entry.run();
+  }
+
+  focusProperties(
+    selector = '.inspector input, .inspector button, .inspector summary',
+  ): void {
+    if (this.workspaceWidth() < 800) this.overlay.set('right');
+    afterNextRender(
+      () =>
+        this.element.nativeElement
+          .querySelector<HTMLElement>(selector)
+          ?.focus(),
+      { injector: this.injector },
+    );
+  }
+
+  menuKeydown(event: KeyboardEvent): void {
+    event.stopPropagation();
+    if (event.key === 'Escape' || event.key === 'Tab') {
+      event.preventDefault();
+      this.closeContextMenu();
+      return;
+    }
+    const items = [
+      ...this.element.nativeElement.querySelectorAll<HTMLElement>(
+        '[role=menuitem]',
+      ),
+    ];
+    const next = rovingIndex(
+      event.key,
+      items.indexOf(document.activeElement as HTMLElement),
+      items.length,
+      'ArrowUp',
+      'ArrowDown',
+    );
+    if (next === null) return;
+    event.preventDefault();
+    items[next]?.focus();
+  }
+
+  private groupPeers(group: HTMLElement): HTMLElement[] {
+    return [
+      ...group.querySelectorAll<HTMLElement>('button:not(:disabled), summary'),
+    ].filter(
+      (control) =>
+        control.closest('[role=group], [role=toolbar]') === group &&
+        !control.closest('.overflow-content'),
+    );
+  }
+
+  private toolbarPeers(target: HTMLElement): HTMLElement[] {
+    const group = target.closest<HTMLElement>('[role=group], [role=toolbar]');
+    return group?.closest('.toolbar') && !target.closest('.overflow-content')
+      ? this.groupPeers(group)
+      : [];
+  }
+
+  private configureToolbar(): void {
+    for (const group of this.element.nativeElement.querySelectorAll<HTMLElement>(
+      '.toolbar, .toolbar [role=group], .toolbar [role=toolbar]',
+    )) {
+      const peers = this.groupPeers(group);
+      const active = peers.includes(document.activeElement as HTMLElement)
+        ? document.activeElement
+        : peers[0];
+      for (const peer of peers) peer.tabIndex = peer === active ? 0 : -1;
+    }
   }
 
   isSelected(item: DesignSceneItem): boolean {
@@ -963,12 +1333,42 @@ export class EditorComponent {
 
   @HostListener('window:keydown', ['$event'])
   keydown(event: KeyboardEvent): void {
+    if (event.defaultPrevented) return;
     const editable =
       event.target instanceof HTMLElement &&
       !!event.target.closest(
         'input, textarea, select, [contenteditable="true"]',
       );
+    if (!editable && event.target instanceof HTMLElement) {
+      const tab = !!event.target.closest('[role=tab]');
+      const controls = tab ? [] : this.toolbarPeers(event.target);
+      const next = rovingIndex(
+        event.key,
+        tab ? leftTabs.indexOf(this.leftTab()) : controls.indexOf(event.target),
+        tab ? leftTabs.length : controls.length,
+        'ArrowLeft',
+        'ArrowRight',
+      );
+      if ((tab || controls.length) && next !== null) {
+        event.preventDefault();
+        if (tab) {
+          this.leftTab.set(leftTabs[next]!);
+          this.element.nativeElement
+            .querySelector<HTMLElement>(`#${this.leftTab()}-tab`)
+            ?.focus();
+        } else controls[next]?.focus();
+        return;
+      }
+    }
     if (event.key === 'Escape') {
+      if (this.diagnosticsOpen()) {
+        this.toggleDiagnostics();
+        return;
+      }
+      if (this.contextMenu()) {
+        this.closeContextMenu();
+        return;
+      }
       const overflow =
         event.target instanceof Element
           ? event.target.closest<HTMLDetailsElement>('details.command-overflow')
@@ -993,8 +1393,28 @@ export class EditorComponent {
     }
     const canvas =
       !editable &&
+      !(
+        event.target instanceof Element &&
+        event.target.closest('[role=tree], [role=menu], [role=tablist]')
+      ) &&
       event.target instanceof Node &&
       !!this.viewport()?.nativeElement.contains(event.target);
+    if (
+      canvas &&
+      (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))
+    ) {
+      event.preventDefault();
+      const rect = (event.target as HTMLElement).getBoundingClientRect();
+      (event.target as HTMLElement).dispatchEvent(
+        new MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          clientX: rect.left + 16,
+          clientY: rect.top + 16,
+        }),
+      );
+      return;
+    }
     if (
       !editable &&
       !event.altKey &&
@@ -1414,10 +1834,11 @@ export class EditorComponent {
     return `${+(pixelsToPoints(pixels) / toPoints(`1${unit}`)!).toFixed(4)}${unit}`;
   }
 
-  openSource(): void {
-    if (this.held(() => this.openSource())) return;
+  openSource(targetId?: string): void {
+    if (this.held(() => this.openSource(targetId))) return;
     this.host.openSource(
-      this.selected()?.id ??
+      targetId ??
+        this.selected()?.id ??
         this.acceptedSelection().structureTargetId ??
         undefined,
     );
@@ -1432,7 +1853,8 @@ export class EditorComponent {
   openCreation(kind: CreationKind | null): void {
     if (this.host.pending() || this.held(() => this.openCreation(kind))) return;
     this.creation.set(kind);
-    if (this.workspaceWidth() < 800) this.overlay.set('left');
+    this.leftTab.set('components');
+    if (this.workspaceWidth() < 1100) this.overlay.set('left');
   }
 
   pageSetup(): void {
@@ -1452,6 +1874,13 @@ export class EditorComponent {
 
   @HostListener('focusin', ['$event'])
   rememberOriginal(event: FocusEvent): void {
+    if (event.target instanceof HTMLElement) {
+      this.focusedControl = event.target;
+      const peers = this.toolbarPeers(event.target);
+      if (peers.includes(event.target))
+        for (const peer of peers)
+          peer.tabIndex = peer === event.target ? 0 : -1;
+    }
     const control = this.draftControl(event.target);
     if (control && !this.originals.has(control))
       this.originals.set(control, control.value);
@@ -1529,15 +1958,23 @@ export class EditorComponent {
   author(request: AuthoringRequest): void {
     const form = this.submitted;
     this.submitted = null;
-    if (this.held(() => this.sendAuthor(request), form)) return;
-    this.sendAuthor(request);
+    const submitted = form instanceof HTMLFormElement ? form : null;
+    if (this.held(() => this.sendAuthor(request, submitted), form)) return;
+    this.sendAuthor(request, submitted);
   }
 
-  private sendAuthor(request: AuthoringRequest): void {
+  private sendAuthor(
+    request: AuthoringRequest,
+    form: HTMLFormElement | null = null,
+  ): void {
     this.cancelGesture();
     const snapshot = this.host.snapshot();
     if (!snapshot || snapshot.status !== 'editable') return;
     const requestId = crypto.randomUUID();
+    this.refusedForm = form ? { requestId, form } : null;
+    if (form)
+      for (const control of form.querySelectorAll('[aria-invalid]'))
+        control.removeAttribute('aria-invalid');
     const accepted = this.host.sendEdit({
       requestId,
       baseVersion: snapshot.version,

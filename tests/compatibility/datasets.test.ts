@@ -5,6 +5,7 @@ import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
 import { fieldTypes } from '@rdlc/report-model/report';
 import { blankReport } from '../../apps/vscode-extension/src/templates/blank-report.js';
+import { projectStructure } from '@rdlc/renderer/structure';
 
 test('blank template is the cited single-section fixture with no invented query/source metadata', () => {
   assert.equal(
@@ -38,6 +39,21 @@ test('query-free local dataset projects all seven exact designer type mappings',
     assert.equal(field.dataField, field.name);
     assert.equal(field.calculatedValue, null);
   }
+  assert.equal(syntax.snapshot.source, source);
+  const structure = projectStructure(syntax, report);
+  const definition = structure.nodes.find(
+    (node) => node.id === dataset.node.id,
+  )!;
+  assert.equal(definition.kind, 'dataset');
+  assert.equal(definition.name, dataset.name);
+  assert.deepEqual(
+    structure.nodes
+      .filter(
+        (node) => node.parentId === definition.id && node.kind === 'field',
+      )
+      .map((node) => node.id),
+    dataset.fields.map((field) => field.node.id),
+  );
   assert.equal(syntax.snapshot.source, source);
 });
 

@@ -53,6 +53,7 @@ export class HostAdapter {
   readonly outcome = signal<EditOutcome | null>(null);
   /** The scene replaced by the latest snapshot, for structural selection reconciliation only. */
   readonly previousScene = signal<DesignScene | null>(null);
+  readonly previousStructure = signal<ReportStructure | null>(null);
   readonly sent = signal<readonly unknown[]>([]);
   readonly notice = signal('');
   readonly pending = signal<{
@@ -62,6 +63,9 @@ export class HostAdapter {
   } | null>(null);
   private blocked = false;
   private readonly api: VsCodeApi | null;
+  get connected(): boolean {
+    return this.api !== null;
+  }
   /** Validated per-view preferences from the webview state API; never sent to the host. */
   readonly restoredView: ReturnType<typeof restoreViewState>;
 
@@ -112,6 +116,7 @@ export class HostAdapter {
         this.outcome.set(null);
       }
       this.previousScene.set(previous?.scene ?? null);
+      this.previousStructure.set(previous?.structure ?? null);
       this.snapshot.set({
         version: message.version,
         status: message.projection.status,

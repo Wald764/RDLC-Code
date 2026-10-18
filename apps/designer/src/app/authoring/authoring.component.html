@@ -76,40 +76,42 @@
       Controls reflect the accepted document. After an edit, reselect the item;
       obsolete drafts are discarded.
     </p>
-    <form
-      aria-label="Create textbox"
-      (submit)="
-        $event.preventDefault();
-        request.emit({
-          targetId: state().id,
-          payload: { action: 'createTextbox', name: name.value },
-        })
-      "
-    >
-      <label
-        >Textbox name
-        <input #name required pattern="[A-Za-z_][A-Za-z0-9_]*" /></label
-      ><button type="submit">Create textbox</button>
-    </form>
-    @if (deletable(); as item) {
+    @if (!pageOnly()) {
       <form
-        aria-label="Delete textbox"
+        aria-label="Create textbox"
         (submit)="
           $event.preventDefault();
           request.emit({
-            targetId: item.id,
-            payload: {
-              action: 'deleteTextbox',
-              confirm: confirmation.checked ? 'delete-contained-content' : '',
-            },
+            targetId: state().id,
+            payload: { action: 'createTextbox', name: name.value },
           })
         "
       >
         <label
-          ><input #confirmation type="checkbox" required />Delete
-          {{ item.name }} including all contained unsupported XML</label
-        ><button type="submit">Delete textbox</button>
+          >Textbox name
+          <input #name required pattern="[A-Za-z_][A-Za-z0-9_]*" /></label
+        ><button type="submit">Create textbox</button>
       </form>
+      @if (deletable(); as item) {
+        <form
+          aria-label="Delete textbox"
+          (submit)="
+            $event.preventDefault();
+            request.emit({
+              targetId: item.id,
+              payload: {
+                action: 'deleteTextbox',
+                confirm: confirmation.checked ? 'delete-contained-content' : '',
+              },
+            })
+          "
+        >
+          <label
+            ><input #confirmation type="checkbox" required />Delete
+            {{ item.name }} including all contained unsupported XML</label
+          ><button type="submit">Delete textbox</button>
+        </form>
+      }
     }
     <fieldset>
       <legend>Page and body (RdlSize units)</legend>
@@ -134,7 +136,12 @@
         </form>
       }
     </fieldset>
-    <rdlc-datasets [state]="state()" (request)="request.emit($event)" />
-    <rdlc-table-properties [state]="state()" (request)="request.emit($event)" />
+    @if (!pageOnly()) {
+      <rdlc-datasets [state]="state()" (request)="request.emit($event)" />
+      <rdlc-table-properties
+        [state]="state()"
+        (request)="request.emit($event)"
+      />
+    }
   }
 </section>

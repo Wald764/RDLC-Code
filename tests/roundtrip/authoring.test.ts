@@ -5,6 +5,7 @@ import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
 import type { AuthoringIntent } from '@rdlc/report-model/editing';
 import { planAuthoringIntent } from '../../apps/vscode-extension/src/edit-controller.js';
+import { projectStructure } from '@rdlc/renderer/structure';
 
 function author(
   source: string,
@@ -29,6 +30,92 @@ function author(
 }
 const dataset = (report: ReturnType<typeof projectReport>) =>
   report.datasets[0]!.node.id;
+
+test('contextual structure targets build a bound table and reopen exact local definitions and scoped expressions', () => {
+  let source = readFileSync(
+    'tests/fixtures/datasets/blank.rdlc',
+    'utf8',
+  ).replace('</Report>', '<!--keep contextual authoring metadata--></Report>');
+  const apply = (
+    kind: 'report' | 'dataset' | 'table',
+    name: string | null,
+    payload: AuthoringIntent['payload'],
+  ) => {
+    const syntax = parse({
+      uri: 'test:context',
+      version: 1,
+      source,
+      eol: '\n',
+    });
+    const projection = projectReport(syntax);
+    const unchanged = syntax.snapshot.source;
+    const structure = projectStructure(syntax, projection);
+    const target = structure.nodes.find(
+      (node) => node.kind === kind && node.name === name,
+    )!;
+    assert.ok(target);
+    assert.equal(syntax.snapshot.source, unchanged);
+    const outcome = author(source, () => target.id, payload);
+    assert.equal(outcome.ok, true, JSON.stringify(outcome));
+    if (!outcome.ok) return;
+    for (const patch of outcome.plan.patches)
+      assert.ok(patch.start >= 0 && patch.end <= source.length);
+    source = outcome.candidate;
+    assert.ok(source.includes('<!--keep contextual authoring metadata-->'));
+  };
+  apply('report', null, { action: 'createDataset', name: 'Sales' });
+  for (const [name, type] of [
+    ['Label', 'text'],
+    ['Amount', 'decimal'],
+    ['Date', 'date/time'],
+  ] as const)
+    apply('dataset', 'Sales', { action: 'createField', name, type });
+  apply('report', null, {
+    action: 'createTable',
+    name: 'SalesTable',
+    dataset: 'Sales',
+    field: 'Label',
+    width: '1in',
+  });
+  apply('table', 'SalesTable', {
+    action: 'addColumn',
+    field: 'Amount',
+    width: '1in',
+  });
+  apply('table', 'SalesTable', {
+    action: 'addGroup',
+    name: 'ByLabel',
+    expression: '=Fields!Label.Value',
+  });
+  apply('table', 'SalesTable', {
+    action: 'addTotal',
+    field: 'Amount',
+    scope: 'ByLabel',
+    column: '1',
+  });
+  const reopened = projectReport(
+    parse({ uri: 'test:reopened', version: 20, source, eol: '\n' }),
+  );
+  assert.deepEqual(
+    reopened.datasets[0]!.fields.map((field) => [field.name, field.type]),
+    [
+      ['Label', 'text'],
+      ['Amount', 'decimal'],
+      ['Date', 'date/time'],
+    ],
+  );
+  assert.equal(reopened.tables[0]!.dataset, 'Sales');
+  assert.deepEqual(reopened.tables[0]!.groups[0]!.expressions, [
+    '=Fields!Label.Value',
+  ]);
+  assert.ok(
+    source.includes('=Sum(Fields!Amount.Value, &quot;ByLabel&quot;)') ||
+      source.includes('=Sum(Fields!Amount.Value, "ByLabel")'),
+  );
+  const unchanged = source;
+  assert.equal(author(source, dataset, { action: 'deleteDataset' }).ok, false);
+  assert.equal(source, unchanged);
+});
 
 test('dataset/field insertions preserve queries, calculated fields, metadata and namespace spelling', () => {
   const source = readFileSync('tests/fixtures/datasets/preserved.rdlc', 'utf8');

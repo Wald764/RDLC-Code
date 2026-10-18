@@ -9,12 +9,25 @@
         track diagnostic.code + diagnostic.message
       ) {
         <li [attr.data-severity]="diagnostic.severity">
-          <strong>{{ diagnostic.code }}</strong>
+          <strong>{{ diagnostic.severity }}: {{ diagnostic.code }}</strong>
+          <span
+            >Target: {{ diagnostic.itemId ?? 'Report' }}
+            {{ diagnostic.property ?? '' }}</span
+          >
           <span>{{ diagnostic.message }}</span>
           <span class="action">{{ diagnostic.correctiveAction }}</span>
+          <button
+            type="button"
+            data-diagnostic-source
+            (click)="openSource.emit(diagnostic.itemId)"
+          >
+            Correct in Code XML
+          </button>
         </li>
       }
     </ul>
   }
-  <button type="button" (click)="openSource.emit()">Open source</button>
+  <button type="button" (click)="openSource.emit(undefined)">
+    Open source
+  </button>
 </section>

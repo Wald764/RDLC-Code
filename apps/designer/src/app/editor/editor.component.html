@@ -27,10 +27,16 @@
       <p>{{ gestureNotice() }}</p>
     }
     @if (host.outcome(); as outcome) {
-      <p class="outcome" [attr.data-accepted]="outcome.accepted">
-        {{ outcome.accepted ? 'Applied to document' : 'Blocked' }}:
-        {{ outcome.reason }}
-      </p>
+      @if (!outcome.accepted) {
+        <p
+          id="report-refusal"
+          class="outcome"
+          [attr.data-accepted]="outcome.accepted"
+        >
+          Blocked:
+          {{ outcome.reason }}
+        </p>
+      }
     }
   </div>
   @if (draft(); as current) {
@@ -63,12 +69,36 @@
       <button type="button" data-conflicts (click)="openSource()">
         Code XML
       </button>
-      Authoring layout (not runtime pagination or a data preview) —
+      Design · Authoring layout (not runtime pagination or a data preview) —
       {{ status() }} · {{ design.items.length }} item(s) ·
-      {{ selectedIds().length }} selected
+      {{ treeSelectedIds().length }} selected
       @if (primary(); as item) {
         · Primary: {{ item.label }}
       }
+      @if (structureNode(); as node) {
+        · {{ node.kind }}: {{ node.label }}
+      }
+      @if (acceptedSelection().cellTargetId) {
+        · Cell: {{ selected()?.label }}
+      }
+      · {{ +(view().zoom * 100).toFixed(2) }}% · {{ view().unit }} · Page
+      {{ inUnit(design.page.width) }} × {{ inUnit(design.page.height) }} · Body
+      {{ inUnit(design.body.width) }} × {{ inUnit(design.body.height) }}
+      <button
+        type="button"
+        [attr.aria-expanded]="diagnosticsOpen()"
+        (click)="toggleDiagnostics()"
+      >
+        {{ diagnosticSummary() }}
+      </button>
+      <span
+        tabindex="0"
+        aria-label="Preview unavailable: populated RDLC rendering is not supported"
+        title="Populated RDLC rendering is not supported"
+        ><button type="button" disabled aria-label="Preview unavailable">
+          Preview
+        </button></span
+      >
     </p>
     <div
       class="toolbar"
@@ -291,34 +321,69 @@
       class="left-panel"
       data-conflicts
       [class.open]="overlay() === 'left'"
-      aria-label="Components"
+      aria-label="Components and Structure"
     >
-      <h2>Components</h2>
-      <rdlc-components-catalog
-        [disabled]="
-          !!host.pending() ||
-          host.snapshot()?.status !== 'editable' ||
-          !host.snapshot()?.authoring
-        "
-        (create)="openCreation($event)"
-      />
-      @if (creation()) {
-        @for (version of [host.snapshot()?.version]; track version) {
-          @if (host.snapshot()?.authoring; as authoring) {
-            <fieldset [disabled]="!!host.pending()">
-              <rdlc-authoring
-                [state]="authoring"
-                [compact]="true"
-                [creation]="creation()"
-                [pending]="!!host.pending()"
-                (request)="author($event)"
-                (cancel)="openCreation(null)"
-                (prerequisite)="openCreation('dataset')"
-              />
-            </fieldset>
+      <div role="tablist" aria-label="Navigation panels">
+        @for (tab of leftTabs; track tab) {
+          <button
+            type="button"
+            role="tab"
+            [id]="tab + '-tab'"
+            [attr.aria-controls]="tab + '-panel'"
+            [attr.aria-selected]="leftTab() === tab"
+            [tabIndex]="leftTab() === tab ? 0 : -1"
+            (click)="leftTab.set(tab)"
+          >
+            {{ tab[0]!.toUpperCase() + tab.slice(1) }}
+          </button>
+        }
+      </div>
+      <div
+        id="structure-panel"
+        role="tabpanel"
+        aria-labelledby="structure-tab"
+        [hidden]="leftTab() !== 'structure'"
+      >
+        <rdlc-structure-tree
+          [structure]="host.snapshot()?.structure ?? null"
+          [selectedIds]="treeSelectedIds()"
+          [editableIds]="treeEditableIds()"
+          (select)="selectTree($event)"
+          (source)="openSource()"
+        />
+      </div>
+      <div
+        id="components-panel"
+        role="tabpanel"
+        aria-labelledby="components-tab"
+        [hidden]="leftTab() !== 'components'"
+      >
+        <rdlc-components-catalog
+          [disabled]="
+            !!host.pending() ||
+            host.snapshot()?.status !== 'editable' ||
+            !host.snapshot()?.authoring
+          "
+          (create)="openCreation($event)"
+        />
+        @if (creation()) {
+          @for (version of [host.snapshot()?.version]; track version) {
+            @if (host.snapshot()?.authoring; as authoring) {
+              <fieldset [disabled]="!!host.pending()">
+                <rdlc-authoring
+                  [state]="authoring"
+                  [compact]="true"
+                  [creation]="creation()"
+                  [pending]="!!host.pending()"
+                  (request)="author($event)"
+                  (cancel)="openCreation(null)"
+                  (prerequisite)="openCreation('dataset')"
+                />
+              </fieldset>
+            }
           }
         }
-      }
+      </div>
     </aside>
     <div class="canvas-frame">
       <div class="ruler horizontal" aria-label="Horizontal page ruler">
@@ -352,6 +417,7 @@
         data-conflicts
         (scroll)="onScroll()"
         (wheel)="wheel($event)"
+        (contextmenu)="showContextMenu($event)"
       >
         <div
           class="extent"
@@ -385,6 +451,7 @@
                     type="button"
                     class="item"
                     [class.selected]="isSelected(item)"
+                    [class.primary]="primary()?.id === item.id"
                     [class.placeholder]="item.placeholder"
                     [attr.data-item]="$index"
                     [attr.aria-pressed]="isSelected(item)"
@@ -493,6 +560,32 @@
         </div>
       </div>
     </div>
+    @if (contextMenu(); as menu) {
+      <div class="context-backdrop" (click)="closeContextMenu()"></div>
+      <div
+        class="context-menu"
+        role="menu"
+        aria-label="Canvas actions"
+        [style.left.px]="menu.x"
+        [style.top.px]="menu.y"
+        (keydown)="menuKeydown($event)"
+      >
+        @for (entry of contextActions(); track entry.label) {
+          <button
+            type="button"
+            role="menuitem"
+            tabindex="-1"
+            [attr.aria-disabled]="!!entry.reason"
+            (click)="runContext(entry)"
+          >
+            {{ entry.label }}
+            @if (entry.reason) {
+              <small>{{ entry.reason }}</small>
+            }
+          </button>
+        }
+      </div>
+    }
     <aside
       class="inspector"
       [class.open]="overlay() === 'right'"
@@ -502,16 +595,23 @@
         <fieldset [disabled]="!!host.pending()">
           <rdlc-contextual-inspector
             [scene]="scene()"
+            [state]="
+              status() === 'editable'
+                ? (host.snapshot()?.authoring ?? null)
+                : null
+            "
             [item]="selected()"
             [count]="selectedIds().length"
             [primary]="primary()"
             [dataset]="selectedDataset()"
+            [structureNode]="structureNode()"
             [refusal]="
               host.outcome()?.accepted === false
                 ? (host.outcome()?.reason ?? '')
                 : ''
             "
             (commit)="commit($event)"
+            (request)="author($event)"
           />
         </fieldset>
       }
@@ -566,23 +666,28 @@
             </button>
           </section>
         }
-        @for (
-          dataset of host.snapshot()?.authoring?.datasets ?? [];
-          track dataset.id
-        ) {
-          <form (submit)="$event.preventDefault(); bindField(field.value)">
-            <label
-              >Bind selected textbox to {{ dataset.name }} field
-              <select #field>
-                @for (field of dataset.fields; track field.id) {
-                  <option [value]="field.name" [disabled]="field.type === null">
-                    {{ field.name }}
-                  </option>
-                }
-              </select></label
-            >
-            <button type="submit">Bind field</button>
-          </form>
+        @if (item.capabilities?.includes('text') && !item.placeholder) {
+          @for (
+            dataset of host.snapshot()?.authoring?.datasets ?? [];
+            track dataset.id
+          ) {
+            <form (submit)="$event.preventDefault(); bindField(field.value)">
+              <label
+                >Bind selected textbox to {{ dataset.name }} field
+                <select #field>
+                  @for (field of dataset.fields; track field.id) {
+                    <option
+                      [value]="field.name"
+                      [disabled]="field.type === null"
+                    >
+                      {{ field.name }}
+                    </option>
+                  }
+                </select></label
+              >
+              <button type="submit">Bind field</button>
+            </form>
+          }
         }
       }
       @if (selectedIds().length < 2) {
@@ -597,6 +702,7 @@
                 <rdlc-authoring
                   [state]="authoring"
                   [selected]="selected()"
+                  [pageOnly]="true"
                   (request)="author($event)"
                 />
               </fieldset>
@@ -604,17 +710,32 @@
           }
         }
       }
+    </aside>
+    <section
+      class="diagnostic-overlay"
+      [hidden]="!diagnosticsOpen()"
+      role="region"
+      aria-label="Diagnostic details"
+    >
+      <button type="button" (click)="toggleDiagnostics()">
+        Close diagnostics
+      </button>
       <rdlc-diagnostics
         [diagnostics]="diagnostics()"
-        (openSource)="openSource()"
+        (openSource)="openSource($event)"
       />
-    </aside>
+    </section>
   } @else {
     <div class="empty-state">
       @if (host.snapshot(); as snapshot) {
         <p role="status">
-          {{ snapshot.status }} — visual editing is unavailable. Inspect
-          diagnostics and Code XML.
+          @if (snapshot.status === 'invalid-source') {
+            Invalid XML — visual editing is unavailable. Correct source errors
+            in Code XML.
+          } @else {
+            Source-only report — this report cannot be edited visually. Inspect
+            limitations and Code XML.
+          }
         </p>
         <button type="button" (click)="openSource()">Code XML</button>
         <button
@@ -633,10 +754,27 @@
         </button>
         <rdlc-diagnostics
           [diagnostics]="diagnostics()"
-          (openSource)="openSource()"
+          (openSource)="openSource($event)"
+        />
+        <rdlc-structure-tree
+          [structure]="snapshot.structure ?? null"
+          [selectedIds]="treeSelectedIds()"
+          (select)="selectTree($event)"
+          (source)="openSource()"
         />
       } @else {
-        <p role="status">Waiting for the RDLC host to provide a document…</p>
+        @if (host.connected) {
+          <p role="status">
+            Loading report from the RDLC host… If no report arrives, reopen the
+            designer or open Code XML.
+          </p>
+          <button type="button" (click)="openSource()">Code XML</button>
+        } @else {
+          <p role="status">
+            No report connected. Open an RDLC report with RDLC Designer in VS
+            Code, or use RDLC Code: New Report.
+          </p>
+        }
       }
     </div>
   }

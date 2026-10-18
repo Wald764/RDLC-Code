@@ -18,6 +18,21 @@ const options = (over: Partial<Parameters<typeof snapDelta>[2]> = {}) => ({
 });
 
 describe('grid snapping', () => {
+  for (const zoom of [0.25, 0.5, 1, 2, 4])
+    it(`keeps report-grid edges and bypass independent at ${zoom * 100}%`, () => {
+      const bounds = { left: 23, top: 47, width: 34, height: 10 };
+      const settings = options({
+        scale: (zoom * 96) / 72,
+        targets: [],
+        guides: false,
+      });
+      expect(snapDelta(bounds, 'e', settings)).toMatchObject({ dx: 3, dy: 0 });
+      expect(snapDelta(bounds, 'move', { ...settings, grid: null })).toEqual({
+        dx: 0,
+        dy: 0,
+        guides: [],
+      });
+    });
   it('snaps the union top-left to the nearest body-origin intersection', () => {
     const result = snapDelta(
       { left: 23, top: 47, width: 30, height: 30 },

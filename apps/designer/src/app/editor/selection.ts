@@ -1,4 +1,5 @@
 import type { TargetMapping } from '@rdlc/report-model/editing';
+import type { StructureNode } from '@rdlc/report-model/protocol';
 import type {
   Bounds,
   DesignScene,
@@ -39,6 +40,94 @@ export function selectItem(
           ? (ids.at(-1) ?? null)
           : selection.primaryId,
   };
+}
+
+export function selectStructure(
+  selection: Selection,
+  id: string,
+  items: readonly DesignSceneItem[],
+  toggle: boolean,
+  nodes: readonly StructureNode[] = [],
+): Selection {
+  const node = nodes.find((node) => node.id === id);
+  const cellContents =
+    node?.kind === 'cell' && !node.preservedReason
+      ? items.filter(
+          (item) =>
+            item.kind === 'cell' &&
+            nodes.some(
+              (child) =>
+                child.parentId === id &&
+                child.id === item.id &&
+                !child.preservedReason,
+            ),
+        )
+      : [];
+  const item =
+    items.find((item) => item.id === id) ??
+    (cellContents.length === 1 ? cellContents[0] : undefined);
+  return item
+    ? selectItem(selection, item, toggle)
+    : { ...emptySelection(selection.version), structureTargetId: id };
+}
+
+/** Named ancestry must be unique in both versions; unnamed ancestors contribute type only. */
+export function structureMappings(
+  from: readonly StructureNode[],
+  to: readonly StructureNode[],
+): TargetMapping[] {
+  const identities = (nodes: readonly StructureNode[]) => {
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const keys = new Map<string, string>();
+    const unique = new Map<string, string | null>();
+    for (const node of nodes) {
+      const ancestors: string[] = [];
+      let parent = node.parentId ? byId.get(node.parentId) : undefined;
+      while (parent) {
+        ancestors.unshift(`${parent.kind}:${parent.name ?? ''}`);
+        parent = parent.parentId ? byId.get(parent.parentId) : undefined;
+      }
+      const key = JSON.stringify([ancestors, node.kind, node.name]);
+      keys.set(node.id, key);
+      unique.set(key, unique.has(key) ? null : node.id);
+    }
+    for (const node of nodes) {
+      let parent = node.parentId ? byId.get(node.parentId) : undefined;
+      while (parent) {
+        const parentKey = keys.get(parent.id);
+        if (!parentKey || !unique.get(parentKey)) keys.delete(node.id);
+        parent = parent.parentId ? byId.get(parent.parentId) : undefined;
+      }
+    }
+    return { keys, unique };
+  };
+  const before = identities(from),
+    after = identities(to);
+  return from.map((node) => {
+    const key = before.keys.get(node.id);
+    const resultId =
+      key && node.name && before.unique.get(key)
+        ? (after.unique.get(key) ?? null)
+        : null;
+    return {
+      sourceId: node.id,
+      resultId: resultId && after.keys.has(resultId) ? resultId : null,
+    };
+  });
+}
+
+export function reconcileStructureSelection(
+  selection: Selection,
+  from: readonly StructureNode[],
+  to: readonly StructureNode[],
+  version: number,
+): Selection | null {
+  const result = structureMappings(from, to).find(
+    (mapping) => mapping.sourceId === selection.structureTargetId,
+  )?.resultId;
+  return result
+    ? { ...emptySelection(version), structureTargetId: result }
+    : null;
 }
 
 export function selectAll(
@@ -133,6 +222,13 @@ function identity(item: DesignSceneItem, scene: DesignScene): string | null {
     ? scene.items.find((i) => i.id === item.parentTableId)?.name
     : '';
   if (parent === undefined || parent === null) return null;
+  if (
+    item.parentTableId &&
+    scene.items.filter(
+      (candidate) => candidate.kind === 'table' && candidate.name === parent,
+    ).length !== 1
+  )
+    return null;
   return `${item.kind ?? ''}\u0000${parent}\u0000${item.name}`;
 }
 

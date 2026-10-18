@@ -90,6 +90,130 @@ function mount() {
 }
 
 describe('editor surface', () => {
+  for (const status of ['invalid-source', 'source-only'] as const)
+    it(`keeps safe Structure, native history and source access in ${status}`, async () => {
+      const { fixture, host, element, settle } = mount();
+      const message = snapshotMessage({});
+      if (message.kind !== 'snapshot') throw new Error('Expected snapshot');
+      host.ingest({
+        ...message,
+        projection: { ...message.projection, status },
+        scene: null,
+      });
+      await settle();
+      expect(element.textContent).toContain(
+        status === 'invalid-source' ? 'Invalid XML' : 'Source-only report',
+      );
+      expect(element.querySelector('rdlc-authoring')).toBeNull();
+      expect(element.querySelector('rdlc-structure-tree')).not.toBeNull();
+      expect(
+        [...element.querySelectorAll('button')].some(
+          (button) => button.textContent?.trim() === 'Undo' && !button.disabled,
+        ),
+      ).toBe(true);
+      expect(host.sent()).toEqual([]);
+      fixture.destroy();
+    });
+  it('synchronizes Structure/body/data selections and uses view-only context menus', async () => {
+    const { fixture, host, element, settle } = mount();
+    const message = snapshotMessage({});
+    if (message.kind !== 'snapshot') throw new Error('Expected snapshot');
+    host.ingest({
+      ...message,
+      structure: {
+        truncated: true,
+        nodes: [
+          {
+            id: '2:1',
+            parentId: null,
+            kind: 'report',
+            name: null,
+            label: 'Report',
+            range: { start: 0, end: 0 },
+            preservedReason: null,
+          },
+          {
+            id: '2:3',
+            parentId: '2:1',
+            kind: 'textbox',
+            name: 'Title',
+            label: 'Title',
+            range: { start: 0, end: 0 },
+            preservedReason: null,
+          },
+          {
+            id: '2:8',
+            parentId: '2:1',
+            kind: 'dataset',
+            name: 'Sales',
+            label: 'Sales',
+            range: { start: 0, end: 0 },
+            preservedReason: null,
+          },
+        ],
+      },
+    });
+    await settle();
+    const component = fixture.componentInstance;
+    const zoom = component.view().zoom;
+    component.selectTree({ id: '2:3', additive: false });
+    await settle();
+    expect(component.selected()?.id).toBe('2:3');
+    expect(component.view().zoom).toBe(zoom);
+    component.selectTree({ id: '2:8', additive: true });
+    await settle();
+    expect(component.selectedIds()).toEqual([]);
+    expect(component.acceptedSelection().structureTargetId).toBe('2:8');
+    component.select(0);
+    await settle();
+    const canvas = element.querySelector<HTMLElement>('.viewport')!;
+    canvas.focus();
+    canvas.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'F10',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await settle();
+    expect(component.contextMenu()).not.toBeNull();
+    const menu = element.querySelector<HTMLElement>('[role=menu]')!;
+    menu.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    await settle();
+    expect(component.contextMenu()).toBeNull();
+    expect(document.activeElement).toBe(canvas);
+    expect(host.sent()).toEqual([]);
+    fixture.destroy();
+  });
+  it('keeps tree/menu typing native, navigates tabs and exposes truthful Preview/status', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest(snapshotMessage({}));
+    await settle();
+    const preview = element.querySelector<HTMLButtonElement>(
+      '[aria-label="Preview unavailable"]',
+    );
+    expect(preview?.disabled).toBe(true);
+    const tabs = element.querySelectorAll<HTMLButtonElement>('[role=tab]');
+    tabs[0]!.focus();
+    tabs[0]!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
+    );
+    await settle();
+    expect(fixture.componentInstance.leftTab()).toBe('structure');
+    const event = new KeyboardEvent('keydown', {
+      key: 'a',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    tabs[1]!.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(host.sent()).toEqual([]);
+    fixture.destroy();
+  });
   it('selects an accepted dataset definition without a geometry selection', async () => {
     const { fixture, host, settle } = mount();
     host.ingest(directSnapshot());
@@ -1207,13 +1331,10 @@ describe('property drafts, limitations and focus', () => {
     await mounted.settle();
     button(mounted.element, 'Cancel new action').click();
     await mounted.settle();
-    const create = mounted.element.querySelector<HTMLFormElement>(
-      '[aria-label="Create textbox"]',
-    )!;
-    create.querySelector('input')!.value = 'Heading';
-    create.dispatchEvent(
-      new Event('submit', { bubbles: true, cancelable: true }),
-    );
+    mounted.component.author({
+      targetId: '2:1',
+      payload: { action: 'createTextbox', name: 'Heading' },
+    });
     await mounted.settle();
     expect(mounted.host.sent()).toHaveLength(0);
     button(mounted.element, 'Discard draft').click();
@@ -1546,9 +1667,21 @@ describe('navigation, placement and keyboard nudges', () => {
     ])
       expect(
         [...m.element.querySelectorAll('button')].some(
-          (b) => b.textContent?.trim() === label && b.tabIndex >= 0,
+          (b) => b.textContent?.trim() === label && !b.disabled,
         ),
       ).toBe(true);
+    const zoomOut = [...m.element.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === 'Zoom out',
+    )!;
+    zoomOut.focus();
+    zoomOut.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'ArrowRight',
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(document.activeElement?.textContent?.trim()).toBe('Zoom in');
     for (const label of [
       'Zoom percent',
       'Grid spacing',
