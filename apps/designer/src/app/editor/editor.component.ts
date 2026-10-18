@@ -617,8 +617,10 @@ export class EditorComponent {
     }
   }
 
+  // One handler per window event: a second @HostListener for the same event replaces this one.
   @HostListener('window:pointerup', ['$event'])
   finishGesture(event: PointerEvent): void {
+    this.releaseGuard();
     const pan = this.pan;
     if (pan && event.pointerId === pan.pointerId) {
       this.pan = null;
@@ -729,9 +731,11 @@ export class EditorComponent {
   @HostListener('window:pointercancel', ['$event'])
   @HostListener('window:lostpointercapture', ['$event'])
   captureLost(event: PointerEvent): void {
+    this.releaseGuard();
     if (
       event.pointerId === this.preview()?.pointerId ||
-      event.pointerId === this.marquee()?.pointerId
+      event.pointerId === this.marquee()?.pointerId ||
+      event.pointerId === this.pan?.pointerId
     )
       this.cancelGesture();
   }
@@ -1147,9 +1151,8 @@ export class EditorComponent {
     if (control && version !== undefined) this.draft.set({ version, control });
   }
 
-  @HostListener('window:pointerup')
-  @HostListener('window:pointercancel')
-  releaseGuard(): void {
+  /** Called from the pointer end handlers, which own those window events. */
+  private releaseGuard(): void {
     // Release after the click that follows pointerup has been dispatched.
     setTimeout(() => (this.pointerGuard = false));
   }

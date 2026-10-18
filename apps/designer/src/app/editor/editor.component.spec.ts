@@ -1308,3 +1308,155 @@ describe('navigation, placement and keyboard nudges', () => {
     expect(document.activeElement).toBe(m.viewport);
   });
 });
+
+/** Dispatches through the DOM, so host listener bindings are exercised (drag-preview-cancelled). */
+describe('real pointer event dispatch', () => {
+  beforeEach(() => TestBed.resetTestingModule());
+  afterEach(() => vi.restoreAllMocks());
+
+  const pointer = (type: string, init: { x: number; y: number }) => {
+    const event = new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: type === 'pointerup' ? 0 : 1,
+      clientX: init.x,
+      clientY: init.y,
+    });
+    Object.defineProperty(event, 'pointerId', { value: 1 });
+    return event;
+  };
+  /** Mimics a browser: capture on pointerdown, implicit release after pointerup. */
+  function capturing(element: HTMLElement) {
+    let captured = false;
+    element.setPointerCapture = () => (captured = true);
+    element.hasPointerCapture = () => captured;
+    element.releasePointerCapture = () => (captured = false);
+  }
+  function gesture(target: HTMLElement, path: readonly [number, number][]) {
+    const [start, ...rest] = path;
+    target.dispatchEvent(
+      pointer('pointerdown', { x: start![0], y: start![1] }),
+    );
+    for (const [x, y] of rest)
+      window.dispatchEvent(pointer('pointermove', { x, y }));
+    const [x, y] = path.at(-1)!;
+    window.dispatchEvent(pointer('pointerup', { x, y }));
+    window.dispatchEvent(pointer('lostpointercapture', { x, y }));
+    target.dispatchEvent(pointer('click', { x, y }));
+  }
+  async function mounted() {
+    const m = mount();
+    m.host.ingest(draftSnapshot());
+    await m.settle();
+    const component = m.fixture.componentInstance;
+    component.setView({ gridSnap: false, guidesSnap: false });
+    await m.settle();
+    const edits = () =>
+      m.host.sent().filter((s) => (s as { kind: string }).kind === 'edit');
+    return { ...m, component, edits };
+  }
+
+  it('submits a released move instead of cancelling it on capture loss', async () => {
+    const m = await mounted();
+    const item = m.element.querySelector<HTMLElement>('button.item')!;
+    capturing(item);
+    gesture(item, [
+      [0, 0],
+      [4, 2],
+      [8, 4],
+    ]);
+    await m.settle();
+    expect(m.edits()).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          action: 'move',
+          targetIds: ['2:3'],
+          dxPt: 6,
+          dyPt: 3,
+        }),
+      }),
+    ]);
+    expect(m.element.textContent).not.toContain('Preview cancelled');
+  });
+
+  it('submits a released resize handle', async () => {
+    const m = await mounted();
+    m.component.select(0);
+    await m.settle();
+    const handle = m.element.querySelector<HTMLElement>('[data-handle="se"]')!;
+    capturing(handle);
+    gesture(handle, [
+      [0, 0],
+      [8, 4],
+    ]);
+    // Title is 18,18 216×36pt; +6pt/+3pt on the south-east corner.
+    expect(m.edits()).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          action: 'resize',
+          handle: 'se',
+          xPt: 240,
+          yPt: 57,
+        }),
+      }),
+    ]);
+  });
+
+  it('applies a released marquee selection', async () => {
+    const m = await mounted();
+    const body = m.element.querySelector<HTMLElement>('.body')!;
+    capturing(body);
+    gesture(body, [
+      [400, 150],
+      [10, 10],
+    ]);
+    await m.settle();
+    expect(m.component.selectedIds()).toEqual(['2:3', '2:4']);
+    expect(m.element.textContent).not.toContain('Preview cancelled');
+  });
+
+  it('a real pointercancel still cancels the preview without an edit', async () => {
+    const m = await mounted();
+    const item = m.element.querySelector<HTMLElement>('button.item')!;
+    capturing(item);
+    item.dispatchEvent(pointer('pointerdown', { x: 0, y: 0 }));
+    window.dispatchEvent(pointer('pointermove', { x: 8, y: 4 }));
+    expect(m.component.preview()?.active).toBe(true);
+    window.dispatchEvent(pointer('pointercancel', { x: 8, y: 4 }));
+    await m.settle();
+    expect(m.component.preview()).toBeNull();
+    expect(m.edits()).toHaveLength(0);
+    expect(m.component.gestureNotice()).toBe(
+      'Preview cancelled; document unchanged.',
+    );
+  });
+
+  it('releases the draft pointer guard after a real pointerup', async () => {
+    const m = await mounted();
+    m.component.select(0);
+    await m.settle();
+    const name = m.element.querySelector<HTMLInputElement>(
+      '[data-property="name"]',
+    )!;
+    name.focus();
+    name.value = 'Renamed';
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    // A press on a conflicting region arms the guard; its release must disarm it.
+    const list = m.element.querySelector<HTMLElement>(
+      'ul[aria-label="Report items"] button',
+    )!;
+    list.dispatchEvent(pointer('pointerdown', { x: 0, y: 0 }));
+    m.component.commit({ property: 'name', value: 'Guarded' });
+    expect(m.edits()).toHaveLength(0);
+    window.dispatchEvent(pointer('pointerup', { x: 0, y: 0 }));
+    await new Promise((resolve) => setTimeout(resolve));
+    m.component.commit({ property: 'name', value: 'Renamed' });
+    expect(m.edits()).toEqual([
+      expect.objectContaining({
+        operation: 'setProperty',
+        payload: { property: 'name', value: 'Renamed' },
+      }),
+    ]);
+  });
+});

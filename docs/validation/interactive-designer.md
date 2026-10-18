@@ -173,6 +173,10 @@ Limits: auto-scroll advances on pointer movement only (`ponytail:` comment in `e
 
 `pnpm package`/`test:package` were not run for this phase; E03 stays pending until the installed zoom/scaling/snapping/100-nudge scenario runs.
 
+## Correction: real pointer release (bug `drag-preview-cancelled`)
+
+From commit `9a99ee7` until this fix, a second `@HostListener` for `window:pointerup`/`window:pointercancel` (`releaseGuard`) replaced `finishGesture`/`captureLost` in the compiled component. In a real browser every pointer release was cancelled through `lostpointercapture`: move, resize, table grip, marquee and pan. The US1/US2/US5/US3 automated results above called the gesture methods directly and did not exercise those bindings, so their pointer-workflow claims did not hold in a rendered webview for that period. Keyboard nudges, align/distribute and property forms were unaffected. The fix and real-event regressions are recorded in `.specify/bugs/drag-preview-cancelled/fix.md`; installed pointer evidence (E01/E02) remains pending.
+
 ## Pending installed and timed evidence
 
 Full-feature entries remain **Pending**, not passed or waived. US1's automated portion is recorded above; it does not complete the combined timed E01 workflow. Record actual candidate commit/VSIX SHA-256, fixture, OS/VS Code version, procedure and result per run. Keep failed/unavailable evidence explicit. E01–E08 are stable ledger references, not additional acceptance requirements.
