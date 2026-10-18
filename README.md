@@ -79,8 +79,7 @@ External RDLC designer/runtime acceptance is separate from XML authoring support
 no universal consumer-compatibility claim is made. Browser-hosted and remote
 workspaces are not supported targets. Native dialog, installed isolation,
 performance/usability and multi-OS evidence still have outstanding obligations;
-interactive-designer keyboard-only, cross-platform and timed-workflow acceptance
-is pending (see [the interactive validation record](docs/validation/interactive-designer.md)).
+interactive-designer installed acceptance is closed by owner acceptance (see [the interactive validation record](docs/validation/interactive-designer.md)).
 See [validation records](docs/validation/) and [release requirements](docs/releases.md).
 
 ## Development
