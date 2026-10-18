@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Synthetic optional/expression geometry fixture; MIT; MS-RDL 2.16.10/.11/.14/.16, 2.2.7 -->
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition">
+  <ReportSections><ReportSection><Body><ReportItems>
+    <Textbox Name="ImplicitBoth"><Top>18pt</Top><Left>1pc</Left><Paragraphs><Paragraph><TextRuns><TextRun><Value>Both dimensions derive from the body</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="ImplicitWidth"><Top>1in</Top><Left>2.54cm</Left><Height>12.7mm</Height><Paragraphs><Paragraph><TextRuns><TextRun><Value>Width derives; explicit height spelling stays exact</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="ImplicitHeight"><Top>6pc</Top><Left>25.4mm</Left><Width>2.00in</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>Height derives; explicit width spelling stays exact</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="DefaultPosition"><Paragraphs><Paragraph><TextRuns><TextRun><Value>Absent positions and dimensions</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="ExpressionWidth"><Top>2in</Top><Left>12pt</Left><Height>36pt</Height><Width>=Fields!Width.Value</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>Expression is not an omitted property</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="ExpressionHeight"><Top>2in</Top><Left>3in</Left><Height>=Fields!Height.Value</Height><Width>72pt</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>Unknown height</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="ExpressionPosition"><Top>3in</Top><Left>=Fields!Left.Value</Left><Height>12pt</Height><Paragraphs><Paragraph><TextRuns><TextRun><Value>Unknown position prevents derived width</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="Tiny"><Top>0pt</Top><Left>0pt</Left><Height>0.000001mm</Height><Width>0.000001cm</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>Positive dimensions must not round to zero</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+  </ReportItems><Height>4in</Height></Body><Width>6in</Width><Page/></ReportSection></ReportSections>
+</Report>

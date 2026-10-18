@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Synthetic interactive mixed-content fixture; MIT; MS-RDL 2.16, 2.23, 2.34, 2.2.7 -->
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition" xmlns:rd="http://schemas.microsoft.com/SQLServer/reporting/reportdesigner" xmlns:x="urn:rdlc-code:extension">
+  <DataSets><DataSet Name="Orders"><Fields><Field Name="Label"><DataField>Label</DataField><rd:TypeName>System.String</rd:TypeName></Field><Field Name="Amount"><DataField>Amount</DataField><rd:TypeName>System.Decimal</rd:TypeName></Field></Fields></DataSet></DataSets>
+  <ReportSections><ReportSection><Body><ReportItems>
+    <Textbox Name="Behind">
+      <Top>18pt</Top><Left>1pc</Left><Height>12.7mm</Height><Width>5.08cm</Width><ZIndex>1</ZIndex>
+      <Paragraphs><Paragraph><TextRuns><TextRun><Value>Behind &amp; preserved</Value></TextRun></TextRuns></Paragraph></Paragraphs>
+      <x:Opaque keep="1"><![CDATA[ReportItems!Front.Value]]></x:Opaque>
+    </Textbox>
+    <Textbox Name="Front">
+      <Top>0.25in</Top><Left>12pt</Left><Height>0.5in</Height><Width>2in</Width><ZIndex>2</ZIndex>
+      <Paragraphs><Paragraph><TextRuns><TextRun><Value>Front</Value></TextRun></TextRuns></Paragraph></Paragraphs>
+    </Textbox>
+    <Textbox Name="LaterTie">
+      <Top>18pt</Top><Left>12pt</Left><Height>36pt</Height><Width>144pt</Width><ZIndex>2</ZIndex>
+      <Paragraphs><Paragraph><TextRuns><TextRun><Value>Later source order wins the tie</Value></TextRun></TextRuns></Paragraph></Paragraphs>
+    </Textbox>
+    <Tablix Name="OrdersTable">
+      <TablixBody><TablixColumns><TablixColumn><Width>72pt</Width></TablixColumn><TablixColumn><Width>2.54cm</Width></TablixColumn></TablixColumns><TablixRows>
+        <TablixRow><Height>21.6pt</Height><TablixCells><TablixCell><CellContents><Textbox Name="LabelCell"><Paragraphs><Paragraph><TextRuns><TextRun><Value>=Fields!Label.Value</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox></CellContents></TablixCell><TablixCell><CellContents><Textbox Name="AmountCell"><Paragraphs><Paragraph><TextRuns><TextRun><Value>=Fields!Amount.Value</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox></CellContents></TablixCell></TablixCells></TablixRow>
+        <TablixRow><Height>0.3in</Height><TablixCells><TablixCell><CellContents><Textbox Name="GroupLabel"><Paragraphs><Paragraph><TextRuns><TextRun><Value>Group subtotal</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox></CellContents></TablixCell><TablixCell><CellContents><Textbox Name="GroupAmount"><Paragraphs><Paragraph><TextRuns><TextRun><Value>=Sum(Fields!Amount.Value, "ByLabel")</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox></CellContents></TablixCell></TablixCells></TablixRow>
+        <TablixRow><Height>7.62mm</Height><TablixCells><TablixCell><CellContents><Textbox Name="TotalLabel"><Paragraphs><Paragraph><TextRuns><TextRun><Value>Dataset-wide total</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox></CellContents></TablixCell><TablixCell><CellContents><Textbox Name="TotalAmount"><Paragraphs><Paragraph><TextRuns><TextRun><Value>=Sum(Fields!Amount.Value, "Orders")</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox></CellContents></TablixCell></TablixCells></TablixRow>
+      </TablixRows></TablixBody>
+      <TablixColumnHierarchy><TablixMembers><TablixMember/><TablixMember/></TablixMembers></TablixColumnHierarchy>
+      <TablixRowHierarchy><TablixMembers><TablixMember><Group Name="ByLabel"><GroupExpressions><GroupExpression>=Fields!Label.Value</GroupExpression></GroupExpressions></Group><TablixMembers><TablixMember><Group Name="Details"/></TablixMember><TablixMember><KeepWithGroup>Before</KeepWithGroup></TablixMember></TablixMembers></TablixMember><TablixMember><KeepWithGroup>Before</KeepWithGroup></TablixMember></TablixMembers></TablixRowHierarchy>
+      <DataSetName>Orders</DataSetName><Top>1in</Top><Left>12pt</Left><Width>144pt</Width><Height>64.8pt</Height>
+    </Tablix>
+    <!-- Known-bounds preservation-only neighbor; no new rectangle authoring rights. -->
+    <Rectangle Name="Locked"><Top>2in</Top><Left>3in</Left><Height>36pt</Height><Width>72pt</Width><ReportItems/></Rectangle>
+    <Textbox Name="UnknownWidth">
+      <Top>2in</Top><Left>12pt</Left><Height>36pt</Height><Width>=Fields!Width.Value</Width>
+      <Paragraphs><Paragraph><TextRuns><TextRun><Value>Unknown width stays unevaluated</Value></TextRun></TextRuns></Paragraph></Paragraphs>
+    </Textbox>
+    <x:Chart keep="opaque"><![CDATA[unknown bounds]]></x:Chart>
+  </ReportItems><Height>4in</Height></Body><Width>6.5in</Width><Page><PageWidth>8.5in</PageWidth><PageHeight>11in</PageHeight></Page></ReportSection></ReportSections>
+</Report>

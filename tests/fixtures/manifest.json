@@ -172,6 +172,77 @@
       "consumerEvidence": ["tests/compatibility/textboxes.test.ts"]
     },
     {
+      "id": "interactive-mixed",
+      "path": "interactive/mixed.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors; grouped hierarchy adapted from tables/grouped.rdlc",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.2.7-rdlsize.md",
+        "vendor/02-structures/2.16.17-textbox.zindex.md",
+        "vendor/02-structures/2.27-tablixrows.md",
+        "vendor/02-structures/2.34.5-tablixmember.group.md",
+        "vendor/02-structures/2.34.8-tablixmember.keepwithgroup.md",
+        "vendor/01-introduction/1.7-vendor-extensible-fields.md"
+      ],
+      "operation": "Acceptance input for mixed body selection, direct layout, arrangement and locked-neighbor refusal; interactive operations remain pending implementation",
+      "editFootprint": [
+        "Intended body-item geometry and proportional table row/column dimensions only; no source-order or ZIndex changes"
+      ],
+      "expectedDiagnostics": [],
+      "preservation": "Overlapping ZIndex/source ties, grouped subtotal and dataset total, mixed units, classified annotation, known-bounds rectangle and unknown-bounds neighbors remain exact outside intended geometry",
+      "consumerEvidence": null
+    },
+    {
+      "id": "interactive-optional-geometry",
+      "path": "interactive/optional-geometry.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.2.7-rdlsize.md",
+        "vendor/02-structures/2.16.10-textbox.height.md",
+        "vendor/02-structures/2.16.11-textbox.left.md",
+        "vendor/02-structures/2.16.14-textbox.top.md",
+        "vendor/02-structures/2.16.16-textbox.width.md"
+      ],
+      "operation": "Acceptance input for derived/missing versus expression geometry, positive quantization and captured physical clipboard sizes; interactive operations remain pending implementation",
+      "editFootprint": [
+        "Changed geometry plus necessary-only implicit dimension materialization; untouched explicit size lexemes remain exact"
+      ],
+      "expectedDiagnostics": [],
+      "preservation": "Missing dimensions remain distinct from expression-valued dimensions; expressions are never evaluated, tiny positive dimensions never become zero, destination body size must not change captured physical sizes",
+      "consumerEvidence": null
+    },
+    {
+      "id": "interactive-clipboard-dependencies",
+      "path": "interactive/clipboard-dependencies.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors; project-owned annotation semantics defined in specs/002-interactive-visual-designer/contracts/clipboard.md",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.16.1-textbox.name.md",
+        "vendor/02-structures/2.325-dataset.md",
+        "vendor/02-structures/2.328-field.md",
+        "vendor/02-structures/2.341.6-global-collections.md",
+        "vendor/02-structures/2.341.7-aggregate-functions.md",
+        "vendor/01-introduction/1.7-vendor-extensible-fields.md"
+      ],
+      "operation": "Acceptance input: select Title/InternalReference/ExternalReference for internal and external edges; OutsideConsumer blocks cutting Title; clipboard operations remain pending implementation",
+      "editFootprint": [
+        "Complete selected-root insertion/removal with proven identity/reference remapping, offsets and necessary namespace closure only"
+      ],
+      "expectedDiagnostics": [],
+      "preservation": "Classified text-only annotation contains a literal reference lookalike and no unclassified metadata; preserve CDATA/entities, typed Orders dependencies, surviving outside targets and unrelated consumers",
+      "consumerEvidence": null
+    },
+    {
       "id": "textbox-unsupported-profile",
       "path": "textboxes/unsupported-profile.rdlc",
       "provenance": "Synthetic, authored by RDLC Code contributors",

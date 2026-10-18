@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Synthetic clipboard dependency fixture; MIT; MS-RDL 2.16.1, 2.325, 2.328, 2.341.6/.7 -->
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition" xmlns:rd="http://schemas.microsoft.com/SQLServer/reporting/reportdesigner" xmlns:x="urn:rdlc-code:extension">
+  <DataSets><DataSet Name="Orders"><Fields><Field Name="Label"><DataField>Label</DataField><rd:TypeName>System.String</rd:TypeName></Field><Field Name="Amount"><DataField>Amount</DataField><rd:TypeName>System.Decimal</rd:TypeName></Field></Fields></DataSet></DataSets>
+  <ReportSections><ReportSection><Body><ReportItems>
+    <Textbox Name="Title"><Top>12pt</Top><Left>12pt</Left><Height>24pt</Height><Width>144pt</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>Orders &amp; totals</Value></TextRun></TextRuns></Paragraph></Paragraphs><x:Opaque keep="1"><![CDATA[ReportItems!Title.Value]]> &amp; literal annotation</x:Opaque></Textbox>
+    <Textbox Name="InternalReference"><Top>48pt</Top><Left>12pt</Left><Height>24pt</Height><Width>144pt</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>=ReportItems!Title.Value</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="ExternalReference"><Top>84pt</Top><Left>12pt</Left><Height>24pt</Height><Width>144pt</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>=ReportItems!Outside.Value</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="Outside"><Top>12pt</Top><Left>180pt</Left><Height>24pt</Height><Width>144pt</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>Retained external target</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="OutsideConsumer"><Top>48pt</Top><Left>180pt</Left><Height>24pt</Height><Width>144pt</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>=ReportItems!Title.Value</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="DatasetTotal"><Top>120pt</Top><Left>12pt</Left><Height>24pt</Height><Width>144pt</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>=Sum(Fields!Amount.Value, &quot;Orders&quot;)</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="LiteralLookalike"><Top>156pt</Top><Left>12pt</Left><Height>24pt</Height><Width>144pt</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>="ReportItems!Title.Value"</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+  </ReportItems><Height>4in</Height></Body><Width>6.5in</Width><Page/></ReportSection></ReportSections>
+</Report>
