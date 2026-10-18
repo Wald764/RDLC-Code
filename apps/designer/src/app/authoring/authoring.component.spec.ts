@@ -4,51 +4,6 @@ import type { AuthoringRequest } from '@rdlc/report-model/editing';
 import { validateMessage } from '@rdlc/report-model/protocol';
 
 describe('authoring forms', () => {
-  it('validates compact creation, sends once while pending and cancels without a request', () => {
-    const fixture = TestBed.createComponent(AuthoringComponent);
-    fixture.componentRef.setInput('state', {
-      id: '1:1',
-      page: {},
-      datasets: [],
-      tables: [],
-    });
-    fixture.componentRef.setInput('compact', true);
-    fixture.componentRef.setInput('creation', 'textbox');
-    fixture.detectChanges();
-    const root = fixture.nativeElement as HTMLElement;
-    const requests: AuthoringRequest[] = [];
-    fixture.componentInstance.request.subscribe((r) => requests.push(r));
-    const form = root.querySelector<HTMLFormElement>('form')!;
-    const submit = () =>
-      form.dispatchEvent(
-        new Event('submit', { bubbles: true, cancelable: true }),
-      );
-    submit();
-    expect(requests).toHaveLength(0);
-    form.querySelector('input')!.value = 'Title';
-    submit();
-    submit();
-    expect(requests).toEqual([
-      { targetId: '1:1', payload: { action: 'createTextbox', name: 'Title' } },
-    ]);
-    fixture.componentRef.setInput('pending', true);
-    fixture.detectChanges();
-    submit();
-    expect(requests).toHaveLength(1);
-    fixture.componentRef.setInput('pending', false);
-    fixture.detectChanges();
-    let cancelled = 0;
-    fixture.componentInstance.cancel.subscribe(() => cancelled++);
-    [...root.querySelectorAll('button')]
-      .find((b) => b.textContent?.includes('Cancel'))!
-      .click();
-    expect(cancelled).toBe(1);
-    expect(requests).toHaveLength(1);
-    fixture.componentRef.setInput('creation', 'table');
-    fixture.detectChanges();
-    expect(root.textContent).toContain('Create dataset first');
-    expect(root.querySelector('form')).toBeNull();
-  });
   it('offers labeled keyboard forms and emits typed actions without changing accepted state', async () => {
     await TestBed.configureTestingModule({
       imports: [AuthoringComponent],
@@ -66,20 +21,11 @@ describe('authoring forms', () => {
     fixture.componentInstance.request.subscribe((value) =>
       requests.push(value),
     );
-    const form: HTMLFormElement = fixture.nativeElement.querySelector(
-      '[aria-label="Create textbox"]',
-    );
-    const input = form.querySelector('input')!;
-    input.value = 'Heading';
-    form.dispatchEvent(
-      new Event('submit', { bubbles: true, cancelable: true }),
-    );
-    expect(requests).toEqual([
-      {
-        targetId: 'root-1',
-        payload: { action: 'createTextbox', name: 'Heading' },
-      },
-    ]);
+    // Creation moved to the canvas (feature 004); no name form remains here.
+    expect(
+      fixture.nativeElement.querySelector('[aria-label="Create textbox"]'),
+    ).toBeNull();
+    expect(requests).toEqual([]);
     expect(fixture.componentInstance.state().datasets.length).toBe(0);
     expect(
       fixture.nativeElement.querySelectorAll('label').length,
@@ -161,17 +107,16 @@ describe('authoring forms', () => {
     }
     const actions = new Set(requests.map((request) => request.payload.action));
     for (const action of [
-      'createTextbox',
       'deleteTextbox',
       'setPage',
-      'createDataset',
       'renameDataset',
       'deleteDataset',
       'createField',
       'renameField',
       'deleteField',
       'setFieldType',
-      'createTable',
+      'renameTable',
+      'setTableDataset',
       'setTableProperty',
       'setColumnWidth',
       'setRowHeight',

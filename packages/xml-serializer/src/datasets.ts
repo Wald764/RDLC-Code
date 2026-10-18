@@ -24,6 +24,8 @@ export function planDataset(
   dataset: LocalDataset | null,
   field: DatasetField | null,
   payload: AuthoringIntent['payload'],
+  /** Host-allocated name for `createDataset`. */
+  createdName = '',
 ): PatchPlan {
   switch (payload.action) {
     case 'createDataset': {
@@ -33,7 +35,7 @@ export function planDataset(
         parent,
         'DataSet',
         element(parent, 'CaseSensitivity', 'Auto'),
-      ).replace('>', ` Name="${escapeAttribute(payload.name)}">`);
+      ).replace('>', ` Name="${escapeAttribute(createdName)}">`);
       return patchPlan(snapshot, [
         insertChild(
           snapshot,

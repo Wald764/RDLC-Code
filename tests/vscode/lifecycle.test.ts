@@ -441,18 +441,10 @@ export async function run(): Promise<void> {
     assert.equal(readFileSync(file, 'utf8'), states[20]);
     const structural = [document.getText()];
     const actions: readonly [string, AuthoringIntent['payload']][] = [
-      ['root', { action: 'createDataset', name: 'LifecycleData' }],
+      ['root', { action: 'createDataset' }],
       ['dataset', { action: 'createField', name: 'Amount', type: 'decimal' }],
-      [
-        'root',
-        {
-          action: 'createTable',
-          name: 'LifecycleTable',
-          dataset: 'LifecycleData',
-          field: 'Amount',
-          width: '1in',
-        },
-      ],
+      ['root', { action: 'createTable', left: '0in', top: '0in' }],
+      ['table', { action: 'setTableDataset', dataset: 'DataSet1' }],
       ['table', { action: 'addColumn', field: 'Amount', width: '1in' }],
       [
         'table',
@@ -603,7 +595,7 @@ async function mvpTextboxJourney(): Promise<void> {
       baseVersion: document.version,
       targetId: root.id,
       operation: 'author',
-      payload: { action: 'createTextbox', name: 'Title' },
+      payload: { action: 'createTextbox', left: '0in', top: '0in' },
     });
     await until(
       () =>
@@ -612,7 +604,15 @@ async function mvpTextboxJourney(): Promise<void> {
         ),
       'MVP Title creation',
     );
+    const creation = observed.messages.find(
+      (m) => m.kind === 'editResult' && m.requestId === 'mvp-title',
+    );
+    assert.ok(
+      creation?.kind === 'editResult' && creation.created?.name === 'Textbox1',
+      JSON.stringify(creation),
+    );
     for (const [property, value] of Object.entries({
+      name: 'Title',
       text: 'Quarterly report',
       left: '12pt',
       top: '24pt',

@@ -1,42 +1,72 @@
 <section aria-label="Tables">
   <h2>Tables</h2>
-  @if (selectedId() === undefined) {
-    @for (dataset of state().datasets; track dataset.id) {
+  @for (table of tables(); track table.id) {
+    <fieldset [disabled]="!table.structural">
+      <legend>{{ table.name }} — {{ table.dataset ?? 'no dataset' }}</legend>
       <form
         (submit)="
           $event.preventDefault();
           request.emit({
-            targetId: state().id,
-            payload: {
-              action: 'createTable',
-              name: name.value,
-              dataset: dataset.name,
-              field: field.value,
-              width: width.value,
-            },
+            targetId: table.id,
+            payload: { action: 'renameTable', name: tableName.value },
           })
         "
       >
-        <label>Table name <input #name required /></label
-        ><span>Dataset: {{ dataset.name }}</span>
         <label
-          >First column field
-          <select #field>
-            @for (field of dataset.fields; track field.id) {
-              <option [value]="field.name" [disabled]="field.type === null">
-                {{ field.name }}
+          >Name
+          <input
+            #tableName
+            data-property="name"
+            required
+            [value]="table.name"
+            pattern="[A-Za-z_][A-Za-z0-9_]*"
+        /></label>
+        <button type="submit">Rename table</button>
+      </form>
+      <form
+        (submit)="
+          $event.preventDefault();
+          request.emit({
+            targetId: table.id,
+            payload: { action: 'setTableDataset', dataset: binding.value },
+          })
+        "
+      >
+        <label
+          >Dataset
+          <select
+            #binding
+            required
+            [attr.aria-describedby]="
+              needsDataset(table) ? 'dataset-required-' + table.id : null
+            "
+          >
+            @if (!table.dataset) {
+              <option value="" selected disabled>Choose a dataset</option>
+            }
+            @for (dataset of state().datasets; track dataset.id) {
+              <option
+                [value]="dataset.name"
+                [selected]="dataset.name === table.dataset"
+              >
+                {{ dataset.name }}
               </option>
             }
           </select></label
         >
-        <label>Column width <input #width value="1in" required /></label
-        ><button type="submit">Create table</button>
+        <button type="submit" [disabled]="!state().datasets.length">
+          Bind dataset
+        </button>
+        @if (!state().datasets.length) {
+          <p>Create a dataset from the Components panel to bind this table.</p>
+        }
+        @if (needsDataset(table)) {
+          <p role="status" [id]="'dataset-required-' + table.id">
+            This report has several datasets, so this table must name one
+            (MS-RDL 2.23.10).
+          </p>
+        }
       </form>
-    }
-  }
-  @for (table of tables(); track table.id) {
-    <fieldset [disabled]="!table.structural">
-      <legend>{{ table.name }} — {{ table.dataset }}</legend>
       <form
         (submit)="
           $event.preventDefault();

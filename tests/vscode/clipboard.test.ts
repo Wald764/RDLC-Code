@@ -118,6 +118,8 @@ export function view(
 
 export async function run(): Promise<void> {
   await sameAndCrossDocument();
+  await crossLineEndings('\n', '\r\n');
+  await crossLineEndings('\r\n', '\n');
   await cutAndRefusals('\n');
   await cutAndRefusals('\r\n');
   await realClipboard();
@@ -177,6 +179,61 @@ async function sameAndCrossDocument(): Promise<void> {
       );
     await history(destination, 'undo', before);
     assert.equal(destination.getText(), before);
+  } finally {
+    b.dispose();
+  }
+  await vscode.commands.executeCommand(
+    'workbench.action.revertAndCloseActiveEditor',
+  );
+}
+
+/** Pasting between reports with different line endings writes the target's line endings. */
+async function crossLineEndings(
+  from: '\n' | '\r\n',
+  to: '\n' | '\r\n',
+): Promise<void> {
+  const clipboard = new WindowClipboard(memory());
+  // Indent the copied textbox over several lines, as authoring tools save reports.
+  const fixture = readFileSync(
+    resolve(
+      __dirname,
+      '../../../tests/fixtures/interactive/clipboard-dependencies.rdlc',
+    ),
+    'utf8',
+  ).replace(/\r?\n/g, from);
+  const file = join(mkdtempSync(join(tmpdir(), 'rdlc-eol-')), 'report.rdlc');
+  writeFileSync(
+    file,
+    fixture.replace(/<Textbox Name="Title">[\s\S]*?<\/Textbox>/, (xml) =>
+      xml.replace(/></g, `>${from}      <`),
+    ),
+  );
+  const source = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(source);
+  const a = view(source, clipboard);
+  try {
+    const copy = await a.send('copy', ['Title']);
+    assert.ok(copy.accepted, copy.reason);
+  } finally {
+    a.dispose();
+  }
+  await vscode.commands.executeCommand(
+    'workbench.action.revertAndCloseActiveEditor',
+  );
+  const destination = await open('mixed', to);
+  const before = destination.getText();
+  await vscode.window.showTextDocument(destination);
+  const b = view(destination, clipboard);
+  try {
+    const pasted = await b.send('paste');
+    assert.ok(pasted.accepted && pasted.changed, pasted.reason);
+    const foreign = to === '\r\n' ? /[^\r]\n/ : /\r/;
+    assert.ok(
+      !foreign.test(destination.getText()),
+      `pasted text uses only the destination line endings`,
+    );
+    await history(destination, 'undo', before);
+    assert.equal(destination.getText(), before, 'one Undo per paste');
   } finally {
     b.dispose();
   }

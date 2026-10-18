@@ -220,4 +220,69 @@ describe('Structure keyboard navigation', () => {
     focus.mockRestore();
     fixture.destroy();
   });
+  it('requests a context menu from pointer, Shift+F10 and the menu key without selecting', () => {
+    const fixture = TestBed.createComponent(StructureTreeComponent);
+    fixture.componentRef.setInput('structure', { nodes, truncated: false });
+    fixture.componentRef.setInput('autoExpand', 4);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const menus: { id: string }[] = [];
+    const selections: unknown[] = [];
+    fixture.componentInstance.menu.subscribe((m) => menus.push(m));
+    fixture.componentInstance.select.subscribe((s) => selections.push(s));
+    const title = root.querySelector<HTMLElement>('[data-node="1:t"]')!;
+    const pointer = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 5,
+      clientY: 6,
+    });
+    title.dispatchEvent(pointer);
+    expect(pointer.defaultPrevented).toBe(true);
+    expect(menus.at(-1)).toEqual({ id: '1:t', x: 5, y: 6 });
+    for (const init of [
+      { key: 'F10', shiftKey: true },
+      { key: 'ContextMenu' },
+    ]) {
+      const key = new KeyboardEvent('keydown', {
+        ...init,
+        bubbles: true,
+        cancelable: true,
+      });
+      title.dispatchEvent(key);
+      expect(key.defaultPrevented).toBe(true);
+      expect(menus.at(-1)?.id).toBe('1:t');
+    }
+    expect(menus).toHaveLength(3);
+    expect(selections).toEqual([]);
+  });
+  it('keeps unnamed section ancestors expanded across a version that removes a dataset', () => {
+    const version = (v: number, withDataset: boolean): StructureNode[] => [
+      node(`${v}:1`, 'report', null, null),
+      ...(withDataset ? [node(`${v}:2`, 'dataset', 'Orders', `${v}:1`)] : []),
+      node(`${v}:3`, 'sections', null, `${v}:1`),
+      node(`${v}:4`, 'section', null, `${v}:3`),
+      node(`${v}:5`, 'body', null, `${v}:4`),
+      node(`${v}:6`, 'textbox', 'Title', `${v}:5`),
+    ];
+    const fixture = TestBed.createComponent(StructureTreeComponent);
+    fixture.componentRef.setInput('structure', {
+      nodes: version(1, true),
+      truncated: false,
+    });
+    fixture.componentRef.setInput('autoExpand', 5);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const visible = () =>
+      [...root.querySelectorAll('[role=treeitem]')].map((n) =>
+        n.getAttribute('data-node'),
+      );
+    expect(visible()).toContain('1:6');
+    fixture.componentRef.setInput('structure', {
+      nodes: version(2, false),
+      truncated: false,
+    });
+    fixture.detectChanges();
+    expect(visible()).toEqual(['2:1', '2:3', '2:4', '2:5', '2:6']);
+  });
 });

@@ -10,6 +10,7 @@ import type {
   StructureNode,
 } from '@rdlc/report-model/protocol';
 import type { AuthoringRequest } from '@rdlc/report-model/editing';
+import type { InspectorSection } from './viewport';
 import { DatasetsComponent } from '../datasets/datasets.component';
 import { TablePropertiesComponent } from '../tables/table-properties.component';
 import {
@@ -26,6 +27,20 @@ import {
     TablePropertiesComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  styles: `
+    :host {
+      display: block;
+    }
+    h2 {
+      margin: 4px 0 0;
+      font-size: 13px;
+    }
+    h2 + p {
+      margin: 0 0 8px;
+      font-size: 12px;
+      color: var(--rd-muted);
+    }
+  `,
   template: `
     @if (dataset(); as definition) {
       <h2>Dataset: {{ definition.name }}</h2>
@@ -63,6 +78,8 @@ import {
         <rdlc-textbox-properties
           [item]="selected"
           [refusal]="refusal()"
+          [expanded]="expanded()"
+          (expand)="expand.emit($event)"
           (commit)="commit.emit($event)"
         />
       } @else {
@@ -124,6 +141,8 @@ export class ContextualInspectorComponent {
   readonly refusal = input('');
   readonly dataset = input<AuthoringState['datasets'][number] | null>(null);
   readonly structureNode = input<StructureNode | null>(null);
+  readonly expanded = input<Partial<Record<InspectorSection, boolean>>>({});
   readonly commit = output<TextboxCommit>();
+  readonly expand = output<{ section: InspectorSection; open: boolean }>();
   readonly request = output<AuthoringRequest>();
 }

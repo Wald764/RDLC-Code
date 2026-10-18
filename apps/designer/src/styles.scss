@@ -1,9 +1,23 @@
+// Workbench-native tokens: every value follows the active VS Code theme, with light fallbacks.
 :root {
   color-scheme: light dark;
-  font-family: var(--vscode-font-family, system-ui, sans-serif);
+  --rd-fg: var(--vscode-foreground, #3b3b3b);
+  --rd-muted: var(--vscode-descriptionForeground, #616161);
+  --rd-bg: var(--vscode-editor-background, #fff);
+  --rd-panel: var(--vscode-sideBar-background, #f8f8f8);
+  --rd-border: var(--vscode-panel-border, var(--vscode-widget-border, #e5e5e5));
+  --rd-accent: var(--vscode-focusBorder, #005fb8);
+  --rd-hover: var(--vscode-toolbar-hoverBackground, #b8b8b833);
+  --rd-active: var(--vscode-inputOption-activeBackground, #005fb81f);
+  --rd-active-fg: var(--vscode-inputOption-activeForeground, currentColor);
+  --rd-selected: var(--vscode-list-activeSelectionBackground, #e4e6f1);
+  --rd-selected-fg: var(--vscode-list-activeSelectionForeground, currentColor);
+  --rd-canvas: color-mix(in srgb, var(--rd-bg) 92%, var(--rd-fg));
+  --rd-radius: 4px;
+  font-family: var(--vscode-font-family, 'Segoe UI', system-ui, sans-serif);
   font-size: var(--vscode-font-size, 13px);
-  color: var(--vscode-foreground, #222);
-  background: var(--vscode-editor-background, #fff);
+  color: var(--rd-fg);
+  background: var(--rd-bg);
 }
 body {
   margin: 0;
@@ -12,39 +26,161 @@ main {
   padding: 0;
 }
 :focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 2px;
+  outline: 1px solid var(--rd-accent);
+  outline-offset: -1px;
 }
 button,
 input,
 select,
 textarea {
   font: inherit;
+  color: inherit;
 }
 button,
 summary {
   min-height: 24px;
 }
 button {
-  color: var(--vscode-button-secondaryForeground, #222);
-  background: var(--vscode-button-secondaryBackground, #eee);
-  border: 1px solid var(--vscode-contrastBorder, #888);
+  padding: 2px 8px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: var(--rd-radius);
+  color: var(--vscode-button-secondaryForeground, #3b3b3b);
+  background: var(--vscode-button-secondaryBackground, #e5e5e5);
+  cursor: pointer;
 }
-button:disabled {
-  opacity: 1;
-  color: var(--vscode-disabledForeground, #666);
+button:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, #cccccc);
 }
-input,
+button:disabled,
+[aria-disabled='true'] {
+  cursor: default;
+  color: var(--vscode-disabledForeground, #61616180);
+}
+input:not([type='checkbox'], [type='radio'], [type='range']),
 select,
 textarea {
-  color: var(--vscode-input-foreground, #222);
+  min-height: 26px;
+  padding: 3px 8px;
+  color: var(--vscode-input-foreground, #3b3b3b);
   background: var(--vscode-input-background, #fff);
-  border: 1px solid var(--vscode-input-border, #888);
+  border: 1px solid var(--vscode-input-border, #0000001f);
+  border-radius: var(--rd-radius);
   max-width: 100%;
   box-sizing: border-box;
+  appearance: none;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--vscode-input-placeholderForeground, #767676);
+  opacity: 1;
+}
+input:hover:not(:focus, :disabled),
+select:hover:not(:focus, :disabled),
+textarea:hover:not(:focus, :disabled) {
+  border-color: color-mix(in srgb, var(--rd-fg) 30%, transparent);
+}
+// Native chevron and search chrome replaced by quiet, theme-coloured equivalents.
+select {
+  padding-right: 24px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--rd-muted) 50%),
+    linear-gradient(135deg, var(--rd-muted) 50%, transparent 50%);
+  background-position:
+    right 12px center,
+    right 8px center;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+  text-overflow: ellipsis;
+}
+input[type='search'] {
+  padding-left: 28px;
+  background-image:
+    radial-gradient(
+      circle at 11px 11px,
+      transparent 4px,
+      var(--rd-muted) 4px,
+      var(--rd-muted) 5.2px,
+      transparent 5.2px
+    ),
+    linear-gradient(
+      45deg,
+      transparent 45%,
+      var(--rd-muted) 45%,
+      var(--rd-muted) 55%,
+      transparent 55%
+    );
+  background-position:
+    2px center,
+    15px 15px;
+  background-size:
+    22px 22px,
+    6px 6px;
+  background-repeat: no-repeat;
+}
+input[type='search']::-webkit-search-cancel-button {
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  cursor: pointer;
+  background:
+    linear-gradient(
+      45deg,
+      transparent 43%,
+      var(--rd-muted) 43%,
+      var(--rd-muted) 57%,
+      transparent 57%
+    ),
+    linear-gradient(
+      135deg,
+      transparent 43%,
+      var(--rd-muted) 43%,
+      var(--rd-muted) 57%,
+      transparent 57%
+    );
+}
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--rd-accent);
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 1px solid var(--rd-accent);
+  outline-offset: -1px;
+  border-color: var(--rd-accent);
+}
+fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+summary {
+  cursor: pointer;
+}
+h2,
+h3 {
+  margin: 0;
+  font-size: inherit;
+  font-weight: 600;
 }
 [hidden] {
   display: none !important;
+}
+// Text kept for screen readers and labels while the icon carries the visual.
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 @media (forced-colors: active) {
   button,

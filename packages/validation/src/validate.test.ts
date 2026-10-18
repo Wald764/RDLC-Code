@@ -5,6 +5,7 @@ import {
   validatePage,
   validateName,
   uniqueName,
+  nextName,
   validateMutation,
 } from './validate.js';
 
@@ -48,6 +49,16 @@ test('case-sensitive names retain existing Unicode and generate ASCII CLS identi
   assert.equal(validateName('Item', ['Item']), false);
   assert.equal(validateName('1Item', []), false);
   assert.equal(uniqueName('Textbox', ['Textbox', 'Textbox1']), 'Textbox2');
+});
+test('nextName numbers from 1, fills gaps and never returns the bare stem', () => {
+  assert.equal(nextName('Textbox', []), 'Textbox1');
+  assert.equal(nextName('Textbox', ['Textbox']), 'Textbox1');
+  assert.equal(nextName('Textbox', ['Textbox1', 'Textbox3']), 'Textbox2');
+  assert.equal(nextName('Table', ['Table1', 'Textbox2']), 'Table2');
+  // Any report item kind reserves the name, e.g. a preserved Rectangle.
+  assert.equal(nextName('Textbox', ['Textbox1', 'Textbox2']), 'Textbox3');
+  assert.throws(() => nextName('1bad', []));
+  assert.throws(() => nextName('Bad-Name', []));
 });
 test('incomplete reference analysis blocks destructive changes but allows unrelated safe edits', () => {
   assert.equal(

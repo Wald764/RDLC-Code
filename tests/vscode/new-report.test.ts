@@ -85,22 +85,19 @@ export async function run(): Promise<void> {
       property: 'bodyHeight',
       value: '4in',
     });
-    await edit(root, { action: 'createTextbox', name: 'Title' });
-    await edit(root, { action: 'createTextbox', name: 'Subtitle' });
-    await edit(root, { action: 'createDataset', name: 'Orders' });
+    await edit(root, { action: 'createTextbox', left: '0in', top: '0in' });
+    await edit(root, { action: 'createTextbox', left: '0in', top: '0.5in' });
+    await edit(root, { action: 'createDataset' });
+    await edit(dataset, { action: 'renameDataset', name: 'Orders' });
     for (const [index, type] of Object.keys(fieldTypes).entries())
       await edit(dataset, {
         action: 'createField',
         name: `Field${index}`,
         type,
       });
-    await edit(root, {
-      action: 'createTable',
-      name: 'Table1',
-      dataset: 'Orders',
-      field: 'Field0',
-      width: '1in',
-    });
+    await edit(root, { action: 'createTable', left: '0in', top: '1in' });
+    await edit(table, { action: 'setTableDataset', dataset: 'Orders' });
+    await edit(table, { action: 'addColumn', field: 'Field0', width: '1in' });
     await edit(table, { action: 'addColumn', field: 'Field4', width: '1in' });
     await edit(table, {
       action: 'addGroup',

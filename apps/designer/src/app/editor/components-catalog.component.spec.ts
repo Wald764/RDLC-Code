@@ -32,4 +32,33 @@ describe('component catalog', () => {
     fixture.detectChanges();
     expect(root.querySelectorAll('[data-card]').length).toBe(11);
   });
+  it('drags only available cards and carries just the component kind', () => {
+    const fixture = TestBed.createComponent(ComponentsCatalogComponent);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const card = (name: string) =>
+      root.querySelector<HTMLButtonElement>(`[data-card="${name}"]`)!;
+    for (const name of ['Textbox', 'Table', 'Dataset'])
+      expect(card(name).draggable).toBe(true);
+    for (const name of ['Image', 'Chart', 'Parameter'])
+      expect(card(name).draggable).toBe(false);
+    const data = new Map<string, string>();
+    const drag = (name: string) => {
+      let prevented = false;
+      const event = {
+        dataTransfer: {
+          setData: (type: string, value: string) => data.set(type, value),
+          effectAllowed: 'all',
+        },
+        preventDefault: () => (prevented = true),
+      };
+      fixture.componentInstance.dragStart(event as unknown as DragEvent, name);
+      return { event, prevented };
+    };
+    const textbox = drag('Textbox');
+    expect([...data]).toEqual([['application/x-rdlc-textbox', 'textbox']]);
+    expect(textbox.event.dataTransfer.effectAllowed).toBe('copy');
+    expect(drag('Image').prevented).toBe(true);
+    expect(data.size).toBe(1);
+  });
 });

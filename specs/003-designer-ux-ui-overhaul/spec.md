@@ -22,6 +22,7 @@ As a report author, I want an obvious starting point, searchable components and 
 
 1. **Given** no report is open, **When** the author invokes New Report from the existing host entry point, **Then** the supported blank report opens in Design with components, structure access, the canvas, inspector and status available; no duplicate file-management workflow is introduced.
 2. **Given** an editable report, **When** the author searches for Textbox and activates its card, **Then** a compact creation flow requests the required name, creates exactly one supported textbox on confirmation and selects it in canvas, structure and inspector.
+   > Superseded by [feature 004](../004-drag-drop-creation/spec.md): cards are dragged onto the canvas or activated, and the host assigns default names; no name form is shown.
 3. **Given** the selected textbox, **When** the author edits position, dimensions, text, font and text color in the relevant inspector sections, **Then** accepted values and canvas selection agree, unrelated sections remain absent or collapsed, and native Undo/Redo recovers each accepted edit.
 4. **Given** an invalid size or refused edit, **When** the author submits it, **Then** the affected control explains the problem, accepted geometry remains visible and the canvas does not move.
 5. **Given** completed accepted changes, **When** the author saves and reopens the report, **Then** the content and formatting remain intact and no display preference has been saved as report content.

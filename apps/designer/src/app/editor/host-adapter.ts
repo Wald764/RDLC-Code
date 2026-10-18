@@ -19,6 +19,28 @@ export interface EditorSnapshot {
   readonly structure?: ReportStructure;
   readonly authoring?: AuthoringState | null;
 }
+/** Plain wording for host refusal codes that carry no diagnostic. */
+const hostReasons: Readonly<Record<string, string>> = {
+  STALE_EDIT: 'The report changed before the edit could be applied.',
+  DOCUMENT_CHANGED_DURING_APPLY:
+    'The report changed while the edit was being applied.',
+  DOCUMENT_READ_ONLY: 'This report is read-only.',
+  HOST_EDIT_FAILED: 'VS Code could not apply the edit.',
+  REJECTED_BY_HOST: 'VS Code rejected the edit.',
+};
+
+/** One readable sentence for a refused outcome; the code stays available separately. */
+export function explainRefusal(outcome: {
+  readonly reason: string;
+  readonly diagnostics: readonly { readonly message: string }[];
+}): string {
+  return (
+    outcome.diagnostics[0]?.message ??
+    hostReasons[outcome.reason] ??
+    outcome.reason
+  );
+}
+
 export interface EditOutcome {
   readonly history?: boolean;
   readonly baseVersion: number;
@@ -31,6 +53,8 @@ export interface EditOutcome {
   readonly diagnostics: readonly Diagnostic[];
   /** Result-version IDs of roots inserted by Paste/Duplicate. */
   readonly inserted?: readonly string[];
+  /** The item an accepted creation produced, named by the host. */
+  readonly created?: { readonly id: string; readonly name: string };
 }
 export type ClipboardRequest = Omit<
   ClipboardRequestMessage,
@@ -195,13 +219,12 @@ export class HostAdapter {
         reason: message.reason,
         diagnostics: message.diagnostics,
         ...(clipboard ? { inserted: message.inserted } : {}),
+        ...(!clipboard && message.created ? { created: message.created } : {}),
       };
       if (pending && pending.requestId !== message.requestId) return;
       this.outcome.set(result);
-      if (pending && !message.accepted)
-        this.notice.set(
-          `Not applied (${message.reason}); the current accepted document is shown and the request will not be retried.`,
-        );
+      // Refusals are explained once by the editor's Blocked line.
+      if (pending && !message.accepted) this.notice.set('');
       else if (pending && clipboard && message.action === 'copy')
         this.notice.set('Copied to the clipboard; the document is unchanged.');
       if (pending) {

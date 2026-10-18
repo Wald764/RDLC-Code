@@ -1,23 +1,5 @@
 <section aria-label="Local datasets">
   <h2>Local datasets — declarations only</h2>
-  @if (selectedId() === undefined) {
-    <form
-      aria-label="Create dataset"
-      (submit)="
-        $event.preventDefault();
-        request.emit({
-          targetId: state().id,
-          payload: { action: 'createDataset', name: datasetName.value },
-        })
-      "
-    >
-      <label
-        >Dataset name
-        <input #datasetName required pattern="[A-Za-z_][A-Za-z0-9_]*"
-      /></label>
-      <button type="submit">Create dataset</button>
-    </form>
-  }
   @for (dataset of datasets(); track dataset.id) {
     <fieldset>
       <legend>{{ dataset.name }}</legend>

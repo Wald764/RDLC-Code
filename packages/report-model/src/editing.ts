@@ -46,7 +46,7 @@ export interface TextboxIntent {
 
 /** Closed authoring vocabulary; no XML, patches, file paths or data values. */
 export const authoringFields = {
-  createDataset: ['name'],
+  createDataset: [],
   renameDataset: ['name'],
   deleteDataset: [],
   createField: ['name', 'type'],
@@ -54,9 +54,11 @@ export const authoringFields = {
   deleteField: [],
   setFieldType: ['type'],
   setPage: ['property', 'value'],
-  createTextbox: ['name'],
+  createTextbox: ['left', 'top'],
   deleteTextbox: ['confirm'],
-  createTable: ['name', 'dataset', 'field', 'width'],
+  createTable: ['left', 'top'],
+  renameTable: ['name'],
+  setTableDataset: ['dataset'],
   setTableProperty: ['property', 'value'],
   setColumnWidth: ['column', 'width'],
   setRowHeight: ['row', 'height'],

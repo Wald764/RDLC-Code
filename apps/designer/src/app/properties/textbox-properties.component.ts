@@ -6,6 +6,7 @@ import {
 } from '@angular/core';
 import type { TextboxProperty } from '@rdlc/report-model/editing';
 import type { DesignSceneItem, SceneTextStyle } from '@rdlc/report-model/scene';
+import type { InspectorSection } from '../editor/viewport';
 
 export interface TextboxCommit {
   readonly property: TextboxProperty;
@@ -39,6 +40,9 @@ export class TextboxPropertiesComponent {
   readonly item = input.required<DesignSceneItem>();
   readonly refusal = input('');
   readonly commit = output<TextboxCommit>();
+  /** Per-view section expansion; absent sections default open. */
+  readonly expanded = input<Partial<Record<InspectorSection, boolean>>>({});
+  readonly expand = output<{ section: InspectorSection; open: boolean }>();
 
   readonly fields: readonly Field[] = [
     { property: 'name', label: 'Name', kind: 'text', options: none },
@@ -75,12 +79,14 @@ export class TextboxPropertiesComponent {
     },
   ];
   readonly sections = [
-    { label: 'General', properties: ['name', 'text'] },
+    { key: 'general', label: 'General', properties: ['name', 'text'] },
     {
+      key: 'position',
       label: 'Position and size',
       properties: ['left', 'top', 'width', 'height'],
     },
     {
+      key: 'typography',
       label: 'Typography',
       properties: [
         'fontFamily',
@@ -92,6 +98,12 @@ export class TextboxPropertiesComponent {
       ],
     },
   ] as const;
+
+  toggled(section: InspectorSection, event: Event): void {
+    const open = (event.target as HTMLDetailsElement).open;
+    if (open !== (this.expanded()[section] ?? true))
+      this.expand.emit({ section, open });
+  }
 
   relevant(properties: readonly string[]): readonly Field[] {
     return this.fields.filter(

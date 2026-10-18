@@ -1,147 +1,55 @@
 <section aria-label="Report authoring">
-  @if (compact()) {
-    @if (creation(); as kind) {
-      <h3>Create {{ kind }}</h3>
-      @if (kind === 'table' && !state().datasets.length) {
-        <p role="status">
-          A table needs a local dataset and a typed field. Create a dataset
-          first, then add fields in Properties.
-        </p>
-        <button type="button" (click)="prerequisite.emit()">
-          Create dataset first
-        </button>
-      } @else {
-        @if (kind === 'table' && !dataset()?.fields?.length) {
-          <p role="status">
-            Add a typed field to this local dataset in Properties before
-            creating a table.
-          </p>
-        }
-        <form
-          #creationForm
-          [attr.aria-label]="'Create ' + kind"
-          (submit)="
-            $event.preventDefault();
-            submitCreation(
-              creationForm,
-              creationName.value,
-              firstField.value,
-              columnWidth.value
-            )
-          "
-        >
-          <label
-            >{{ kind }} name
-            <input #creationName required pattern="[A-Za-z_][A-Za-z0-9_]*"
-          /></label>
-          <div [hidden]="kind !== 'table'">
-            <label
-              >Dataset
-              <select
-                (change)="datasetName.set(ds.value)"
-                #ds
-                [required]="kind === 'table'"
-              >
-                @for (entry of state().datasets; track entry.id) {
-                  <option [value]="entry.name">{{ entry.name }}</option>
-                }
-              </select></label
-            >
-            <label
-              >First field
-              <select #firstField [required]="kind === 'table'">
-                @for (field of dataset()?.fields ?? []; track field.id) {
-                  <option [value]="field.name" [disabled]="field.type === null">
-                    {{ field.name }}
-                  </option>
-                }
-              </select></label
-            >
-            <label
-              >Column width (RdlSize units)
-              <input #columnWidth value="1in" [required]="kind === 'table'"
-            /></label>
-          </div>
-          <button type="submit" [disabled]="pending() || submitted()">
-            Create {{ kind }}
-          </button>
-        </form>
-      }
-      <button type="button" [disabled]="pending()" (click)="cancel.emit()">
-        Cancel creation
-      </button>
-    }
-  } @else {
-    <p role="status">
-      Controls reflect the accepted document. After an edit, reselect the item;
-      obsolete drafts are discarded.
-    </p>
-    @if (!pageOnly()) {
+  <p role="status">
+    Controls reflect the accepted document. After an edit, reselect the item;
+    obsolete drafts are discarded.
+  </p>
+  @if (!pageOnly()) {
+    @if (deletable(); as item) {
       <form
-        aria-label="Create textbox"
+        aria-label="Delete textbox"
         (submit)="
           $event.preventDefault();
           request.emit({
-            targetId: state().id,
-            payload: { action: 'createTextbox', name: name.value },
+            targetId: item.id,
+            payload: {
+              action: 'deleteTextbox',
+              confirm: confirmation.checked ? 'delete-contained-content' : '',
+            },
           })
         "
       >
         <label
-          >Textbox name
-          <input #name required pattern="[A-Za-z_][A-Za-z0-9_]*" /></label
-        ><button type="submit">Create textbox</button>
+          ><input #confirmation type="checkbox" required />Delete
+          {{ item.name }} including all contained unsupported XML</label
+        ><button type="submit">Delete textbox</button>
       </form>
-      @if (deletable(); as item) {
-        <form
-          aria-label="Delete textbox"
-          (submit)="
-            $event.preventDefault();
-            request.emit({
-              targetId: item.id,
-              payload: {
-                action: 'deleteTextbox',
-                confirm: confirmation.checked ? 'delete-contained-content' : '',
-              },
-            })
-          "
-        >
-          <label
-            ><input #confirmation type="checkbox" required />Delete
-            {{ item.name }} including all contained unsupported XML</label
-          ><button type="submit">Delete textbox</button>
-        </form>
-      }
     }
-    <fieldset>
-      <legend>Page and body (RdlSize units)</legend>
-      @for (property of pageProperties; track property) {
-        <form
-          (submit)="
-            $event.preventDefault();
-            request.emit({
-              targetId: state().id,
-              payload: {
-                action: 'setPage',
-                property: property,
-                value: value.value,
-              },
-            })
-          "
-        >
-          <label
-            >{{ property }}
-            <input #value [value]="state().page[property]" required /></label
-          ><button type="submit">Apply {{ property }}</button>
-        </form>
-      }
-    </fieldset>
-    @if (!pageOnly()) {
-      <rdlc-datasets [state]="state()" (request)="request.emit($event)" />
-      <rdlc-table-properties
-        [state]="state()"
-        (request)="request.emit($event)"
-      />
+  }
+  <fieldset>
+    <legend>Page and body (RdlSize units)</legend>
+    @for (property of pageProperties; track property) {
+      <form
+        (submit)="
+          $event.preventDefault();
+          request.emit({
+            targetId: state().id,
+            payload: {
+              action: 'setPage',
+              property: property,
+              value: value.value,
+            },
+          })
+        "
+      >
+        <label
+          >{{ property }}
+          <input #value [value]="state().page[property]" required /></label
+        ><button type="submit">Apply {{ property }}</button>
+      </form>
     }
+  </fieldset>
+  @if (!pageOnly()) {
+    <rdlc-datasets [state]="state()" (request)="request.emit($event)" />
+    <rdlc-table-properties [state]="state()" (request)="request.emit($event)" />
   }
 </section>

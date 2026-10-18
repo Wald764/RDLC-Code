@@ -656,3 +656,68 @@ test('host binding accepts clipboard requests only for current targets and capab
   disabled.receive({ protocol: 1, kind: 'ready' });
   assert.equal(disabled.receive(copy).ok, false);
 });
+
+test('creation intents carry positions only and results may name the created item', () => {
+  const author = (payload: Record<string, unknown>) =>
+    validateMessage({ ...edit, operation: 'author', payload });
+  for (const payload of [
+    { action: 'createTextbox', left: '1in', top: '0.5in' },
+    { action: 'createTable', left: '0pt', top: '12pt' },
+    { action: 'createDataset' },
+    { action: 'renameTable', name: 'Orders' },
+    { action: 'setTableDataset', dataset: 'DataSet1' },
+  ])
+    assert.ok(author(payload), JSON.stringify(payload));
+  for (const payload of [
+    { action: 'createTextbox', name: 'Title' },
+    { action: 'createTextbox', name: 'Title', left: '1in', top: '1in' },
+    { action: 'createTextbox', left: '1in' },
+    { action: 'createTextbox', left: 1, top: 2 },
+    {
+      action: 'createTable',
+      name: 'T',
+      dataset: 'D',
+      field: 'F',
+      width: '1in',
+    },
+    { action: 'createTable', left: '1in', top: '1in', dataset: 'D' },
+    { action: 'createDataset', name: 'DataSet1' },
+    { action: 'renameTable' },
+    { action: 'setTableDataset', dataset: 1 },
+  ])
+    assert.equal(author(payload), null, JSON.stringify(payload));
+  const result = {
+    protocol: 1,
+    kind: 'editResult',
+    requestId: 'r1',
+    baseVersion: 2,
+    version: 3,
+    accepted: true,
+    changed: true,
+    mappings: [],
+    reason: 'APPLIED',
+    diagnostics: [],
+    created: { id: '3:9', name: 'Textbox1' },
+  };
+  assert.ok(validateMessage(result));
+  for (const created of [
+    { id: '3:9' },
+    { id: '3:9', name: 'Textbox1', kind: 'textbox' },
+    { id: 'bad id!', name: 'Textbox1' },
+    { id: '3:9', name: '1Textbox' },
+    { id: '3:9', name: 'x'.repeat(257) },
+    'Textbox1',
+  ])
+    assert.equal(validateMessage({ ...result, created }), null);
+  // A refused result never names a created item.
+  assert.equal(
+    validateMessage({
+      ...result,
+      accepted: false,
+      changed: false,
+      version: 2,
+      reason: 'Refused',
+    }),
+    null,
+  );
+});

@@ -63,17 +63,19 @@ test('contextual structure targets build a bound table and reopen exact local de
     source = outcome.candidate;
     assert.ok(source.includes('<!--keep contextual authoring metadata-->'));
   };
-  apply('report', null, { action: 'createDataset', name: 'Sales' });
+  apply('report', null, { action: 'createDataset' });
+  apply('dataset', 'DataSet1', { action: 'renameDataset', name: 'Sales' });
   for (const [name, type] of [
     ['Label', 'text'],
     ['Amount', 'decimal'],
     ['Date', 'date/time'],
   ] as const)
     apply('dataset', 'Sales', { action: 'createField', name, type });
-  apply('report', null, {
-    action: 'createTable',
-    name: 'SalesTable',
-    dataset: 'Sales',
+  apply('report', null, { action: 'createTable', left: '0in', top: '0in' });
+  apply('table', 'Table1', { action: 'renameTable', name: 'SalesTable' });
+  apply('table', 'SalesTable', { action: 'setTableDataset', dataset: 'Sales' });
+  apply('table', 'SalesTable', {
+    action: 'addColumn',
     field: 'Label',
     width: '1in',
   });
@@ -186,11 +188,16 @@ test('blank report authoring covers page bounds, textbox deletion, all field typ
     assert.equal(outcome.ok, true, JSON.stringify(outcome));
     if (outcome.ok) source = outcome.candidate;
   };
-  apply(root, { action: 'createTextbox', name: 'Heading' });
-  assert.equal(
-    author(source, root, { action: 'createTextbox', name: 'Heading' }).ok,
-    false,
-  );
+  apply(root, { action: 'createTextbox', left: '0in', top: '0in' });
+  for (const [left, top] of [
+    ['-1in', '0in'],
+    ['1', '0in'],
+    ['0in', 'NaNin'],
+  ] as const)
+    assert.equal(
+      author(source, root, { action: 'createTextbox', left, top }).ok,
+      false,
+    );
   const box = (report: ReturnType<typeof projectReport>) =>
     report.textboxes[0]!.node.id;
   assert.equal(
@@ -204,7 +211,7 @@ test('blank report authoring covers page bounds, textbox deletion, all field typ
       .ok,
     false,
   );
-  apply(root, { action: 'createDataset', name: 'Orders' });
+  apply(root, { action: 'createDataset' });
   const dataset = (report: ReturnType<typeof projectReport>) =>
     report.datasets[0]!.node.id;
   for (const [index, type] of [
@@ -217,15 +224,10 @@ test('blank report authoring covers page bounds, textbox deletion, all field typ
     'date/time',
   ].entries())
     apply(dataset, { action: 'createField', name: `Field${index}`, type });
-  apply(root, {
-    action: 'createTable',
-    name: 'Cell',
-    dataset: 'Orders',
-    field: 'Field0',
-    width: '1in',
-  });
+  apply(root, { action: 'createTable', left: '1in', top: '1in' });
   const table = (report: ReturnType<typeof projectReport>) =>
     report.tables[0]!.node.id;
+  apply(table, { action: 'setTableDataset', dataset: 'DataSet1' });
   apply(table, {
     action: 'addGroup',
     name: 'ByField',
@@ -379,5 +381,164 @@ test('table columns, groups and scoped total rows are synchronized atomically', 
       { action: 'addColumn', field: 'Amount', width: '1in' },
     ).ok,
     false,
+  );
+});
+
+test('creation inserts one named item at the drop position and refusals leave text unchanged', () => {
+  const blank = readFileSync('tests/fixtures/datasets/blank.rdlc', 'utf8');
+  const root = (source: string) => () =>
+    parse({ uri: 'test:root', source, version: 1, eol: '\n' }).root!.id;
+  const created = author(blank, root(blank), {
+    action: 'createTextbox',
+    left: '1.5in',
+    top: '12pt',
+  });
+  assert.equal(created.ok, true, JSON.stringify(created));
+  if (!created.ok) return;
+  assert.deepEqual(created.created, { element: 'Textbox', name: 'Textbox1' });
+  assert.equal(created.plan.patches.length, 1);
+  const patch = created.plan.patches[0]!;
+  assert.equal(
+    created.candidate.slice(0, patch.start),
+    blank.slice(0, patch.start),
+  );
+  assert.equal(
+    created.candidate.slice(patch.start + patch.replacement.length),
+    blank.slice(patch.end),
+  );
+  const box = projectReport(
+    parse({ uri: 'test:c', source: created.candidate, version: 2, eol: '\n' }),
+  ).textboxes[0]!;
+  assert.deepEqual(
+    [
+      box.name,
+      box.bounds.left,
+      box.bounds.top,
+      box.bounds.width,
+      box.bounds.height,
+    ],
+    ['Textbox1', '1.5in', '12pt', '1in', '0.25in'],
+  );
+  // The next creation takes the lowest free number across report items.
+  const second = author(created.candidate, root(created.candidate), {
+    action: 'createTextbox',
+    left: '0in',
+    top: '0in',
+  });
+  assert.equal(second.ok && second.created?.name, 'Textbox2');
+  for (const payload of [
+    { action: 'createTextbox', left: '-1pt', top: '0in' },
+    { action: 'createTable', left: '0in', top: 'abc' },
+  ] as const) {
+    const refused = author(blank, root(blank), payload);
+    assert.equal(refused.ok, false);
+  }
+  const stale = author(blank, () => 'nope:1', {
+    action: 'createTextbox',
+    left: '0in',
+    top: '0in',
+  });
+  assert.equal(stale.ok, false);
+});
+
+test('tables are created unbound and bound later with a detail group', () => {
+  let source = readFileSync('tests/fixtures/datasets/blank.rdlc', 'utf8');
+  const root = () =>
+    parse({ uri: 'test:root', source, version: 1, eol: '\n' }).root!.id;
+  const apply = (
+    target: (report: ReturnType<typeof projectReport>) => string,
+    payload: AuthoringIntent['payload'],
+  ) => {
+    const outcome = author(source, target, payload);
+    assert.equal(outcome.ok, true, JSON.stringify(outcome));
+    if (outcome.ok) source = outcome.candidate;
+    return outcome;
+  };
+  const made = apply(root, {
+    action: 'createTable',
+    left: '0.5in',
+    top: '1in',
+  });
+  assert.deepEqual(made.ok && made.created, {
+    element: 'Tablix',
+    name: 'Table1',
+  });
+  let table = projectReport(
+    parse({ uri: 'test:t', source, version: 2, eol: '\n' }),
+  ).tables[0]!;
+  assert.equal(table.structural, true, table.blockedReason ?? '');
+  assert.equal(table.dataset, null);
+  assert.equal(table.columns.length, 2);
+  assert.equal(table.rows.length, 2);
+  assert.deepEqual([table.bounds.left, table.bounds.top], ['0.5in', '1in']);
+  assert.ok(!source.includes('DataSetName'));
+  const id = (report: ReturnType<typeof projectReport>) =>
+    report.tables[0]!.node.id;
+  const before = source;
+  assert.equal(
+    author(source, id, { action: 'setTableDataset', dataset: 'Missing' }).ok,
+    false,
+  );
+  assert.equal(
+    author(source, id, { action: 'addColumn', field: 'X', width: '1in' }).ok,
+    false,
+  );
+  assert.equal(source, before);
+  apply(root, { action: 'createDataset' });
+  apply((report) => report.datasets[0]!.node.id, {
+    action: 'createField',
+    name: 'Amount',
+    type: 'decimal',
+  });
+  apply(id, { action: 'setTableDataset', dataset: 'DataSet1' });
+  apply(id, { action: 'addColumn', field: 'Amount', width: '1in' });
+  apply(id, { action: 'renameTable', name: 'Orders' });
+  table = projectReport(parse({ uri: 'test:t', source, version: 9, eol: '\n' }))
+    .tables[0]!;
+  assert.equal(table.name, 'Orders');
+  assert.equal(table.dataset, 'DataSet1');
+  assert.equal(table.columns.length, 3);
+  assert.equal(table.groups.length, 1);
+});
+
+test('opaque expressions block a dataset deletion only when they spell its name', () => {
+  const blank = readFileSync('tests/fixtures/datasets/blank.rdlc', 'utf8');
+  const root = (r: ReturnType<typeof projectReport>) =>
+    r.textboxes.length >= 0 ? rootId : '';
+  let rootId = '';
+  const step = (
+    source: string,
+    target: (r: ReturnType<typeof projectReport>) => string,
+    payload: AuthoringIntent['payload'],
+  ) => {
+    rootId = parse({ uri: 'test:o', source, version: 1, eol: '\n' }).root!.id;
+    const outcome = author(source, target, payload);
+    assert.equal(outcome.ok, true, JSON.stringify(outcome));
+    return outcome.ok ? outcome.candidate : source;
+  };
+  let source = step(blank, root, { action: 'createDataset' });
+  source = step(source, root, {
+    action: 'createTextbox',
+    left: '0in',
+    top: '0in',
+  });
+  const withText = (text: string) =>
+    source
+      .replace('<Value />', `<Value>${text}</Value>`)
+      .replace('<Value></Value>', `<Value>${text}</Value>`);
+  const unrelated = withText('=Code.Format(Now())');
+  assert.notEqual(unrelated, source, 'opaque expression inserted');
+  const deleted = author(unrelated, (r) => r.datasets[0]!.node.id, {
+    action: 'deleteDataset',
+  });
+  assert.equal(deleted.ok, true, JSON.stringify(deleted));
+  const mentioning = withText('=Code.Lookup(&quot;DataSet1&quot;)');
+  const refused = author(mentioning, (r) => r.datasets[0]!.node.id, {
+    action: 'deleteDataset',
+  });
+  assert.equal(refused.ok, false);
+  assert.equal(
+    !refused.ok && refused.diagnostics[0]!.code,
+    'REFERENCES_OPAQUE',
   );
 });

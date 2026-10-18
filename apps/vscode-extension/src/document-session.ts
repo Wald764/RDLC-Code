@@ -20,6 +20,23 @@ function nodes(node: XmlNode | null): XmlNode[] {
   return node ? [node, ...node.children.flatMap(nodes)] : [];
 }
 
+/** Locate the host-named creation in the accepted result so the designer can select it. */
+function createdIn(
+  root: XmlNode | null,
+  created: { readonly element: string; readonly name: string },
+): { created?: { id: string; name: string } } {
+  const node = nodes(root).find(
+    (candidate) =>
+      candidate.expandedName.localName === created.element &&
+      candidate.attributes.some(
+        (attribute) =>
+          attribute.expandedName.localName === 'Name' &&
+          attribute.value === created.name,
+      ),
+  );
+  return node ? { created: { id: node.id, name: created.name } } : {};
+}
+
 function snapshotOf(document: vscode.TextDocument): DocumentSnapshot {
   return {
     uri: document.uri.toString(),
@@ -427,6 +444,9 @@ export class DocumentSession {
       accepted: result.accepted,
       reason: result.accepted ? 'APPLIED' : result.reason,
       diagnostics: [],
+      ...(result.accepted && outcome.created
+        ? createdIn(result.syntax.root, outcome.created)
+        : {}),
     });
   }
 
@@ -441,13 +461,18 @@ export class DocumentSession {
     version: number;
     syntax: ReturnType<typeof parse>;
   }> {
+    // VS Code writes inserted line breaks in the document's EOL; do the same up front
+    // so text from a report with other line endings matches the verified candidate.
+    const eol = this.document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
+    const toEol = (text: string) => text.replace(/\r\n|\r|\n/g, eol);
+    candidate = toEol(candidate);
     const edits = plan.patches.map((patch) =>
       vscode.TextEdit.replace(
         new vscode.Range(
           this.document.positionAt(patch.start),
           this.document.positionAt(patch.end),
         ),
-        patch.replacement,
+        toEol(patch.replacement),
       ),
     );
     const workspaceEdit = new vscode.WorkspaceEdit();

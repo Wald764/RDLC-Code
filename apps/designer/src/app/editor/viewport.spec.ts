@@ -10,6 +10,8 @@ import {
   edgeScroll,
   extent,
   fitZoom,
+  menuPosition,
+  panelLayout,
   restoreViewState,
   revealScroll,
 } from './viewport';
@@ -190,6 +192,22 @@ describe('per-view state restore', () => {
       gridSnap: true,
       guidesVisible: true,
       guidesSnap: true,
+      leftWidth: 220,
+      rightWidth: 300,
+      leftVisible: true,
+      rightVisible: true,
+      leftTab: 'components',
+      inspectorExpanded: {
+        general: true,
+        position: true,
+        appearance: false,
+        typography: true,
+        border: false,
+        data: true,
+        visibility: false,
+        pagination: false,
+        advanced: false,
+      },
     });
     expect(restoreViewState(undefined)).toEqual({
       state: defaultViewState,
@@ -226,5 +244,128 @@ describe('per-view state restore', () => {
     ]);
     expect(restoreViewState({ zoom: 10 }).invalid).toEqual(['zoom']);
     expect(restoreViewState({ zoom: Infinity }).state.zoom).toBe(1);
+  });
+
+  it('defaults panel preferences independently and ignores unknown or obsolete fields', () => {
+    const restored = restoreViewState({
+      zoom: 2,
+      leftWidth: 400,
+      rightWidth: 480,
+      leftVisible: 'no',
+      rightVisible: false,
+      leftTab: 'datasets',
+      inspectorExpanded: {
+        general: false,
+        advanced: true,
+        bogus: true,
+        data: 1,
+      },
+      obsolete: 'kept out',
+      selection: ['2:3'],
+      draft: { text: 'x' },
+    });
+    expect(restored.state).toMatchObject({
+      zoom: 2,
+      leftWidth: 220,
+      rightWidth: 480,
+      leftVisible: true,
+      rightVisible: false,
+      leftTab: 'components',
+    });
+    expect(restored.state.inspectorExpanded).toEqual({
+      ...defaultViewState.inspectorExpanded,
+      general: false,
+      advanced: true,
+    });
+    expect(restored.state).not.toHaveProperty('obsolete');
+    expect(restored.state).not.toHaveProperty('selection');
+    expect(restored.state).not.toHaveProperty('draft');
+    expect(restored.invalid).toEqual(['leftWidth', 'leftVisible', 'leftTab']);
+    for (const width of [NaN, Infinity, 179, 361, '220'])
+      expect(restoreViewState({ leftWidth: width }).state.leftWidth).toBe(220);
+    expect(restoreViewState({ inspectorExpanded: [] }).invalid).toEqual([
+      'inspectorExpanded',
+    ]);
+  });
+});
+
+describe('effective panel layout', () => {
+  const view = defaultViewState;
+  it('uses 220/300 defaults with a majority canvas at 1280px', () => {
+    const layout = panelLayout(1280, view);
+    expect(layout).toEqual({
+      left: 220,
+      structure: 0,
+      right: 300,
+      leftOverlay: false,
+      rightOverlay: false,
+    });
+    expect(1280 - layout.left - layout.right).toBeGreaterThan(640);
+  });
+  it('switches left to overlay below 1100px and both below 800px', () => {
+    expect(panelLayout(1024, view)).toMatchObject({
+      left: 0,
+      right: 300,
+      leftOverlay: true,
+      rightOverlay: false,
+    });
+    for (const width of [640, 400, 320])
+      expect(panelLayout(width, view)).toEqual({
+        left: 0,
+        structure: 0,
+        right: 0,
+        leftOverlay: true,
+        rightOverlay: true,
+      });
+  });
+  it('clamps effective widths for a 320px canvas without changing preferences', () => {
+    const wide = { ...view, leftWidth: 360, rightWidth: 480 };
+    for (const width of [1100, 1024, 800]) {
+      const layout = panelLayout(width, wide);
+      expect(width - 20 - layout.left - layout.right).toBeGreaterThanOrEqual(
+        320,
+      );
+      expect(layout.left === 0 || layout.left >= 180).toBe(true);
+      expect(layout.right >= 240).toBe(true);
+    }
+    expect(panelLayout(1400, wide)).toMatchObject({ left: 360, right: 480 });
+    expect(wide).toMatchObject({ leftWidth: 360, rightWidth: 480 });
+  });
+  it('shows Structure beside Components only when the canvas keeps 640px', () => {
+    expect(panelLayout(1440, view).structure).toBe(260);
+    expect(panelLayout(1399, view).structure).toBe(0);
+    expect(
+      panelLayout(1440, { ...view, leftWidth: 360, rightWidth: 480 }).structure,
+    ).toBe(0);
+    expect(panelLayout(1920, { ...view, leftVisible: false }).structure).toBe(
+      0,
+    );
+  });
+  it('gives hidden panels zero width in the wide layout', () => {
+    expect(
+      panelLayout(1280, { ...view, leftVisible: false, rightVisible: false }),
+    ).toMatchObject({
+      left: 0,
+      right: 0,
+      leftOverlay: false,
+      rightOverlay: false,
+    });
+  });
+});
+
+describe('context menu placement', () => {
+  const area = { width: 800, height: 400 };
+  const menu = { width: 260, height: 300 };
+  it('opens below and right of the pointer when it fits', () => {
+    expect(menuPosition(100, 50, menu, area)).toEqual({ x: 100, y: 50 });
+  });
+  it('flips above and left near the bottom-right edges', () => {
+    expect(menuPosition(700, 380, menu, area)).toEqual({ x: 440, y: 80 });
+  });
+  it('clamps a menu taller than the area to the top', () => {
+    expect(menuPosition(10, 100, { width: 260, height: 500 }, area)).toEqual({
+      x: 10,
+      y: 0,
+    });
   });
 });

@@ -439,7 +439,7 @@ async function nativeDesignerHistory(): Promise<void> {
           ? {
               operation: 'author',
               targetId: syntax.root!.id,
-              payload: { action: 'createDataset', name: `HistoryData${i}` },
+              payload: { action: 'createDataset' },
             }
           : i % 5 === 3
             ? {

@@ -29,6 +29,10 @@ export class TablePropertiesComponent {
   );
   readonly position = input<SceneBounds | null>(null);
   readonly request = output<AuthoringRequest>();
+  /** An unbound top-level table must name a dataset once there are several. */
+  needsDataset(table: AuthoringState['tables'][number]): boolean {
+    return !table.dataset && this.state().datasets.length > 1;
+  }
   fields(dataset: string | null): AuthoringState['datasets'][number]['fields'] {
     return (
       this.state().datasets.find((entry) => entry.name === dataset)?.fields ??

@@ -9,6 +9,10 @@ export function textboxXml(
   name: string,
   text = '',
   bounds = true,
+  left = '0in',
+  top = '0in',
+  width = '2in',
+  height = '0.3in',
 ): string {
   const e = (name: string, inner: string) => element(parent, name, inner);
   const content = e(
@@ -16,31 +20,31 @@ export function textboxXml(
     e('Paragraph', e('TextRuns', e('TextRun', e('Value', text)))),
   );
   const geometry = bounds
-    ? e('Left', '0in') +
-      e('Top', '0in') +
-      e('Width', '2in') +
-      e('Height', '0.3in')
+    ? e('Left', left) + e('Top', top) + e('Width', width) + e('Height', height)
     : '';
   return e('Textbox', content + geometry).replace(
     '>',
     ` Name="${escapeAttribute(name)}">`,
   );
 }
+/** A new body textbox at the drop position with the 1in × 0.25in creation size. */
 export function planCreateTextbox(
   snapshot: DocumentSnapshot,
   section: ReportSection,
   name: string,
+  left: string,
+  top: string,
 ): PatchPlan {
   const body = child(section.node, 'Body');
   if (!body) throw new Error('Missing Body.');
   const items = child(body, 'ReportItems');
+  const xml = (parent: ReportSection['node']) =>
+    textboxXml(parent, name, '', true, left, top, '1in', '0.25in');
   return patchPlan(snapshot, [
     insertChild(
       snapshot,
       items ?? body,
-      items
-        ? textboxXml(items, name)
-        : element(body, 'ReportItems', textboxXml(body, name)),
+      items ? xml(items) : element(body, 'ReportItems', xml(body)),
     ),
   ]);
 }

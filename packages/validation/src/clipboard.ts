@@ -2,7 +2,7 @@ import type { Capture } from '@rdlc/report-model/clipboard';
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 import type { XmlNode } from '@rdlc/report-model/syntax';
 import { RDL_2016, type ReportProjection } from '@rdlc/report-model/report';
-import { uniqueName, validateName } from './validate.js';
+import { nextName, validateName } from './validate.js';
 
 export const EXTENSION_NAMESPACE = 'urn:rdlc-code:extension';
 const XMLNS = 'http://www.w3.org/2000/xmlns/';
@@ -85,8 +85,8 @@ export function nameIndex(root: XmlNode | null): NameIndex {
 }
 
 /**
- * Keep a free original name, otherwise a valid generic ASCII prefix plus a
- * deterministic suffix; destination and newly assigned names are reserved together.
+ * Keep a free original name, otherwise a valid generic ASCII prefix plus the
+ * lowest free number (the creation series); destination and newly assigned names are reserved together.
  */
 export function allocateNames(
   capture: Capture,
@@ -108,7 +108,7 @@ export function allocateNames(
         const stem = /^[A-Za-z_][A-Za-z0-9_]*$/.test(identity.name)
           ? identity.name.replace(/[0-9]+$/, '')
           : '';
-        next = uniqueName(
+        next = nextName(
           stem || (fallback[identity.element] ?? 'Item'),
           reserved,
         );

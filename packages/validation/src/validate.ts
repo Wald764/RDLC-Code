@@ -78,6 +78,14 @@ export function uniqueName(
   return candidate;
 }
 
+/** Report Builder default names: the stem plus the lowest free positive integer (Textbox1, Textbox2…). */
+export function nextName(
+  stem: string,
+  existingInScope: readonly string[],
+): string {
+  return uniqueName(stem, [stem, ...existingInScope]);
+}
+
 export function validateMutation(input: {
   readonly operation: 'rename' | 'delete' | 'move' | 'setValue';
   readonly capability: boolean;

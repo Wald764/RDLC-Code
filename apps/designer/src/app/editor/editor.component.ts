@@ -39,8 +39,12 @@ import {
   edgeScroll,
   extent,
   fitZoom,
+  menuPosition,
+  panelBounds,
+  panelLayout,
   revealScroll,
   type Frame,
+  type InspectorSection,
   type ViewState,
 } from './viewport';
 import { AuthoringComponent } from '../authoring/authoring.component';
@@ -53,7 +57,8 @@ import { StructureTreeComponent } from './structure-tree.component';
 import type { DesignScene } from '@rdlc/report-model/scene';
 import { DiagnosticsComponent } from '../diagnostics/diagnostics.component';
 import type { TextboxCommit } from '../properties/textbox-properties.component';
-import { HostAdapter } from './host-adapter';
+import { explainRefusal, HostAdapter } from './host-adapter';
+import { IconComponent, type IconName } from './icon.component';
 import {
   emptySelection,
   selectItem,
@@ -75,6 +80,10 @@ const arrows: Readonly<Record<string, readonly [number, number]>> = {
   ArrowUp: [0, -1],
   ArrowDown: [0, 1],
 };
+/** Creation footprints in points: Textbox 1in × 0.25in, Table two 1in columns × 0.5in. */
+const creationSizes: Readonly<Record<CreationKind, readonly [number, number]>> =
+  { textbox: [72, 18], table: [144, 36], dataset: [0, 0] };
+export const dragTypePrefix = 'application/x-rdlc-';
 const ptBounds = (b: Bounds): Bounds => ({
   left: pixelsToPoints(b.left),
   top: pixelsToPoints(b.top),
@@ -98,6 +107,13 @@ const union = (all: readonly Bounds[]): Bounds => {
   };
 };
 const leftTabs = ['components', 'structure'] as const;
+const paperSizes = {
+  A3: [297, 420],
+  A4: [210, 297],
+  A5: [148, 210],
+  Letter: [215.9, 279.4],
+  Legal: [215.9, 355.6],
+} as const;
 /** Wrapping roving-focus target for a key, or null when the key does not move focus. */
 const rovingIndex = (
   key: string,
@@ -125,6 +141,7 @@ const rovingIndex = (
     AuthoringComponent,
     ComponentsCatalogComponent,
     StructureTreeComponent,
+    IconComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './editor.component.html',
@@ -143,7 +160,22 @@ export class EditorComponent {
     ['guidesVisible', 'Show guides'],
     ['guidesSnap', 'Snap to guides'],
   ] as const;
+  readonly quickToggles = [
+    {
+      key: 'gridVisible',
+      label: 'Grid',
+      title: 'Show grid',
+      icon: 'grid',
+    },
+    {
+      key: 'gridSnap',
+      label: 'Snap',
+      title: 'Snap to grid',
+      icon: 'snap',
+    },
+  ] as const;
   readonly toPx = pointsToPixels;
+  readonly explainRefusal = explainRefusal;
   private readonly injector = inject(Injector);
   private readonly viewport = viewChild<ElementRef<HTMLElement>>('viewport');
   /** Per-view zoom, scroll, units and placement preferences. */
@@ -195,15 +227,36 @@ export class EditorComponent {
   readonly gestureNotice = signal('');
   readonly workspaceWidth = signal(1280);
   readonly overlay = signal<'left' | 'right' | null>(null);
-  readonly creation = signal<CreationKind | null>(null);
-  readonly leftTab = signal<'components' | 'structure'>('components');
+  /** Footprint of a component being dragged over the canvas (body px); never sent. */
+  readonly dropPreview = signal<{ bounds: Bounds; valid: boolean } | null>(
+    null,
+  );
+  /** Set while a keyboard or click activation is sending its creation. */
+  private keyboardCreation = false;
+  readonly leftTab = computed(() => this.view().leftTab);
+  /** Effective inline widths and overlay modes; preferences in `view` stay untouched. */
+  readonly panels = computed(() =>
+    panelLayout(this.workspaceWidth(), this.view()),
+  );
+  readonly panelBounds = panelBounds;
+  private readonly tabScroll = { components: 0, structure: 0 };
+  private sizing: number | null = null;
   readonly diagnosticsOpen = signal(false);
   private diagnosticsInvoker: HTMLElement | null = null;
   readonly contextMenu = signal<{
     x: number;
     y: number;
     invoker: HTMLElement | null;
+    /** Structure menus omit canvas arrangement, which needs geometry. */
+    source: 'canvas' | 'structure';
   } | null>(null);
+  readonly menuActions = computed(() =>
+    this.contextMenu()?.source === 'structure'
+      ? this.contextActions().filter(
+          (entry) => !/^(Align|Distribute) /.test(entry.label),
+        )
+      : this.contextActions(),
+  );
   readonly contextActions = computed(() => {
     const selection = this.acceptedSelection();
     const count = selection.bodyItemIds.length;
@@ -254,6 +307,7 @@ export class EditorComponent {
         run: () => this.revealSelection(),
       },
       { label: 'Properties', reason: '', run: () => this.focusProperties() },
+      ...this.dataDeletion(busy),
       ...(selected && selected.kind !== 'cell' && !selected.placeholder
         ? [
             {
@@ -273,11 +327,45 @@ export class EditorComponent {
       { label: 'Code XML', reason: '', run: () => this.openSource() },
     ];
   });
+  /** Toolbar mirrors of the context actions, sharing their eligibility reasons. */
+  readonly toolbarActions = computed(() => {
+    const actions = new Map(this.contextActions().map((a) => [a.label, a]));
+    const group = (label: string, labels: readonly string[]) => ({
+      label,
+      actions: labels.map((name) => ({
+        ...actions.get(name)!,
+        icon: name.toLowerCase().replace(' ', '-') as IconName,
+      })),
+    });
+    return [
+      group('Clipboard', ['Cut', 'Copy', 'Paste', 'Duplicate']),
+      group(
+        'Align',
+        alignModes.map((mode) => `Align ${mode}`),
+      ),
+      group('Distribute', ['Distribute horizontal', 'Distribute vertical']),
+    ];
+  });
+  /** Named paper size when the page matches one (2mm tolerance), else its dimensions. */
+  readonly pageLabel = computed(() => {
+    const page = this.scene()?.page;
+    if (!page) return '';
+    const mm = (px: number) => (px / 96) * 25.4;
+    const [w, h] = [mm(page.width), mm(page.height)];
+    const named = Object.entries(paperSizes).find(
+      ([, [a, b]]) =>
+        (Math.abs(w - a) < 2 && Math.abs(h - b) < 2) ||
+        (Math.abs(w - b) < 2 && Math.abs(h - a) < 2),
+    );
+    const size = `${this.inUnit(page.width)} × ${this.inUnit(page.height)}`;
+    return named ? `${named[0]} (${size})` : size;
+  });
   private creating: {
     requestId: string;
     kind: CreationKind;
-    name: string;
     baseVersion: number;
+    /** Keyboard creation moves focus to the Name field once accepted. */
+    focusName: boolean;
   } | null = null;
   private layoutFrame: Frame | null = null;
   private workspaceHeight = 0;
@@ -656,27 +744,28 @@ export class EditorComponent {
         snapshot.version !== outcome.version
       )
         return;
-      this.creation.set(null);
-      const matches =
-        snapshot.scene?.items.filter(
-          (item) => item.name === creation.name && item.kind === creation.kind,
-        ) ?? [];
-      if (matches.length === 1)
-        this.select(snapshot.scene!.items.indexOf(matches[0]!));
-      else if (creation.kind === 'dataset') {
-        const datasets =
-          snapshot.authoring?.datasets.filter(
-            (dataset) => dataset.name === creation.name,
-          ) ?? [];
-        if (datasets.length === 1) {
-          this.selection.set({
-            ...emptySelection(snapshot.version),
-            structureTargetId: datasets[0]!.id,
-          });
-          this.leftTab.set('structure');
-          if (this.workspaceWidth() < 800) this.overlay.set('right');
-        }
+      const created = outcome.created;
+      if (!created) return;
+      this.gestureNotice.set(`Created ${created.name}.`);
+      const index =
+        snapshot.scene?.items.findIndex((item) => item.id === created.id) ?? -1;
+      if (index >= 0) this.select(index);
+      else if (
+        snapshot.authoring?.datasets.some(
+          (dataset) => dataset.id === created.id,
+        )
+      ) {
+        this.selection.set({
+          ...emptySelection(snapshot.version),
+          structureTargetId: created.id,
+        });
+        this.showTab('structure');
+        this.revealPanel('right');
       }
+      if (creation.focusName)
+        this.focusProperties(
+          '.inspector input[data-property="name"], .inspector input[name="name"], .inspector input',
+        );
     });
     effect(() => {
       const accepted = this.acceptedSelection();
@@ -699,12 +788,30 @@ export class EditorComponent {
   workspaceResize(width: number, height: number): void {
     if (width === this.workspaceWidth() && height === this.workspaceHeight)
       return;
+    // The first measurement only establishes the layout; there is no prior view to keep centered.
+    const first = this.workspaceHeight === 0;
     this.workspaceHeight = height;
     const before = this.layoutFrame ?? this.frame();
     this.cancelGesture(
       'Workspace resized; the uncommitted gesture was cancelled.',
     );
+    this.clearDrop();
     this.workspaceWidth.set(width);
+    if (!first) this.recenter(before);
+  }
+
+  /** Elective layout change: deferred during manipulation, otherwise applied center-preserving. */
+  private relayout(run: () => void): void {
+    if (this.preview() || this.marquee() || this.nudge() || this.pan) {
+      this.deferredLayout = () => this.relayout(run);
+      return;
+    }
+    const before = this.frame();
+    run();
+    this.recenter(before);
+  }
+
+  private recenter(before: Frame): void {
     afterNextRender(
       () => {
         const next = this.frame();
@@ -730,6 +837,99 @@ export class EditorComponent {
     if (this.preview() || this.marquee() || this.nudge() || this.pan)
       this.deferredLayout = run;
     else run();
+  }
+
+  /** Toolbar access: toggles an overlay in compact mode, otherwise the inline panel. */
+  panelAccess(panel: 'left' | 'right'): void {
+    if (this.panels()[`${panel}Overlay`]) this.toggleOverlay(panel);
+    else {
+      const key = panel === 'left' ? 'leftVisible' : 'rightVisible';
+      this.relayout(() => this.setView({ [key]: !this.view()[key] }));
+    }
+  }
+
+  panelShown(panel: 'left' | 'right'): boolean {
+    return !!this.panels()[panel] || this.overlay() === panel;
+  }
+
+  private revealPanel(panel: 'left' | 'right'): void {
+    if (this.panels()[`${panel}Overlay`]) this.overlay.set(panel);
+    else if (!this.panelShown(panel)) this.panelAccess(panel);
+  }
+
+  resizePanel(panel: 'left' | 'right', width: number): void {
+    const [min, max] = panelBounds[panel];
+    const other = this.panels()[panel === 'left' ? 'right' : 'left'];
+    const room = this.workspaceWidth() - 340 - other;
+    const next = Math.round(Math.max(min, Math.min(max, room, width)));
+    this.relayout(() =>
+      this.setView(
+        panel === 'left' ? { leftWidth: next } : { rightWidth: next },
+      ),
+    );
+  }
+
+  separatorKey(event: KeyboardEvent, panel: 'left' | 'right'): void {
+    const [min, max] = panelBounds[panel];
+    const width = this.panels()[panel];
+    const grow = panel === 'left' ? 'ArrowRight' : 'ArrowLeft';
+    const shrink = panel === 'left' ? 'ArrowLeft' : 'ArrowRight';
+    const next =
+      event.key === grow
+        ? width + 10
+        : event.key === shrink
+          ? width - 10
+          : event.key === 'Home'
+            ? min
+            : event.key === 'End'
+              ? max
+              : null;
+    if (next === null) return;
+    event.preventDefault();
+    this.resizePanel(panel, next);
+  }
+
+  separatorDown(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+    this.sizing = event.pointerId;
+    event.preventDefault();
+  }
+
+  separatorMove(event: PointerEvent, panel: 'left' | 'right'): void {
+    if (event.pointerId !== this.sizing) return;
+    const rect = this.element.nativeElement.getBoundingClientRect();
+    this.resizePanel(
+      panel,
+      panel === 'left'
+        ? event.clientX - rect.left - this.panels().structure
+        : rect.right - event.clientX,
+    );
+  }
+
+  separatorUp(event: PointerEvent): void {
+    if (event.pointerId === this.sizing) this.sizing = null;
+  }
+
+  /** Switches the left tab, keeping each tab's scroll position view-local. */
+  showTab(tab: 'components' | 'structure'): void {
+    const panel =
+      this.element.nativeElement.querySelector<HTMLElement>('.left-panel');
+    if (panel) this.tabScroll[this.leftTab()] = panel.scrollTop;
+    if (tab === this.leftTab()) return;
+    this.setView({ leftTab: tab });
+    afterNextRender(
+      () => {
+        if (panel) panel.scrollTop = this.tabScroll[tab];
+      },
+      { injector: this.injector },
+    );
+  }
+
+  expandSection(section: InspectorSection, open: boolean): void {
+    this.setView({
+      inspectorExpanded: { ...this.view().inspectorExpanded, [section]: open },
+    });
   }
 
   select(index: number, toggle = false): void {
@@ -768,7 +968,10 @@ export class EditorComponent {
         this.host.snapshot()?.structure?.nodes ?? [],
       ),
     );
-    this.revealSelection();
+    // Data and structural targets have no canvas geometry to reveal.
+    const selection = this.acceptedSelection();
+    if (selection.bodyItemIds.length || selection.cellTargetId)
+      this.revealSelection();
   }
 
   showContextMenu(event: MouseEvent): void {
@@ -782,20 +985,105 @@ export class EditorComponent {
       !this.isSelected(this.scene()!.items[Number(item.dataset['item'])]!)
     )
       this.select(Number(item.dataset['item']));
-    const rect = this.element.nativeElement.getBoundingClientRect();
+    this.openMenu(event.clientX, event.clientY, 'canvas');
+  }
+
+  /**
+   * A right-click while a menu is open lands on the backdrop: close the menu and
+   * reopen ours for whatever is under the pointer instead of the webview's menu.
+   */
+  reopenContextMenu(event: MouseEvent): void {
+    event.preventDefault();
+    const backdrop = event.currentTarget as HTMLElement;
+    backdrop.style.pointerEvents = 'none';
+    const under = document.elementFromPoint(event.clientX, event.clientY);
+    backdrop.style.pointerEvents = '';
+    this.contextMenu.set(null);
+    const row = under?.closest<HTMLElement>('[role=treeitem][data-node]');
+    if (row) {
+      row.focus({ preventScroll: true });
+      this.structureMenu({
+        id: row.dataset['node']!,
+        x: event.clientX,
+        y: event.clientY,
+      });
+    } else if (under && this.viewport()?.nativeElement.contains(under))
+      this.showContextMenu({
+        target: under,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        preventDefault() {},
+      } as unknown as MouseEvent);
+    else this.viewport()?.nativeElement.focus({ preventScroll: true });
+  }
+
+  /** Delete entries for a dataset or field targeted in Structure, using the existing guarded actions. */
+  private dataDeletion(
+    busy: string,
+  ): { label: string; reason: string; run: () => void }[] {
+    const id = this.acceptedSelection().structureTargetId;
+    const datasets = this.host.snapshot()?.authoring?.datasets ?? [];
+    const dataset = datasets.find((entry) => entry.id === id);
+    const field = datasets
+      .flatMap((entry) => entry.fields)
+      .find((entry) => entry.id === id);
+    if (!id || (!dataset && !field)) return [];
+    return [
+      {
+        label: dataset
+          ? `Delete dataset ${dataset.name}`
+          : `Delete field ${field!.name}`,
+        reason: busy,
+        run: () =>
+          this.author({
+            targetId: id,
+            payload: { action: dataset ? 'deleteDataset' : 'deleteField' },
+          }),
+      },
+    ];
+  }
+
+  /** Opens the shared menu for a Structure entry, selecting it first when needed. */
+  structureMenu(target: { id: string; x: number; y: number }): void {
+    if (this.host.pending() || this.held(() => this.structureMenu(target)))
+      return;
+    if (!this.treeSelectedIds().includes(target.id))
+      this.selectTree({ id: target.id, additive: false });
+    this.openMenu(target.x, target.y, 'structure');
+  }
+
+  private openMenu(
+    clientX: number,
+    clientY: number,
+    source: 'canvas' | 'structure',
+  ): void {
+    const root = this.element.nativeElement;
+    const rect = root.getBoundingClientRect();
+    const x = clientX - rect.left,
+      y = clientY - rect.top;
     this.contextMenu.set({
-      x: Math.max(0, Math.min(event.clientX - rect.left, rect.width - 280)),
-      y: Math.max(40, Math.min(event.clientY - rect.top, rect.height - 360)),
+      x,
+      y,
       invoker:
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null,
+      source,
     });
+    // Measure the rendered menu, then flip it above/left of the pointer if needed.
     afterNextRender(
-      () =>
-        this.element.nativeElement
-          .querySelector<HTMLElement>('[role=menuitem]')
-          ?.focus(),
+      () => {
+        const menu = root.querySelector<HTMLElement>('.context-menu');
+        const current = this.contextMenu();
+        if (menu && current) {
+          const size = menu.getBoundingClientRect();
+          this.contextMenu.set({
+            ...current,
+            ...menuPosition(x, y, size, rect),
+          });
+        }
+        root.querySelector<HTMLElement>('[role=menuitem]')?.focus();
+      },
       { injector: this.injector },
     );
   }
@@ -816,7 +1104,7 @@ export class EditorComponent {
   focusProperties(
     selector = '.inspector input, .inspector button, .inspector summary',
   ): void {
-    if (this.workspaceWidth() < 800) this.overlay.set('right');
+    this.revealPanel('right');
     afterNextRender(
       () =>
         this.element.nativeElement
@@ -1320,6 +1608,7 @@ export class EditorComponent {
   blur(): void {
     this.space = false;
     this.cancelGesture();
+    this.clearDrop();
   }
 
   @HostListener('focusout', ['$event'])
@@ -1352,7 +1641,7 @@ export class EditorComponent {
       if ((tab || controls.length) && next !== null) {
         event.preventDefault();
         if (tab) {
-          this.leftTab.set(leftTabs[next]!);
+          this.showTab(leftTabs[next]!);
           this.element.nativeElement
             .querySelector<HTMLElement>(`#${this.leftTab()}-tab`)
             ?.focus();
@@ -1850,16 +2139,198 @@ export class EditorComponent {
     this.host.sendHistory(crypto.randomUUID(), action);
   }
 
-  openCreation(kind: CreationKind | null): void {
-    if (this.host.pending() || this.held(() => this.openCreation(kind))) return;
-    this.creation.set(kind);
-    this.leftTab.set('components');
-    if (this.workspaceWidth() < 1100) this.overlay.set('left');
+  /** Why creation is unavailable right now, or '' when it can proceed. */
+  private creationReason(): string {
+    const snapshot = this.host.snapshot();
+    if (this.host.pending())
+      return 'Wait for the current edit to finish, then try again.';
+    if (snapshot?.status !== 'editable' || !snapshot.authoring)
+      return 'This report cannot be edited visually; use Code XML.';
+    return '';
+  }
+
+  /**
+   * Creates a component at a body point (pt), or at the default position for
+   * keyboard and click activation: the visible body top-left plus 0.25in.
+   */
+  create(kind: CreationKind, at?: { left: number; top: number }): void {
+    if (this.held(() => this.create(kind, at))) return;
+    const reason = this.creationReason();
+    const authoring = this.host.snapshot()?.authoring;
+    if (reason || !authoring) {
+      this.gestureNotice.set(reason);
+      return;
+    }
+    const spot = kind === 'dataset' ? null : (at ?? this.defaultSpot(kind));
+    const size = (pt: number) => this.inUnit(pointsToPixels(pt));
+    this.keyboardCreation = !at;
+    this.author({
+      targetId: authoring.id,
+      payload: !spot
+        ? { action: 'createDataset' }
+        : {
+            action: kind === 'table' ? 'createTable' : 'createTextbox',
+            left: size(spot.left),
+            top: size(spot.top),
+          },
+    });
+  }
+
+  /** Default creation spot (pt), offset one grid step while the top-left is taken. */
+  private defaultSpot(kind: CreationKind): { left: number; top: number } {
+    const scene = this.scene()!;
+    const frame = this.frame();
+    const corner = clientToBody(
+      frame.left,
+      frame.top,
+      frame,
+      this.view().zoom,
+      scene.body,
+    );
+    let spot = this.creationSpot(
+      kind,
+      {
+        x: pixelsToPoints(Math.max(0, corner.x)) + 18,
+        y: pixelsToPoints(Math.max(0, corner.y)) + 18,
+      },
+      false,
+    );
+    const taken = (left: number, top: number) =>
+      scene.items.some(
+        (item) =>
+          item.bounds &&
+          item.kind !== 'cell' &&
+          Math.abs(pixelsToPoints(item.bounds.left) - left) < 0.01 &&
+          Math.abs(pixelsToPoints(item.bounds.top) - top) < 0.01,
+      );
+    for (let step = 0; step < 50 && taken(spot.left, spot.top); step++)
+      spot = {
+        left: spot.left + this.gridPt(),
+        top: spot.top + this.gridPt(),
+        guides: [],
+      };
+    return spot;
+  }
+
+  /** Snapped top-left (pt) for a new item whose top-left is at the body point; Alt bypasses. */
+  private creationSpot(
+    kind: CreationKind,
+    point: { x: number; y: number },
+    bypass: boolean,
+  ): { left: number; top: number; guides: readonly Guide[] } {
+    const [width, height] = creationSizes[kind];
+    const left = Math.max(0, point.x),
+      top = Math.max(0, point.y);
+    if (bypass) return { left, top, guides: [] };
+    const snap = this.snap(
+      [{ id: '', bounds: { left, top, width, height } }],
+      'move',
+      0,
+      0,
+    );
+    return {
+      left: Math.max(0, left + snap.dx),
+      top: Math.max(0, top + snap.dy),
+      guides: snap.guides,
+    };
+  }
+
+  /** The dragged catalog kind from the drag types (data is unreadable until drop). */
+  private draggedKind(event: DragEvent): CreationKind | null {
+    const type = [...(event.dataTransfer?.types ?? [])].find((t) =>
+      t.startsWith(dragTypePrefix),
+    );
+    const kind = type?.slice(dragTypePrefix.length);
+    return kind === 'textbox' || kind === 'table' || kind === 'dataset'
+      ? kind
+      : null;
+  }
+
+  private dropTarget(event: DragEvent): {
+    kind: CreationKind;
+    spot: { left: number; top: number; guides: readonly Guide[] };
+    valid: boolean;
+  } | null {
+    const kind = this.draggedKind(event);
+    const scene = this.scene();
+    if (!kind || !scene) return null;
+    const point = clientToBody(
+      event.clientX,
+      event.clientY,
+      this.frame(),
+      this.view().zoom,
+      scene.body,
+    );
+    const inside =
+      kind === 'dataset' ||
+      (point.x >= 0 &&
+        point.y >= 0 &&
+        point.x <= scene.body.width &&
+        point.y <= scene.body.height);
+    return {
+      kind,
+      spot: this.creationSpot(
+        kind,
+        { x: pixelsToPoints(point.x), y: pixelsToPoints(point.y) },
+        event.altKey,
+      ),
+      valid: inside && !this.creationReason(),
+    };
+  }
+
+  canvasDragOver(event: DragEvent): void {
+    const target = this.dropTarget(event);
+    if (!target) return;
+    event.preventDefault();
+    if (event.dataTransfer)
+      event.dataTransfer.dropEffect = target.valid ? 'copy' : 'none';
+    const [width, height] = creationSizes[target.kind];
+    this.dropPreview.set(
+      target.kind === 'dataset'
+        ? null
+        : {
+            bounds: pxBounds({
+              left: target.spot.left,
+              top: target.spot.top,
+              width,
+              height,
+            }),
+            valid: target.valid,
+          },
+    );
+    this.guides.set(target.valid ? target.spot.guides : []);
+  }
+
+  canvasDrop(event: DragEvent): void {
+    const target = this.dropTarget(event);
+    this.clearDrop();
+    if (!target) return;
+    event.preventDefault();
+    if (!target.valid) {
+      this.gestureNotice.set(
+        this.creationReason() || 'Drop inside the report body to create it.',
+      );
+      return;
+    }
+    this.create(target.kind, target.spot);
+  }
+
+  canvasDragLeave(event: DragEvent): void {
+    const viewport = this.viewport()?.nativeElement;
+    if (!viewport?.contains(event.relatedTarget as Node | null))
+      this.clearDrop();
+  }
+
+  @HostListener('window:dragend')
+  clearDrop(): void {
+    if (!this.dropPreview()) return;
+    this.dropPreview.set(null);
+    this.guides.set([]);
   }
 
   pageSetup(): void {
     if (this.held(() => this.pageSetup())) return;
-    if (this.workspaceWidth() < 800) this.overlay.set('right');
+    this.revealPanel('right');
     const details =
       this.element.nativeElement.querySelector<HTMLDetailsElement>(
         '[data-page-setup]',
@@ -1915,9 +2386,14 @@ export class EditorComponent {
     if (!draft || (form !== null && draft.control.form === form)) return false;
     this.cancelGesture();
     this.conflict.set({ run });
-    this.element.nativeElement
-      .querySelector<HTMLElement>('[data-draft-apply]')
-      ?.focus();
+    // The draft banner renders only once a conflict exists.
+    afterNextRender(
+      () =>
+        this.element.nativeElement
+          .querySelector<HTMLElement>('[data-draft-apply]')
+          ?.focus(),
+      { injector: this.injector },
+    );
     return true;
   }
 
@@ -1987,11 +2463,10 @@ export class EditorComponent {
         request.payload.action,
       )
     ) {
-      const payload = request.payload as { name: string };
       this.creating = {
         requestId,
         baseVersion: snapshot.version,
-        name: payload.name,
+        focusName: this.keyboardCreation,
         kind:
           request.payload.action === 'createTextbox'
             ? 'textbox'
@@ -2000,6 +2475,7 @@ export class EditorComponent {
               : 'dataset',
       };
     }
+    this.keyboardCreation = false;
     this.draft.set(null);
   }
 

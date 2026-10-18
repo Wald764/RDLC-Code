@@ -116,6 +116,22 @@ export function projectReport(document: XmlSyntaxDocument): ReportProjection {
         'vendor/02-structures/2.6-reportsection.md; vendor/02-structures/2.3.1-report.mustunderstand.md',
     });
   const textboxes = projectTextboxes(section);
+  const datasets = projectDatasets(root);
+  const tables = projectTables(section, textboxes);
+  // MS-RDL 2.23.10: a top-level table must name its dataset once there are several.
+  if (datasets.length > 1)
+    for (const table of tables)
+      if (table.dataset === null)
+        diagnostics.push({
+          code: 'TABLE_DATASET_REQUIRED',
+          category: 'invalid-value',
+          severity: 'warning',
+          range: table.node.range,
+          message: `Table ${table.name} has no dataset, and this report declares several.`,
+          correctiveAction: 'Choose a dataset in the table properties.',
+          blockedOperations: [],
+          citation: 'vendor/02-structures/2.23.10-tablix.datasetname.md',
+        });
   return {
     version: document.snapshot.version,
     namespace: root?.expandedName.namespaceUri ?? null,
@@ -128,8 +144,8 @@ export function projectReport(document: XmlSyntaxDocument): ReportProjection {
     capabilities: editable ? ['source', 'projection'] : ['source'],
     section,
     textboxes,
-    datasets: projectDatasets(root),
-    tables: projectTables(section, textboxes),
+    datasets,
+    tables,
     preserved,
     diagnostics,
   };

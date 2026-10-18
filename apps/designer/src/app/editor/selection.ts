@@ -75,6 +75,11 @@ export function selectStructure(
 export function structureMappings(
   from: readonly StructureNode[],
   to: readonly StructureNode[],
+  /**
+   * View state only (tree expansion): also map unnamed nodes whose kind and
+   * ancestry are unique, e.g. Report/ReportSections/Body. Never for selection.
+   */
+  unnamed = false,
 ): TargetMapping[] {
   const identities = (nodes: readonly StructureNode[]) => {
     const byId = new Map(nodes.map((node) => [node.id, node]));
@@ -106,7 +111,7 @@ export function structureMappings(
   return from.map((node) => {
     const key = before.keys.get(node.id);
     const resultId =
-      key && node.name && before.unique.get(key)
+      key && (node.name || unnamed) && before.unique.get(key)
         ? (after.unique.get(key) ?? null)
         : null;
     return {

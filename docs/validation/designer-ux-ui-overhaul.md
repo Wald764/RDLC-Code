@@ -66,6 +66,20 @@ The Corepack shim directory is prepended to PATH for pnpm commands. Compiled-out
 - `diagnostics.component.spec.ts` and `editor.component.spec.ts`: severity/target/reason instructions with a source-only corrective action; loading, no-report, editable, invalid-source, source-only and preservation-only presentations; truthful disabled Preview; live-region selection/status/pending/refusal announcements; labeled 24×24px targets, theme tokens and forced-colors rules. DOM roles and mocked focus checks are component evidence only and cannot satisfy SC-007.
 - Focus retention change: when a focused control is destroyed by reconciliation (for example a version change cancelling a draft), focus now moves to the labeled canvas control instead of body. The updated `lifecycle.spec.ts` assertion records this FR-033 behavior.
 
+### US4 panel and preference evidence
+
+- `viewport.spec.ts`: `ViewState` gains preferred `leftWidth`/`rightWidth` (220/300, bounded 180–360/240–480), `leftVisible`/`rightVisible`, `leftTab` (`components | structure`) and a closed nine-section `inspectorExpanded` map. Each field defaults independently; unknown keys, obsolete fields and transient values (selection, drafts) are dropped. `panelLayout` derives effective widths: left overlays below 1100px, both below 800px, inline panels shrink toward their minimums to keep a 320px canvas, and preferences are never rewritten.
+- `lifecycle.spec.ts`: toolbar Components/Properties controls hide/restore inline panels in the wide layout and toggle one overlay at a time in compact layouts; Escape restores invoker focus. Separators expose `role=separator`, orientation, current/min/max values, 10px arrow steps and Home/End. State persists only through the webview state API; independent webviews keep separate state; oversized preferences survive temporary clamping. Per-tab left-panel scroll is view-local. Elective panel changes defer during a key-repeat nudge and apply after keyup; host resize still cancels the gesture. Mounted drafts survive panel toggles; inspector section collapse persists. No host message other than `ready` is sent.
+- Designer suite: PASS, 178 tests across 14 files (inherited NG0956 warnings); `pnpm lint`, root and designer typecheck, designer production build: PASS. Changed files pass Prettier; the remaining `format:check` warnings come from CRLF working-copy line endings (`core.autocrlf=true`, LF in the index), not content changes.
+- T052 (four viewport sizes at 200% interface scaling, pointer resizing in a rendered webview, measured frame/center/focus results and native save) is **unrun**: jsdom has no layout, so these are component checks only.
+
+### Visual alignment with the UI reference
+
+- Presentation restyled toward `docs/design/rdlc-code-ui-reference.png` using VS Code theme tokens only: icon toolbar groups (history, clipboard, align, distribute, zoom, grid/snap toggles, named paper size), Components card grid, Structure tree with kind icons, two-column property grid with collapsible sections, status bar with Design / Preview (unavailable) / Code XML, diagnostics indicator and zoom slider. Icons are original 16-unit stroke drawings (`icon.component.ts`).
+- Components and Structure sit side by side when the workspace keeps a 640px canvas (from 1400px), tabs otherwise; the Structure tree opens its first four levels on load. Canvas items show their authored text and text style; accessible names keep the full item label.
+- Deliberately not reproduced: image/line/chart/nested-rectangle rendering, Styles tab, unsupported properties (visibility, border, padding, background, image source), grouping and z-order, populated preview, file buttons (native VS Code commands).
+- Checked with rendered screenshots of a real fixture snapshot (`tests/fixtures/tables/grouped.rdlc`) in headless Edge over DevTools at 1700, 1416 and 1024px, light and dark token sets. This is a visual spot check, not the T052/T056 measurement matrix.
+
 ### Resolved verification failures
 
 - Native history panels were initially absent because the test view type had no contribution. A test-only custom-editor contribution and dual development-extension loading now exercise actual panels.
@@ -74,7 +88,7 @@ The Corepack shim directory is prepended to PATH for pnpm commands. Compiled-out
 
 ## Scope and acceptance status
 
-T001–T044 implementation and automated verification are complete. The T030, T037 and T045 real-desktop observations are **unrun** (obscured/offscreen journey, real dataset/table save/reopen timing within five minutes, keyboard-only completion in real light/dark/high-contrast themes, measured contrast and screen-reader review): automated results above, DOM roles and mocked focus checks replace none of them. Phases 7 onward remain open in the task list.
+T001–T044 and T046–T051 implementation and automated verification are complete. The T030, T037 and T045 real-desktop observations are **unrun** (obscured/offscreen journey, real dataset/table save/reopen timing within five minutes, keyboard-only completion in real light/dark/high-contrast themes, measured contrast and screen-reader review): automated results above, DOM roles and mocked focus checks replace none of them. T052 and Phase 8 remain open in the task list.
 
 Full feature/release acceptance is **open**. Real desktop layout/scaling/drift measurements, rendered-webview end-to-end interaction, keyboard/theme/contrast/screen-reader observations, participant discovery/clarity/task timings and 100-sample paint/latency measurements are unrun. Installed-VSIX packaging/tests, offline and restricted-workspace observations are also unrun for this candidate. Native test-profile trust overrides and unrelated VS Code background network logs are not evidence of offline or restricted-workspace behavior.
 

@@ -214,16 +214,75 @@ describe('editor surface', () => {
     expect(host.sent()).toEqual([]);
     fixture.destroy();
   });
+  it('offers guarded dataset deletion and no arrangement in the Structure menu', async () => {
+    const { fixture, host, element, settle } = mount();
+    const snapshot = directSnapshot();
+    host.ingest({
+      ...snapshot,
+      structure: {
+        nodes: [
+          {
+            id: '2:1',
+            parentId: null,
+            kind: 'report',
+            label: 'Report',
+            name: null,
+            range: { start: 0, end: 0 },
+            preservedReason: null,
+          },
+          {
+            id: '2:20',
+            parentId: '2:1',
+            kind: 'dataset',
+            label: 'DataSet: Orders',
+            name: 'Orders',
+            range: { start: 0, end: 0 },
+            preservedReason: null,
+          },
+        ],
+        truncated: false,
+      },
+      authoring: {
+        ...snapshot.authoring,
+        datasets: [{ id: '2:20', name: 'Orders', fields: [] }],
+      },
+    });
+    await settle();
+    const component = fixture.componentInstance;
+    component.structureMenu({ id: '2:20', x: 10, y: 60 });
+    await settle();
+    expect(component.selectedDataset()?.name).toBe('Orders');
+    expect(component.contextMenu()?.source).toBe('structure');
+    const labels = [...element.querySelectorAll('[role=menuitem]')].map((m) =>
+      m.textContent?.trim(),
+    );
+    expect(labels.some((l) => l?.startsWith('Align'))).toBe(false);
+    expect(element.textContent).not.toContain(
+      'Select an item with known bounds',
+    );
+    const remove = [
+      ...element.querySelectorAll<HTMLElement>('[role=menuitem]'),
+    ].find((m) => m.textContent?.includes('Delete dataset Orders'))!;
+    expect(remove).toBeTruthy();
+    remove.click();
+    await settle();
+    expect(host.sent().at(-1)).toMatchObject({
+      operation: 'author',
+      targetId: '2:20',
+      payload: { action: 'deleteDataset' },
+    });
+    expect(component.contextMenu()).toBeNull();
+  });
   it('selects an accepted dataset definition without a geometry selection', async () => {
     const { fixture, host, settle } = mount();
     host.ingest(directSnapshot());
     await settle();
-    fixture.componentInstance.openCreation('dataset');
-    fixture.componentInstance.author({
-      targetId: '2:1',
-      payload: { action: 'createDataset', name: 'Orders' },
-    });
-    const request = host.sent().at(-1) as { requestId: string };
+    fixture.componentInstance.create('dataset');
+    const request = host.sent().at(-1) as {
+      requestId: string;
+      payload: unknown;
+    };
+    expect(request.payload).toEqual({ action: 'createDataset' });
     const next = directSnapshot(3, '3:4');
     host.ingest({
       ...next,
@@ -243,6 +302,7 @@ describe('editor surface', () => {
       mappings: [],
       reason: 'APPLIED',
       diagnostics: [],
+      created: { id: '3:20', name: 'Orders' },
     });
     await settle();
     expect(fixture.componentInstance.selectedDataset()?.name).toBe('Orders');
@@ -364,20 +424,17 @@ describe('editor surface', () => {
       expect(component.overlay()).toBe('left');
     });
   for (const snapshotFirst of [false, true])
-    it(`closes creation and selects only an accepted named textbox (${snapshotFirst})`, async () => {
-      const { fixture, host, element, settle } = mount();
+    it(`selects the host-named creation under either order (${snapshotFirst})`, async () => {
+      const { fixture, host, settle } = mount();
       const blank = directSnapshot();
       host.ingest({ ...blank, scene: { ...blank.scene, items: [] } });
       await settle();
-      fixture.componentInstance.openCreation('textbox');
-      await settle();
-      const form = element.querySelector<HTMLFormElement>('.left-panel form')!;
-      form.querySelector('input')!.value = 'Title';
-      form.dispatchEvent(
-        new Event('submit', { bubbles: true, cancelable: true }),
-      );
-      await settle();
-      const request = host.sent().at(-1) as { requestId: string };
+      fixture.componentInstance.create('textbox');
+      const request = host.sent().at(-1) as {
+        requestId: string;
+        payload: { left: string; top: string };
+      };
+      expect(request.payload).toMatchObject({ action: 'createTextbox' });
       expect(fixture.componentInstance.selected()).toBeNull();
       const next = directSnapshot(3, '3:4');
       const result = {
@@ -391,24 +448,78 @@ describe('editor surface', () => {
         mappings: [],
         reason: 'APPLIED',
         diagnostics: [],
+        created: { id: '3:4', name: 'Title' },
       };
       host.ingest(snapshotFirst ? next : result);
       await settle();
       host.ingest(snapshotFirst ? result : next);
       await settle();
-      expect(fixture.componentInstance.creation()).toBeNull();
-      expect(fixture.componentInstance.selected()?.name).toBe('Title');
+      expect(fixture.componentInstance.selected()?.id).toBe('3:4');
+      expect(fixture.componentInstance.gestureNotice()).toBe('Created Title.');
       expect(host.sent()).toHaveLength(1);
     });
+  it('creates at the visible body corner and offsets repeats by one grid step', async () => {
+    const { fixture, host, settle } = mount();
+    const blank = directSnapshot();
+    host.ingest({ ...blank, scene: { ...blank.scene, items: [] } });
+    await settle();
+    const component = fixture.componentInstance;
+    component.create('textbox');
+    expect(host.sent().at(-1)).toMatchObject({
+      payload: { action: 'createTextbox', left: '20pt', top: '20pt' },
+    });
+    host.ingest({
+      protocol: 1,
+      kind: 'editResult',
+      requestId: (host.sent().at(-1) as { requestId: string }).requestId,
+      baseVersion: 2,
+      version: 2,
+      changed: false,
+      accepted: false,
+      mappings: [],
+      reason: 'Refused',
+      diagnostics: [],
+    });
+    // An item already at that corner pushes the next creation by one grid step.
+    host.ingest({
+      ...blank,
+      version: 3,
+      scene: {
+        ...blank.scene,
+        version: 3,
+        items: [
+          {
+            ...blank.scene.items[0]!,
+            id: '3:3',
+            bounds: { left: 26.6667, top: 26.6667, width: 96, height: 24 },
+          },
+        ],
+      },
+    });
+    await settle();
+    component.create('textbox');
+    expect(host.sent().at(-1)).toMatchObject({
+      payload: { action: 'createTextbox', left: '30pt', top: '30pt' },
+    });
+  });
+  it('refuses creation while pending or source-only without sending', async () => {
+    const { fixture, host, settle } = mount();
+    const message = snapshotMessage({});
+    if (message.kind !== 'snapshot') throw new Error('Expected snapshot');
+    host.ingest({
+      ...message,
+      projection: { ...message.projection, status: 'source-only' },
+    });
+    await settle();
+    fixture.componentInstance.create('textbox');
+    expect(host.sent()).toEqual([]);
+    expect(fixture.componentInstance.gestureNotice()).toContain('Code XML');
+  });
   it('retains a refused creation without fabricating selection or retrying', async () => {
     const { fixture, host, settle } = mount();
     host.ingest(directSnapshot());
     await settle();
-    fixture.componentInstance.openCreation('textbox');
-    fixture.componentInstance.author({
-      targetId: '2:1',
-      payload: { action: 'createTextbox', name: 'Title' },
-    });
+    fixture.componentInstance.create('textbox');
     const request = host.sent().at(-1) as { requestId: string };
     host.ingest({
       protocol: 1,
@@ -419,11 +530,10 @@ describe('editor surface', () => {
       changed: false,
       accepted: false,
       mappings: [],
-      reason: 'Name already exists',
+      reason: 'Refused',
       diagnostics: [],
     });
     await settle();
-    expect(fixture.componentInstance.creation()).toBe('textbox');
     expect(fixture.componentInstance.selected()).toBeNull();
     expect(host.sent()).toHaveLength(1);
   });
@@ -971,7 +1081,7 @@ describe('editor surface', () => {
     await settle();
     const items = element.querySelectorAll('button.item');
     expect(items.length).toBe(1);
-    expect(items[0]!.textContent).toContain('Title: Hello');
+    expect(items[0]!.getAttribute('aria-label')).toBe('Title: Hello');
     const page = element.querySelector('.page') as HTMLElement;
     expect(page.style.width).toBe('816px');
   });
@@ -1013,9 +1123,9 @@ describe('editor surface', () => {
       payload: { property: 'name', value: 'Heading' },
     });
     // The surface still shows the accepted snapshot until the host confirms.
-    expect(element.querySelector('button.item')!.textContent).toContain(
-      'Title: Hello',
-    );
+    expect(
+      element.querySelector('button.item')!.getAttribute('aria-label'),
+    ).toBe('Title: Hello');
   });
 
   it('clears selection across versions and requires an explicit selection before editing', async () => {
@@ -1242,8 +1352,10 @@ describe('property drafts, limitations and focus', () => {
     const mounted = await withDraft();
     const { element, host, component } = mounted;
     expect(component.draft()).not.toBeNull();
-    expect(element.textContent).toContain('Unapplied draft');
+    // Typing alone is quiet; the banner appears only when an action would discard it.
+    expect(element.textContent).not.toContain('Unapplied draft');
     await conflictBySelection(mounted);
+    expect(element.textContent).toContain('Unapplied draft');
     expect(host.sent()).toHaveLength(0);
     expect(component.selected()?.name).toBe('Title');
     expect(component.conflict()).not.toBeNull();
@@ -1305,7 +1417,9 @@ describe('property drafts, limitations and focus', () => {
     await mounted.settle();
     expect(mounted.host.pending()).toBeNull();
     expect(mounted.element.contains(document.activeElement)).toBe(true);
-    expect(mounted.element.textContent).toContain('Blocked');
+    expect(mounted.element.textContent).toContain(
+      'Not applied: INVALID_NAME The report is unchanged.',
+    );
   });
 
   it('gestures and other forms conflict with a draft instead of overwriting it', async () => {
@@ -1333,7 +1447,7 @@ describe('property drafts, limitations and focus', () => {
     await mounted.settle();
     mounted.component.author({
       targetId: '2:1',
-      payload: { action: 'createTextbox', name: 'Heading' },
+      payload: { action: 'createTextbox', left: '1in', top: '1in' },
     });
     await mounted.settle();
     expect(mounted.host.sent()).toHaveLength(0);
@@ -1341,7 +1455,7 @@ describe('property drafts, limitations and focus', () => {
     await mounted.settle();
     expect(mounted.host.sent().at(-1)).toMatchObject({
       operation: 'author',
-      payload: { action: 'createTextbox', name: 'Heading' },
+      payload: { action: 'createTextbox', left: '1in', top: '1in' },
     });
   });
 
@@ -1398,6 +1512,162 @@ describe('property drafts, limitations and focus', () => {
     expect(element.querySelector('.status')!.textContent).toContain(
       '4 selected',
     );
+  });
+});
+
+describe('context menu retargeting', () => {
+  beforeEach(() => TestBed.resetTestingModule());
+  it('reopens the extension menu where a second right-click lands', async () => {
+    const m = mount();
+    m.host.ingest(draftSnapshot());
+    await m.settle();
+    const component = m.fixture.componentInstance;
+    const items = m.element.querySelectorAll<HTMLElement>('button.item');
+    component.showContextMenu(
+      new MouseEvent('contextmenu', { clientX: 20, clientY: 80 }),
+    );
+    await m.settle();
+    const backdrop = m.element.querySelector<HTMLElement>('.context-backdrop')!;
+    expect(backdrop).not.toBeNull();
+    const original = document.elementFromPoint;
+    document.elementFromPoint = () => items[1]!;
+    try {
+      const second = new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 200,
+        clientY: 120,
+      });
+      backdrop.dispatchEvent(second);
+      await m.settle();
+      expect(second.defaultPrevented).toBe(true);
+      expect(component.contextMenu()?.source).toBe('canvas');
+      expect(component.selectedIds()).toEqual([
+        component.scene()!.items[Number(items[1]!.dataset['item'])]!.id,
+      ]);
+      document.elementFromPoint = () => m.element.querySelector('.inspector')!;
+      m.element
+        .querySelector<HTMLElement>('.context-backdrop')!
+        .dispatchEvent(
+          new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+        );
+      await m.settle();
+      expect(component.contextMenu()).toBeNull();
+      expect(m.host.sent()).toEqual([]);
+    } finally {
+      document.elementFromPoint = original;
+    }
+  });
+});
+
+describe('drag-and-drop creation', () => {
+  beforeEach(() => TestBed.resetTestingModule());
+  const drag = (
+    kind: string,
+    clientX: number,
+    clientY: number,
+    altKey = false,
+  ) => {
+    let prevented = false;
+    const event = {
+      clientX,
+      clientY,
+      altKey,
+      relatedTarget: null,
+      dataTransfer: {
+        types: [`application/x-rdlc-${kind}`],
+        dropEffect: 'move',
+      },
+      preventDefault: () => (prevented = true),
+    };
+    return {
+      event: event as unknown as DragEvent,
+      raw: event,
+      prevented: () => prevented,
+    };
+  };
+  async function mounted() {
+    const m = mount();
+    m.host.ingest(draftSnapshot());
+    await m.settle();
+    const edits = () =>
+      m.host.sent().filter((s) => (s as { kind: string }).kind === 'edit');
+    return { ...m, component: m.fixture.componentInstance, edits };
+  }
+
+  it('creates one textbox at the unsnapped drop point with Alt at any zoom and scroll', async () => {
+    const m = await mounted();
+    const over = drag('textbox', 100, 50, true);
+    m.component.canvasDragOver(over.event);
+    expect(over.prevented()).toBe(true);
+    expect(over.raw.dataTransfer.dropEffect).toBe('copy');
+    expect(m.component.dropPreview()?.valid).toBe(true);
+    m.component.canvasDrop(drag('textbox', 100, 50, true).event);
+    expect(m.component.dropPreview()).toBeNull();
+    expect(m.edits()).toHaveLength(1);
+    expect(m.edits()[0]).toMatchObject({
+      operation: 'author',
+      payload: { action: 'createTextbox', left: '75pt', top: '37.5pt' },
+    });
+  });
+
+  it('converts the drop point through zoom and scroll', async () => {
+    const m = await mounted();
+    m.component.zoomTo(2);
+    await m.settle();
+    const viewport = m.element.querySelector<HTMLElement>('.viewport')!;
+    viewport.scrollLeft = 40;
+    m.component.canvasDrop(drag('textbox', 100, 50, true).event);
+    expect(m.edits().at(-1)).toMatchObject({
+      payload: { action: 'createTextbox', left: '52.5pt', top: '18.75pt' },
+    });
+  });
+
+  it('snaps to the grid without Alt', async () => {
+    const m = await mounted();
+    m.component.setView({ gridSnap: true, guidesSnap: false, gridSpacing: 10 });
+    m.component.canvasDrop(drag('textbox', 101, 49).event);
+    const payload = (m.edits().at(-1) as { payload: { left: string } }).payload;
+    expect(Number.parseFloat(payload.left) % 10).toBe(0);
+  });
+
+  it('sends nothing for drops outside the body, cancelled drags or ineligible states', async () => {
+    const m = await mounted();
+    const outside = drag('textbox', 2000, 50, true);
+    m.component.canvasDragOver(outside.event);
+    expect(outside.raw.dataTransfer.dropEffect).toBe('none');
+    expect(m.component.dropPreview()?.valid).toBe(false);
+    m.component.canvasDrop(drag('textbox', 2000, 50, true).event);
+    expect(m.edits()).toHaveLength(0);
+    expect(m.component.gestureNotice()).toContain('inside the report body');
+    m.component.canvasDragOver(drag('textbox', 10, 10).event);
+    m.component.clearDrop();
+    expect(m.component.dropPreview()).toBeNull();
+    m.component.canvasDragOver(drag('textbox', 10, 10).event);
+    m.component.blur();
+    expect(m.component.dropPreview()).toBeNull();
+    m.component.canvasDragOver(drag('textbox', 10, 10).event);
+    m.component.workspaceResize(900, 700);
+    expect(m.component.dropPreview()).toBeNull();
+    const foreign = {
+      ...drag('textbox', 10, 10).raw,
+      dataTransfer: { types: ['text/plain'], dropEffect: 'move' },
+    };
+    m.component.canvasDrop(foreign as unknown as DragEvent);
+    expect(m.edits()).toHaveLength(0);
+    m.component.canvasDrop(drag('textbox', 10, 10, true).event);
+    expect(m.edits()).toHaveLength(1);
+    m.component.canvasDrop(drag('textbox', 20, 20, true).event);
+    expect(m.edits()).toHaveLength(1);
+    expect(m.component.gestureNotice()).toContain('Wait for the current edit');
+  });
+
+  it('creates a table at the drop point and a dataset anywhere on the canvas', async () => {
+    const m = await mounted();
+    m.component.canvasDrop(drag('table', 40, 40, true).event);
+    expect(m.edits().at(-1)).toMatchObject({
+      payload: { action: 'createTable', left: '30pt', top: '30pt' },
+    });
   });
 });
 

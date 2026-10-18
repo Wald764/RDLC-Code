@@ -106,9 +106,19 @@ test('typed name index and deterministic collision-free allocation', () => {
       ['Fresh', 'Fresh'],
       ['Table9', 'Table1'],
       ['Orders', 'Orders1'],
-      ['Título', 'Textbox'],
+      ['Título', 'Textbox1'],
     ],
   );
+  // Copies follow the creation series even when the bare stem is free.
+  const series = allocateNames(capture([id('Textbox2')]), {
+    items: new Map([
+      ['Textbox1', 'Textbox'],
+      ['Textbox2', 'Textbox'],
+    ]),
+    groups: new Set(),
+    datasets: new Set(),
+  });
+  assert.deepEqual([...series.values()], ['Textbox3']);
   const nested = allocateNames(capture([id('A1'), id('A2'), id('A')]), {
     items: new Map([
       ['A1', 'Textbox'],

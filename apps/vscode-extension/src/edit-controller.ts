@@ -35,8 +35,8 @@ import {
   validateDatasetName,
   validateDataMutation,
 } from '@rdlc/validation/datasets';
-import { length, validatePage } from '@rdlc/validation/validate';
-import { validateTableAction } from '@rdlc/validation/tables';
+import { length, nextName, validatePage } from '@rdlc/validation/validate';
+import { validatePosition, validateTableAction } from '@rdlc/validation/tables';
 import { planTable } from '@rdlc/xml-serializer/tables';
 import { fieldBinding, sumExpression } from '@rdlc/expressions/totals';
 
@@ -46,6 +46,11 @@ export type PlanOutcome =
       readonly plan: PatchPlan;
       readonly candidate: string;
       readonly changed: boolean;
+      /** Host-allocated item of an accepted creation, located again in the result. */
+      readonly created?: {
+        readonly element: 'Textbox' | 'Tablix' | 'DataSet';
+        readonly name: string;
+      };
     }
   | { readonly ok: false; readonly diagnostics: readonly Diagnostic[] };
 
@@ -276,6 +281,9 @@ export function planAuthoringIntent(
   );
   let plan: PatchPlan;
   let verify: (candidate: ReportProjection) => boolean;
+  let created:
+    | { element: 'Textbox' | 'Tablix' | 'DataSet'; name: string }
+    | undefined;
   try {
     if (
       [
@@ -312,7 +320,6 @@ export function planAuthoringIntent(
         return fail('Choose one of the seven supported field types.');
       if ('name' in payload) {
         const names =
-          payload.action === 'createDataset' ||
           payload.action === 'renameDataset'
             ? report.datasets
                 .filter((entry) => entry !== dataset)
@@ -341,10 +348,28 @@ export function planAuthoringIntent(
           target.node,
           field ? 'field' : 'dataset',
           target.name,
+          // Deletion matches Cut (002): opaque content blocks only where it spells the name.
+          // Renames stay strict because references would need rewriting.
+          payload.action.startsWith('delete') ? snapshot.source : undefined,
         );
         if (errors.length) return { ok: false, diagnostics: errors };
       }
-      plan = planDataset(snapshot, root, dataset, field, payload);
+      if (payload.action === 'createDataset')
+        created = {
+          element: 'DataSet',
+          name: nextName(
+            'DataSet',
+            report.datasets.map((entry) => entry.name),
+          ),
+        };
+      plan = planDataset(
+        snapshot,
+        root,
+        dataset,
+        field,
+        payload,
+        created?.name,
+      );
       const datasetIndex = dataset ? report.datasets.indexOf(dataset) : -1;
       const fieldIndex = field ? dataset!.fields.indexOf(field) : -1;
       verify = (candidate) => {
@@ -353,7 +378,7 @@ export function planAuthoringIntent(
           case 'createDataset':
             return candidate.datasets.some(
               (entry) =>
-                entry.name === payload.name &&
+                entry.name === created!.name &&
                 entry.query === null &&
                 entry.fields.length === 0,
             );
@@ -419,23 +444,31 @@ export function planAuthoringIntent(
     } else if (payload.action === 'createTextbox') {
       if (intent.targetId !== root.id || !report.section)
         return fail('Select the report to create a body textbox.');
-      const errors = validateDatasetName(
-        root,
-        payload.name,
-        reportItemNames(root),
-      );
+      const errors = validatePosition(root, payload.left, payload.top);
       if (errors.length) return { ok: false, diagnostics: errors };
-      plan = planCreateTextbox(snapshot, report.section, payload.name);
+      const name = nextName('Textbox', reportItemNames(root));
+      created = { element: 'Textbox', name };
+      plan = planCreateTextbox(
+        snapshot,
+        report.section,
+        name,
+        payload.left,
+        payload.top,
+      );
       verify = (candidate) =>
         candidate.textboxes.some(
           (textbox) =>
             textbox.context === 'body' &&
-            textbox.name === payload.name &&
-            textbox.value?.text === '',
+            textbox.name === name &&
+            textbox.value?.text === '' &&
+            textbox.bounds.left === payload.left &&
+            textbox.bounds.top === payload.top,
         );
     } else if (
       [
         'createTable',
+        'renameTable',
+        'setTableDataset',
         'setTableProperty',
         'setColumnWidth',
         'setRowHeight',
@@ -462,6 +495,7 @@ export function planAuthoringIntent(
         table,
         intent.targetId,
         payload,
+        snapshot.source,
       );
       if (errors.length) return { ok: false, diagnostics: errors };
       if (!report.section) return fail('Missing report section.');
@@ -472,6 +506,7 @@ export function planAuthoringIntent(
             table.node,
             'group',
             group.name,
+            snapshot.source,
           );
           if (errors.length) return { ok: false, diagnostics: errors };
         }
@@ -486,6 +521,7 @@ export function planAuthoringIntent(
             table.node,
             'report-item',
             name,
+            snapshot.source,
           );
           if (errors.length) return { ok: false, diagnostics: errors };
         }
@@ -505,11 +541,17 @@ export function planAuthoringIntent(
             cell.textbox.node,
             'report-item',
             cell.textbox.name ?? '',
+            snapshot.source,
           );
           if (dependencies.length)
             return { ok: false, diagnostics: dependencies };
         }
       }
+      if (payload.action === 'createTable')
+        created = {
+          element: 'Tablix',
+          name: nextName('Table', reportItemNames(root)),
+        };
       plan = planTable(
         snapshot,
         report.section,
@@ -521,12 +563,13 @@ export function planAuthoringIntent(
         'field' in payload && 'scope' in payload
           ? sumExpression(payload.field, payload.scope)
           : '',
+        created?.name,
       );
       const tableIndex = table ? report.tables.indexOf(table) : -1;
       verify = (candidate) => {
         const next =
           payload.action === 'createTable'
-            ? candidate.tables.find((entry) => entry.name === payload.name)
+            ? candidate.tables.find((entry) => entry.name === created!.name)
             : candidate.tables[tableIndex];
         if (payload.action === 'deleteTable')
           return (
@@ -537,11 +580,16 @@ export function planAuthoringIntent(
         switch (payload.action) {
           case 'createTable':
             return (
-              next.dataset === payload.dataset &&
-              next.columns.length === 1 &&
-              next.rows[0]?.cells[0]?.textbox?.value?.text ===
-                fieldBinding(payload.field)
+              next.dataset === null &&
+              next.columns.length === 2 &&
+              next.rows.length === 2 &&
+              next.bounds.left === payload.left &&
+              next.bounds.top === payload.top
             );
+          case 'renameTable':
+            return next.name === payload.name;
+          case 'setTableDataset':
+            return next.dataset === payload.dataset;
           case 'setTableProperty':
             return (
               next.bounds[payload.property as 'left' | 'top'] === payload.value
@@ -612,6 +660,7 @@ export function planAuthoringIntent(
         textbox.node,
         'report-item',
         textbox.name ?? '',
+        snapshot.source,
       );
       if (errors.length) return { ok: false, diagnostics: errors };
       plan = patchPlan(snapshot, [
@@ -630,6 +679,7 @@ export function planAuthoringIntent(
       plan,
       candidate,
       changed: candidate !== snapshot.source,
+      ...(created ? { created } : {}),
     };
   } catch (error) {
     return fail(

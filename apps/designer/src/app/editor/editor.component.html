@@ -1,11 +1,20 @@
 <section
   class="editor"
   aria-label="Report design surface"
-  [class.compact-left]="workspaceWidth() < 1100"
-  [class.compact-right]="workspaceWidth() < 800"
+  [class.compact-left]="!panels().left"
+  [class.compact-right]="!panels().right"
+  [style.grid-template-columns]="
+    panels().left +
+    panels().structure +
+    'px minmax(0, 1fr) ' +
+    panels().right +
+    'px'
+  "
 >
   <div
     class="feedback"
+    [style.left.px]="panels().left + panels().structure + 22"
+    [style.right.px]="panels().right + 2"
     role="status"
     aria-live="polite"
     aria-label="Editor messages"
@@ -33,13 +42,13 @@
           class="outcome"
           [attr.data-accepted]="outcome.accepted"
         >
-          Blocked:
-          {{ outcome.reason }}
+          Not applied: {{ explainRefusal(outcome) }} The report is unchanged.
+          <span class="muted">({{ outcome.reason }})</span>
         </p>
       }
     }
   </div>
-  @if (draft(); as current) {
+  @if (conflict() ? draft() : null; as current) {
     <div class="draft" role="group" aria-label="Unapplied draft" data-conflicts>
       <p role="status">
         Unapplied draft in
@@ -65,83 +74,238 @@
     </div>
   }
   @if (scene(); as design) {
-    <p class="status" role="status">
-      <button type="button" data-conflicts (click)="openSource()">
-        Code XML
-      </button>
-      Design · Authoring layout (not runtime pagination or a data preview) —
-      {{ status() }} · {{ design.items.length }} item(s) ·
-      {{ treeSelectedIds().length }} selected
-      @if (primary(); as item) {
-        · Primary: {{ item.label }}
-      }
-      @if (structureNode(); as node) {
-        · {{ node.kind }}: {{ node.label }}
-      }
-      @if (acceptedSelection().cellTargetId) {
-        · Cell: {{ selected()?.label }}
-      }
-      · {{ +(view().zoom * 100).toFixed(2) }}% · {{ view().unit }} · Page
-      {{ inUnit(design.page.width) }} × {{ inUnit(design.page.height) }} · Body
-      {{ inUnit(design.body.width) }} × {{ inUnit(design.body.height) }}
+    <footer class="status">
+      <div class="view-tabs" role="group" aria-label="Editor view">
+        <button type="button" class="seg" aria-pressed="true">
+          <rdlc-icon name="design" />Design
+        </button>
+        <span
+          tabindex="0"
+          aria-label="Preview unavailable: populated RDLC rendering is not supported"
+          title="Populated RDLC rendering is not supported"
+          ><button
+            type="button"
+            class="seg"
+            disabled
+            aria-label="Preview unavailable"
+          >
+            <rdlc-icon name="preview" />Preview (not available)
+          </button></span
+        >
+        <button type="button" class="seg" data-conflicts (click)="openSource()">
+          <rdlc-icon name="code" />Code XML
+        </button>
+      </div>
+      <p class="status-text" role="status">
+        <span class="sr-only"
+          >Design. Authoring layout, not runtime pagination or a data preview.
+          {{ status() }}.</span
+        >
+        {{ design.items.length }} items · {{ treeSelectedIds().length }}
+        selected
+        @if (primary(); as item) {
+          · Primary: {{ item.label }}
+        }
+        @if (structureNode(); as node) {
+          · {{ node.kind }}: {{ node.label }}
+        }
+        @if (acceptedSelection().cellTargetId) {
+          · Cell: {{ selected()?.label }}
+        }
+      </p>
       <button
         type="button"
+        class="tb text"
+        [class.problem]="diagnostics().length"
         [attr.aria-expanded]="diagnosticsOpen()"
         (click)="toggleDiagnostics()"
       >
-        {{ diagnosticSummary() }}
+        <rdlc-icon [name]="diagnostics().length ? 'warning' : 'check'" />
+        {{ diagnostics().length ? diagnosticSummary() : 'No problems' }}
       </button>
+      <div class="zoom" role="group" aria-label="Zoom">
+        <input
+          type="range"
+          aria-label="Zoom level"
+          min="25"
+          max="400"
+          step="5"
+          [value]="+(view().zoom * 100).toFixed(2)"
+          (input)="zoomPercent(slider.value)"
+          #slider
+        />
+        <span class="zoom-value">{{ +(view().zoom * 100).toFixed(0) }}%</span>
+      </div>
       <span
-        tabindex="0"
-        aria-label="Preview unavailable: populated RDLC rendering is not supported"
-        title="Populated RDLC rendering is not supported"
-        ><button type="button" disabled aria-label="Preview unavailable">
-          Preview
-        </button></span
+        class="page-size"
+        [title]="
+          'Body ' +
+          inUnit(design.body.width) +
+          ' × ' +
+          inUnit(design.body.height)
+        "
       >
-    </p>
+        Page {{ inUnit(design.page.width) }} ×
+        {{ inUnit(design.page.height) }}
+        <span class="sr-only"
+          >Body {{ inUnit(design.body.width) }} ×
+          {{ inUnit(design.body.height) }}</span
+        >
+      </span>
+    </footer>
     <div
       class="toolbar"
       role="toolbar"
       aria-label="Report commands"
       data-conflicts
     >
+      <div role="group" aria-label="Panels">
+        <button
+          class="tb left-access"
+          type="button"
+          aria-controls="left-panel"
+          [attr.aria-expanded]="panelShown('left')"
+          [title]="
+            (panelShown('left') ? 'Hide' : 'Show') +
+            ' the Components and Structure panel'
+          "
+          (click)="panelAccess('left')"
+        >
+          <rdlc-icon name="panel-left" /><span class="sr-only">Components</span>
+        </button>
+        <button
+          class="tb right-access"
+          type="button"
+          aria-controls="properties-panel"
+          [attr.aria-expanded]="panelShown('right')"
+          [title]="
+            (panelShown('right') ? 'Hide' : 'Show') + ' the Properties panel'
+          "
+          (click)="panelAccess('right')"
+        >
+          <rdlc-icon name="panel-right" /><span class="sr-only"
+            >Properties</span
+          >
+        </button>
+      </div>
       <div role="group" aria-label="Native history">
         <button
           type="button"
+          class="tb"
           [disabled]="!!host.pending()"
           (click)="history('undo')"
           title="Undo (Ctrl/Cmd+Z)"
         >
-          Undo
+          <rdlc-icon name="undo" /><span class="sr-only">Undo</span>
         </button>
         <button
           type="button"
+          class="tb"
           [disabled]="!!host.pending()"
           (click)="history('redo')"
           title="Redo (Ctrl/Cmd+Shift+Z)"
         >
-          Redo
+          <rdlc-icon name="redo" /><span class="sr-only">Redo</span>
         </button>
       </div>
-      <button class="left-access" type="button" (click)="toggleOverlay('left')">
-        Components
-      </button>
-      <button
-        class="right-access"
-        type="button"
-        (click)="toggleOverlay('right')"
-      >
-        Properties
-      </button>
-      <details class="command-overflow">
-        <summary>Arrange and clipboard</summary>
-        <div
-          class="overflow-content"
-          role="group"
-          aria-label="Selection and arrangement"
-          data-conflicts
+      @for (group of toolbarActions(); track group.label) {
+        <div role="group" [attr.aria-label]="group.label">
+          @for (action of group.actions; track action.label) {
+            <button
+              type="button"
+              class="tb"
+              [attr.aria-disabled]="!!action.reason"
+              [title]="
+                action.label + (action.reason ? ': ' + action.reason : '')
+              "
+              (click)="action.reason || action.run()"
+            >
+              <rdlc-icon [name]="action.icon" /><span class="sr-only">{{
+                action.label
+              }}</span>
+            </button>
+          }
+        </div>
+      }
+      <div class="view-controls" role="group" aria-label="Zoom and view">
+        <button
+          type="button"
+          class="tb"
+          title="Zoom out"
+          (click)="zoomStep(-1)"
         >
+          <rdlc-icon name="minus" /><span class="sr-only">Zoom out</span>
+        </button>
+        <input
+          type="number"
+          class="zoom-field"
+          aria-label="Zoom percent"
+          min="25"
+          max="400"
+          step="5"
+          [value]="+(view().zoom * 100).toFixed(2)"
+          (change)="zoomPercent(zoomField.value)"
+          #zoomField
+        />
+        <button type="button" class="tb" title="Zoom in" (click)="zoomStep(1)">
+          <rdlc-icon name="plus" /><span class="sr-only">Zoom in</span>
+        </button>
+        <button
+          type="button"
+          class="tb"
+          title="Zoom to 100%"
+          (click)="zoomTo(1)"
+        >
+          <span class="tb-label">100%</span>
+        </button>
+        <button type="button" class="tb" title="Fit page" (click)="fit('page')">
+          <rdlc-icon name="fit-page" /><span class="sr-only">Fit Page</span>
+        </button>
+        <button type="button" class="tb" title="Fit body" (click)="fit('body')">
+          <rdlc-icon name="fit-body" /><span class="sr-only">Fit Body</span>
+        </button>
+        <button
+          type="button"
+          class="tb"
+          title="Reveal selection"
+          (click)="revealSelection()"
+        >
+          <rdlc-icon name="reveal" /><span class="sr-only"
+            >Reveal Selection</span
+          >
+        </button>
+      </div>
+      <div role="group" aria-label="Grid and snapping">
+        @for (toggle of quickToggles; track toggle.key) {
+          <button
+            type="button"
+            class="tb text"
+            [attr.aria-pressed]="view()[toggle.key]"
+            [title]="toggle.title"
+            [attr.aria-label]="toggle.title"
+            (click)="setToggle(toggle.key, !view()[toggle.key])"
+          >
+            <rdlc-icon [name]="toggle.icon" />{{ toggle.label }}
+          </button>
+        }
+      </div>
+      <button
+        type="button"
+        class="tb text"
+        title="Page setup"
+        (click)="pageSetup()"
+      >
+        <rdlc-icon name="page" />{{ pageLabel()
+        }}<span class="sr-only"> Page setup</span>
+      </button>
+      <span class="spacer"></span>
+      <details class="command-overflow">
+        <summary class="tb" title="More view and placement settings">
+          <rdlc-icon name="more" /><span class="sr-only"
+            >More view and placement settings</span
+          >
+        </summary>
+        <div class="overflow-content">
           <button
             type="button"
             (click)="selectAll()"
@@ -156,117 +320,8 @@
           >
             Clear selection
           </button>
-          <button
-            type="button"
-            (click)="clipboard('copy')"
-            [disabled]="!!host.pending() || !selectedIds().length"
-          >
-            Copy
-          </button>
-          <button
-            type="button"
-            (click)="clipboard('cut')"
-            [disabled]="!!host.pending() || !selectedIds().length"
-          >
-            Cut
-          </button>
-          <button
-            type="button"
-            (click)="clipboard('paste')"
-            [disabled]="!!host.pending()"
-          >
-            Paste
-          </button>
-          <button
-            type="button"
-            (click)="clipboard('duplicate')"
-            [disabled]="!!host.pending() || !selectedIds().length"
-          >
-            Duplicate
-          </button>
-          @for (mode of alignModes; track mode) {
-            <button
-              type="button"
-              (click)="arrange('align', mode)"
-              [disabled]="
-                !!host.pending() ||
-                selectedIds().length < 2 ||
-                !!bulkReason(
-                  ['left', 'center', 'right'].includes(mode)
-                    ? 'horizontal'
-                    : 'vertical'
-                )
-              "
-            >
-              Align {{ mode }}
-            </button>
-          }
-          @for (axis of ['horizontal', 'vertical']; track axis) {
-            <button
-              type="button"
-              (click)="
-                arrange(
-                  'distribute',
-                  axis === 'horizontal' ? 'horizontal' : 'vertical'
-                )
-              "
-              [disabled]="
-                !!host.pending() ||
-                selectedIds().length < 3 ||
-                !!bulkReason(axis === 'horizontal' ? 'horizontal' : 'vertical')
-              "
-            >
-              Distribute {{ axis }}
-            </button>
-          }
-          @if (bulkReason('horizontal')) {
-            <p role="status">Horizontal: {{ bulkReason('horizontal') }}</p>
-          }
-          @if (bulkReason('vertical')) {
-            <p role="status">Vertical: {{ bulkReason('vertical') }}</p>
-          }
-          @if (selectedIds().length < 2) {
-            <p>
-              Select at least two eligible body items to align, or three to
-              distribute.
-            </p>
-          }
-        </div>
-      </details>
-      <div class="view-controls" role="toolbar" aria-label="View and placement">
-        <button type="button" (click)="zoomStep(-1)">Zoom out</button>
-        <input
-          type="number"
-          aria-label="Zoom percent"
-          min="25"
-          max="400"
-          step="5"
-          [value]="+(view().zoom * 100).toFixed(2)"
-          (change)="zoomPercent(zoomField.value)"
-          #zoomField
-        />
-        <button type="button" (click)="zoomStep(1)">Zoom in</button>
-        <button type="button" (click)="zoomTo(1)">100%</button>
-        <button type="button" (click)="fit('page')">Fit Page</button>
-        <button type="button" (click)="fit('body')">Fit Body</button>
-        <button type="button" (click)="revealSelection()">
-          Reveal Selection
-        </button>
-        @for (toggle of toggles.slice(0, 2); track toggle[0]) {
           <label
-            ><input
-              type="checkbox"
-              #quick
-              [attr.aria-label]="toggle[1]"
-              [checked]="view()[toggle[0]]"
-              (change)="setToggle(toggle[0], quick.checked)"
-            />{{ toggle[1] }}</label
-          >
-        }
-        <button type="button" (click)="pageSetup()">Page setup</button>
-        <details class="command-overflow">
-          <summary>More view and placement settings</summary>
-          <div class="overflow-content">
+            >Grid spacing
             <input
               type="number"
               aria-label="Grid spacing"
@@ -275,18 +330,20 @@
               [value]="view().gridSpacing"
               (change)="gridInput(spacing.value, gridUnit.value)"
               #spacing
-            />
-            <select
-              aria-label="Grid unit"
-              (change)="gridInput(spacing.value, gridUnit.value)"
-              #gridUnit
-            >
-              @for (unit of units; track unit) {
-                <option [value]="unit" [selected]="unit === view().gridUnit">
-                  {{ unit }}
-                </option>
-              }
-            </select>
+          /></label>
+          <select
+            aria-label="Grid unit"
+            (change)="gridInput(spacing.value, gridUnit.value)"
+            #gridUnit
+          >
+            @for (unit of units; track unit) {
+              <option [value]="unit" [selected]="unit === view().gridUnit">
+                {{ unit }}
+              </option>
+            }
+          </select>
+          <label
+            >Display unit
             <select
               aria-label="Display unit"
               (change)="setView({ unit: $any(displayUnit.value) })"
@@ -297,94 +354,157 @@
                   {{ unit }}
                 </option>
               }
-            </select>
-            @for (toggle of toggles.slice(2); track toggle[0]) {
-              <label
-                ><input
-                  type="checkbox"
-                  #box
-                  [attr.aria-label]="toggle[1]"
-                  [checked]="view()[toggle[0]]"
-                  (change)="setToggle(toggle[0], box.checked)"
-                />
-                {{ toggle[1] }}</label
-              >
-            }
-            <span
-              >Alt bypasses snapping; Space+drag pans; Ctrl+wheel zooms.</span
+            </select></label
+          >
+          @for (toggle of toggles.slice(2); track toggle[0]) {
+            <label
+              ><input
+                type="checkbox"
+                #box
+                [attr.aria-label]="toggle[1]"
+                [checked]="view()[toggle[0]]"
+                (change)="setToggle(toggle[0], box.checked)"
+              />
+              {{ toggle[1] }}</label
             >
-          </div>
-        </details>
-      </div>
+          }
+          <p class="hint">
+            Alt bypasses snapping; Space+drag pans; Ctrl+wheel zooms.
+          </p>
+        </div>
+      </details>
     </div>
     <aside
       class="left-panel"
+      id="left-panel"
       data-conflicts
       [class.open]="overlay() === 'left'"
+      [class.split]="!!panels().structure"
+      [style.--components.px]="panels().left"
+      [style.width.px]="panels().left ? null : view().leftWidth"
       aria-label="Components and Structure"
     >
-      <div role="tablist" aria-label="Navigation panels">
-        @for (tab of leftTabs; track tab) {
+      @if (!panels().structure) {
+        <div class="panel-header">
+          <div role="tablist" aria-label="Navigation panels">
+            @for (tab of leftTabs; track tab) {
+              <button
+                type="button"
+                role="tab"
+                [id]="tab + '-tab'"
+                [attr.aria-controls]="tab + '-panel'"
+                [attr.aria-selected]="leftTab() === tab"
+                [tabIndex]="leftTab() === tab ? 0 : -1"
+                (click)="showTab(tab)"
+              >
+                {{ tab[0]!.toUpperCase() + tab.slice(1) }}
+              </button>
+            }
+          </div>
           <button
             type="button"
-            role="tab"
-            [id]="tab + '-tab'"
-            [attr.aria-controls]="tab + '-panel'"
-            [attr.aria-selected]="leftTab() === tab"
-            [tabIndex]="leftTab() === tab ? 0 : -1"
-            (click)="leftTab.set(tab)"
+            class="tb"
+            title="Hide the Components and Structure panel"
+            (click)="panelAccess('left')"
           >
-            {{ tab[0]!.toUpperCase() + tab.slice(1) }}
+            <rdlc-icon name="close" /><span class="sr-only">Hide panel</span>
           </button>
+        </div>
+      }
+      <div
+        id="components-panel"
+        class="pane"
+        [attr.role]="panels().structure ? 'region' : 'tabpanel'"
+        [attr.aria-labelledby]="panels().structure ? null : 'components-tab'"
+        [attr.aria-label]="panels().structure ? 'Components' : null"
+        [hidden]="!panels().structure && leftTab() !== 'components'"
+      >
+        @if (panels().structure) {
+          <div class="panel-header">
+            <h2>Components</h2>
+            <button
+              type="button"
+              class="tb"
+              title="Hide the Components and Structure panel"
+              (click)="panelAccess('left')"
+            >
+              <rdlc-icon name="close" /><span class="sr-only">Hide panel</span>
+            </button>
+          </div>
         }
+        <div class="pane-body">
+          <rdlc-components-catalog
+            [disabled]="
+              !!host.pending() ||
+              host.snapshot()?.status !== 'editable' ||
+              !host.snapshot()?.authoring
+            "
+            (create)="create($event)"
+          />
+        </div>
       </div>
       <div
         id="structure-panel"
-        role="tabpanel"
-        aria-labelledby="structure-tab"
-        [hidden]="leftTab() !== 'structure'"
+        class="pane"
+        [attr.role]="panels().structure ? 'region' : 'tabpanel'"
+        [attr.aria-labelledby]="panels().structure ? null : 'structure-tab'"
+        [attr.aria-label]="panels().structure ? 'Report structure' : null"
+        [hidden]="!panels().structure && leftTab() !== 'structure'"
       >
-        <rdlc-structure-tree
-          [structure]="host.snapshot()?.structure ?? null"
-          [selectedIds]="treeSelectedIds()"
-          [editableIds]="treeEditableIds()"
-          (select)="selectTree($event)"
-          (source)="openSource()"
-        />
-      </div>
-      <div
-        id="components-panel"
-        role="tabpanel"
-        aria-labelledby="components-tab"
-        [hidden]="leftTab() !== 'components'"
-      >
-        <rdlc-components-catalog
-          [disabled]="
-            !!host.pending() ||
-            host.snapshot()?.status !== 'editable' ||
-            !host.snapshot()?.authoring
-          "
-          (create)="openCreation($event)"
-        />
-        @if (creation()) {
-          @for (version of [host.snapshot()?.version]; track version) {
-            @if (host.snapshot()?.authoring; as authoring) {
-              <fieldset [disabled]="!!host.pending()">
-                <rdlc-authoring
-                  [state]="authoring"
-                  [compact]="true"
-                  [creation]="creation()"
-                  [pending]="!!host.pending()"
-                  (request)="author($event)"
-                  (cancel)="openCreation(null)"
-                  (prerequisite)="openCreation('dataset')"
-                />
-              </fieldset>
-            }
-          }
+        @if (panels().structure) {
+          <div class="panel-header"><h2>Report structure</h2></div>
         }
+        <div class="pane-body">
+          <rdlc-structure-tree
+            [structure]="host.snapshot()?.structure ?? null"
+            [autoExpand]="5"
+            [selectedIds]="treeSelectedIds()"
+            [editableIds]="treeEditableIds()"
+            (select)="selectTree($event)"
+            (menu)="structureMenu($event)"
+            (source)="openSource()"
+          />
+        </div>
       </div>
     </aside>
+    @if (panels().left) {
+      <div
+        class="separator"
+        role="separator"
+        tabindex="0"
+        aria-orientation="vertical"
+        aria-label="Resize the Components and Structure panel"
+        aria-controls="left-panel"
+        [attr.aria-valuenow]="panels().left"
+        [attr.aria-valuemin]="panelBounds.left[0]"
+        [attr.aria-valuemax]="panelBounds.left[1]"
+        [style.left.px]="panels().left + panels().structure - 3"
+        (keydown)="separatorKey($event, 'left')"
+        (pointerdown)="separatorDown($event)"
+        (pointermove)="separatorMove($event, 'left')"
+        (pointerup)="separatorUp($event)"
+        (lostpointercapture)="separatorUp($event)"
+      ></div>
+    }
+    @if (panels().right) {
+      <div
+        class="separator"
+        role="separator"
+        tabindex="0"
+        aria-orientation="vertical"
+        aria-label="Resize the Properties panel"
+        aria-controls="properties-panel"
+        [attr.aria-valuenow]="panels().right"
+        [attr.aria-valuemin]="panelBounds.right[0]"
+        [attr.aria-valuemax]="panelBounds.right[1]"
+        [style.right.px]="panels().right - 3"
+        (keydown)="separatorKey($event, 'right')"
+        (pointerdown)="separatorDown($event)"
+        (pointermove)="separatorMove($event, 'right')"
+        (pointerup)="separatorUp($event)"
+        (lostpointercapture)="separatorUp($event)"
+      ></div>
+    }
     <div class="canvas-frame">
       <div class="ruler horizontal" aria-label="Horizontal page ruler">
         @for (tick of rulerX(); track tick.pixels) {
@@ -418,6 +538,9 @@
         (scroll)="onScroll()"
         (wheel)="wheel($event)"
         (contextmenu)="showContextMenu($event)"
+        (dragover)="canvasDragOver($event)"
+        (dragleave)="canvasDragLeave($event)"
+        (drop)="canvasDrop($event)"
       >
         <div
           class="extent"
@@ -452,6 +575,11 @@
                     class="item"
                     [class.selected]="isSelected(item)"
                     [class.primary]="primary()?.id === item.id"
+                    [class.member]="
+                      isSelected(item) &&
+                      primary()?.id !== item.id &&
+                      treeSelectedIds().length > 1
+                    "
                     [class.placeholder]="item.placeholder"
                     [attr.data-item]="$index"
                     [attr.aria-pressed]="isSelected(item)"
@@ -460,10 +588,20 @@
                     [style.width.px]="bounds.width"
                     [style.height.px]="bounds.height"
                     [style.z-index]="item.zIndex ?? 0"
+                    [style.font-family]="item.style?.fontFamily"
+                    [style.font-size]="item.style?.fontSize"
+                    [style.font-weight]="item.style?.fontWeight"
+                    [style.font-style]="item.style?.fontStyle"
+                    [style.color]="item.style?.color"
+                    [style.text-align]="item.style?.textAlign"
+                    [attr.data-kind]="item.kind ?? 'textbox'"
+                    [attr.aria-label]="item.label"
                     (click)="selectClick($event, $index)"
                     (pointerdown)="startGesture($event, $index)"
                   >
-                    {{ item.label }}
+                    @if (item.kind !== 'table') {
+                      <span class="content">{{ item.text ?? item.label }}</span>
+                    }
                   </button>
                 }
               }
@@ -508,6 +646,17 @@
                     </div>
                   }
                 }
+              }
+              @if (dropPreview(); as drop) {
+                <div
+                  class="preview"
+                  [class.invalid]="!drop.valid"
+                  [style.left.px]="drop.bounds.left"
+                  [style.top.px]="drop.bounds.top"
+                  [style.width.px]="drop.bounds.width"
+                  [style.height.px]="drop.bounds.height"
+                  aria-hidden="true"
+                ></div>
               }
               @for (shape of groupPreviewPixels(); track $index) {
                 <div
@@ -561,16 +710,21 @@
       </div>
     </div>
     @if (contextMenu(); as menu) {
-      <div class="context-backdrop" (click)="closeContextMenu()"></div>
+      <div
+        class="context-backdrop"
+        (click)="closeContextMenu()"
+        (contextmenu)="reopenContextMenu($event)"
+      ></div>
       <div
         class="context-menu"
         role="menu"
         aria-label="Canvas actions"
+        (contextmenu)="$event.preventDefault()"
         [style.left.px]="menu.x"
         [style.top.px]="menu.y"
         (keydown)="menuKeydown($event)"
       >
-        @for (entry of contextActions(); track entry.label) {
+        @for (entry of menuActions(); track entry.label) {
           <button
             type="button"
             role="menuitem"
@@ -588,128 +742,148 @@
     }
     <aside
       class="inspector"
+      id="properties-panel"
       [class.open]="overlay() === 'right'"
+      [style.width.px]="panels().right ? null : view().rightWidth"
       aria-label="Properties"
     >
-      @for (version of [host.snapshot()?.version]; track version) {
-        <fieldset [disabled]="!!host.pending()">
-          <rdlc-contextual-inspector
-            [scene]="scene()"
-            [state]="
-              status() === 'editable'
-                ? (host.snapshot()?.authoring ?? null)
-                : null
-            "
-            [item]="selected()"
-            [count]="selectedIds().length"
-            [primary]="primary()"
-            [dataset]="selectedDataset()"
-            [structureNode]="structureNode()"
-            [refusal]="
-              host.outcome()?.accepted === false
-                ? (host.outcome()?.reason ?? '')
-                : ''
-            "
-            (commit)="commit($event)"
-            (request)="author($event)"
-          />
-        </fieldset>
-      }
-      @if (design.items.length) {
-        <ul aria-label="Report items" data-conflicts>
-          @for (item of design.items; track $index) {
-            <li>
-              <button
-                type="button"
-                (click)="select($index, $event.shiftKey)"
-                [attr.aria-pressed]="isSelected(item)"
-              >
-                {{ item.label }}{{ item.bounds ? '' : ' — unknown bounds' }}
-                {{ primary()?.id === item.id ? ' — primary' : '' }}
-              </button>
-              @if (item.kind !== 'cell') {
-                <label
-                  ><input
-                    type="checkbox"
-                    data-membership
-                    [checked]="isSelected(item)"
-                    [disabled]="!!host.pending()"
-                    (change)="select($index, true)"
-                  />
-                  Include {{ item.label }} in selection</label
-                >
-              }
-            </li>
-          }
-        </ul>
-      }
-      @if (selected(); as item) {
-        @if (item.bounds; as bounds) {
-          <p aria-label="Accepted item geometry">
-            Accepted geometry: left {{ inUnit(bounds.left) }}, top
-            {{ inUnit(bounds.top) }}, width {{ inUnit(bounds.width) }}, height
-            {{ inUnit(bounds.height) }}.
-          </p>
+      <div class="panel-header">
+        <h2>Properties</h2>
+        <button
+          type="button"
+          class="tb"
+          title="Hide the Properties panel"
+          (click)="panelAccess('right')"
+        >
+          <rdlc-icon name="close" /><span class="sr-only">Hide panel</span>
+        </button>
+      </div>
+      <div class="pane-body">
+        @for (version of [host.snapshot()?.version]; track version) {
+          <fieldset [disabled]="!!host.pending()">
+            <rdlc-contextual-inspector
+              [scene]="scene()"
+              [state]="
+                status() === 'editable'
+                  ? (host.snapshot()?.authoring ?? null)
+                  : null
+              "
+              [item]="selected()"
+              [count]="selectedIds().length"
+              [primary]="primary()"
+              [dataset]="selectedDataset()"
+              [structureNode]="structureNode()"
+              [expanded]="view().inspectorExpanded"
+              (expand)="expandSection($event.section, $event.open)"
+              [refusal]="
+                host.outcome()?.accepted === false
+                  ? (host.outcome()?.reason ?? '')
+                  : ''
+              "
+              (commit)="commit($event)"
+              (request)="author($event)"
+            />
+          </fieldset>
         }
-        @if (limitations(); as reasons) {
-          <section class="limitations" role="group" aria-label="Limitations">
-            <p role="status">
-              {{ item.label }} — {{ item.kind ?? 'item' }} limitations:
-            </p>
-            <ul>
-              @for (reason of reasons; track reason) {
-                <li>{{ reason }}</li>
+        @if (design.items.length) {
+          <details class="item-list">
+            <summary>All report items ({{ design.items.length }})</summary>
+            <ul aria-label="Report items" data-conflicts>
+              @for (item of design.items; track $index) {
+                <li>
+                  <button
+                    type="button"
+                    (click)="select($index, $event.shiftKey)"
+                    [attr.aria-pressed]="isSelected(item)"
+                  >
+                    {{ item.label }}{{ item.bounds ? '' : ' — unknown bounds' }}
+                    {{ primary()?.id === item.id ? ' — primary' : '' }}
+                  </button>
+                  @if (item.kind !== 'cell') {
+                    <label
+                      ><input
+                        type="checkbox"
+                        data-membership
+                        [checked]="isSelected(item)"
+                        [disabled]="!!host.pending()"
+                        (change)="select($index, true)"
+                      />
+                      Include {{ item.label }} in selection</label
+                    >
+                  }
+                </li>
               }
             </ul>
-            <button type="button" (click)="openSource()">
-              Open {{ item.label }} in source
-            </button>
-          </section>
+          </details>
         }
-        @if (item.capabilities?.includes('text') && !item.placeholder) {
-          @for (
-            dataset of host.snapshot()?.authoring?.datasets ?? [];
-            track dataset.id
-          ) {
-            <form (submit)="$event.preventDefault(); bindField(field.value)">
-              <label
-                >Bind selected textbox to {{ dataset.name }} field
-                <select #field>
-                  @for (field of dataset.fields; track field.id) {
-                    <option
-                      [value]="field.name"
-                      [disabled]="field.type === null"
-                    >
-                      {{ field.name }}
-                    </option>
-                  }
-                </select></label
-              >
-              <button type="submit">Bind field</button>
-            </form>
+        @if (selected(); as item) {
+          @if (item.bounds; as bounds) {
+            <p class="muted" aria-label="Accepted item geometry">
+              Accepted geometry: left {{ inUnit(bounds.left) }}, top
+              {{ inUnit(bounds.top) }}, width {{ inUnit(bounds.width) }}, height
+              {{ inUnit(bounds.height) }}.
+            </p>
+          }
+          @if (limitations(); as reasons) {
+            <section class="limitations" role="group" aria-label="Limitations">
+              <p role="status">
+                {{ item.label }} — {{ item.kind ?? 'item' }} limitations:
+              </p>
+              <ul>
+                @for (reason of reasons; track reason) {
+                  <li>{{ reason }}</li>
+                }
+              </ul>
+              <button type="button" (click)="openSource()">
+                Open {{ item.label }} in source
+              </button>
+            </section>
+          }
+          @if (item.capabilities?.includes('text') && !item.placeholder) {
+            @for (
+              dataset of host.snapshot()?.authoring?.datasets ?? [];
+              track dataset.id
+            ) {
+              <form (submit)="$event.preventDefault(); bindField(field.value)">
+                <label
+                  >Bind selected textbox to {{ dataset.name }} field
+                  <select #field>
+                    @for (field of dataset.fields; track field.id) {
+                      <option
+                        [value]="field.name"
+                        [disabled]="field.type === null"
+                      >
+                        {{ field.name }}
+                      </option>
+                    }
+                  </select></label
+                >
+                <button type="submit">Bind field</button>
+              </form>
+            }
           }
         }
-      }
-      @if (selectedIds().length < 2) {
-        @for (snapshot of [host.snapshot()]; track snapshot?.version) {
-          @if (
-            snapshot?.status === 'editable' && snapshot?.authoring;
-            as authoring
-          ) {
-            <details data-page-setup>
-              <summary>Page setup and report authoring</summary>
-              <fieldset [disabled]="!!host.pending()">
-                <rdlc-authoring
-                  [state]="authoring"
-                  [selected]="selected()"
-                  [pageOnly]="true"
-                  (request)="author($event)"
-                />
-              </fieldset>
-            </details>
+        @if (selectedIds().length < 2) {
+          @for (snapshot of [host.snapshot()]; track snapshot?.version) {
+            @if (
+              snapshot?.status === 'editable' && snapshot?.authoring;
+              as authoring
+            ) {
+              <details data-page-setup>
+                <summary>Page setup and report authoring</summary>
+                <fieldset [disabled]="!!host.pending()">
+                  <rdlc-authoring
+                    [state]="authoring"
+                    [selected]="selected()"
+                    [pageOnly]="true"
+                    (request)="author($event)"
+                  />
+                </fieldset>
+              </details>
+            }
           }
         }
-      }
+      </div>
     </aside>
     <section
       class="diagnostic-overlay"

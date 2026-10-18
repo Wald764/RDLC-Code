@@ -175,11 +175,11 @@ test('maps operands through entities, CDATA and ToggleItem; Unicode names fall b
   );
   assert.deepEqual(
     unicode.roots.map((r) => r.name),
-    ['Textbox', 'Textbox1'],
+    ['Textbox1', 'Textbox2'],
   );
   assert.match(
     text(unicode.candidate, unicode.roots[1]!),
-    /<!\[CDATA\[=ReportItems!Textbox\.Value & "<cdata>"\]\]>/,
+    /<!\[CDATA\[=ReportItems!Textbox1\.Value & "<cdata>"\]\]>/,
   );
   // Alone, the ToggleItem target is an external textbox that survives.
   const alone = paste(dependencies, copy(dependencies, ['EntityReference']));

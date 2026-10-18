@@ -8,13 +8,16 @@
       {{ refusal() }}. Accepted values are shown below each field.
     </p>
   }
-  <p>
+  <p class="sr-only">
     Sizes retain their explicit pt, pc, in, mm or cm units. Expressions and
     colors remain raw text; no evaluation is performed.
   </p>
   @for (section of sections; track section.label) {
     @if (relevant(section.properties).length) {
-      <details open>
+      <details
+        [open]="expanded()[section.key] ?? true"
+        (toggle)="toggled(section.key, $event)"
+      >
         <summary>{{ section.label }}</summary>
         @for (field of relevant(section.properties); track field.property) {
           <label class="field">
@@ -30,9 +33,7 @@
                 (keydown.escape)="cancel(field.property, $event)"
               >
                 @if (!current(field.property)) {
-                  <option value="" selected disabled>
-                    Not set (report default)
-                  </option>
+                  <option value="" selected disabled>Report default</option>
                 }
                 @for (option of field.options; track option) {
                   <option

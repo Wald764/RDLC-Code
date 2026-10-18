@@ -173,7 +173,30 @@ export interface ViewState {
   readonly gridSnap: boolean;
   readonly guidesVisible: boolean;
   readonly guidesSnap: boolean;
+  /** Preferred wide-layout panel widths (CSS px); effective widths derive from {@link panelLayout}. */
+  readonly leftWidth: number;
+  readonly rightWidth: number;
+  readonly leftVisible: boolean;
+  readonly rightVisible: boolean;
+  readonly leftTab: 'components' | 'structure';
+  readonly inspectorExpanded: Readonly<Record<InspectorSection, boolean>>;
 }
+export const inspectorSections = [
+  'general',
+  'position',
+  'appearance',
+  'typography',
+  'border',
+  'data',
+  'visibility',
+  'pagination',
+  'advanced',
+] as const;
+export type InspectorSection = (typeof inspectorSections)[number];
+export const panelBounds = {
+  left: [180, 360],
+  right: [240, 480],
+} as const;
 export const defaultViewState: ViewState = {
   zoom: 1,
   scrollLeft: 0,
@@ -185,6 +208,22 @@ export const defaultViewState: ViewState = {
   gridSnap: true,
   guidesVisible: true,
   guidesSnap: true,
+  leftWidth: 220,
+  rightWidth: 300,
+  leftVisible: true,
+  rightVisible: true,
+  leftTab: 'components',
+  inspectorExpanded: {
+    general: true,
+    position: true,
+    appearance: false,
+    typography: true,
+    border: false,
+    data: true,
+    visibility: false,
+    pagination: false,
+    advanced: false,
+  },
 };
 const isUnit = (v: unknown) => sizeUnits.includes(v as SizeUnit);
 const isBool = (v: unknown) => typeof v === 'boolean';
@@ -199,7 +238,16 @@ const valid: Record<keyof ViewState, (v: unknown) => boolean> = {
   gridSnap: isBool,
   guidesVisible: isBool,
   guidesSnap: isBool,
+  leftWidth: (v) => inBounds(v, panelBounds.left),
+  rightWidth: (v) => inBounds(v, panelBounds.right),
+  leftVisible: isBool,
+  rightVisible: isBool,
+  leftTab: (v) => v === 'components' || v === 'structure',
+  inspectorExpanded: (v) => !!v && typeof v === 'object' && !Array.isArray(v),
 };
+function inBounds(v: unknown, [min, max]: readonly [number, number]): boolean {
+  return typeof v === 'number' && v >= min && v <= max;
+}
 
 /** Validates restored webview state field by field; invalid fields fall back to defaults. */
 export function restoreViewState(input: unknown): {
@@ -217,5 +265,80 @@ export function restoreViewState(input: unknown): {
     if (valid[key](source[key])) state[key] = source[key];
     else invalid.push(key);
   }
+  // Closed vocabulary: unknown keys are dropped, non-boolean values default per section.
+  const expanded = state['inspectorExpanded'] as Record<string, unknown>;
+  state['inspectorExpanded'] = Object.fromEntries(
+    inspectorSections.map((key) => [
+      key,
+      isBool(expanded[key])
+        ? expanded[key]
+        : defaultViewState.inspectorExpanded[key],
+    ]),
+  );
   return { state: state as unknown as ViewState, invalid };
+}
+
+/** Canvas minimum plus its vertical ruler, reserved before inline panels. */
+const canvasReserve = 320 + 20;
+const structureWidth = 260;
+
+/**
+ * Effective inline panel widths for a workspace width. Left overlays below 1100px,
+ * both below 800px; inline panels shrink toward their minimums to keep a 320px canvas.
+ * Preferences are never rewritten. At >=800px the minimums always fit.
+ * Wide workspaces show Structure beside Components when the canvas keeps 640px.
+ */
+export function panelLayout(
+  width: number,
+  view: Pick<
+    ViewState,
+    'leftWidth' | 'rightWidth' | 'leftVisible' | 'rightVisible'
+  >,
+): {
+  left: number;
+  structure: number;
+  right: number;
+  leftOverlay: boolean;
+  rightOverlay: boolean;
+} {
+  const leftOverlay = width < 1100,
+    rightOverlay = width < 800;
+  let left = leftOverlay || !view.leftVisible ? 0 : view.leftWidth;
+  let right = rightOverlay || !view.rightVisible ? 0 : view.rightWidth;
+  let excess = left + right + canvasReserve - width;
+  if (excess > 0 && right) {
+    const next = Math.max(panelBounds.right[0], right - excess);
+    excess -= right - next;
+    right = next;
+  }
+  if (excess > 0 && left) left = Math.max(panelBounds.left[0], left - excess);
+  const structure =
+    left && width >= 1400 && width - left - structureWidth - right >= 640
+      ? structureWidth
+      : 0;
+  return { left, structure, right, leftOverlay, rightOverlay };
+}
+
+/**
+ * Menu origin inside the webview: opens above or left of the pointer when it would
+ * overflow, then clamps. The webview cannot draw over VS Code's own panels.
+ */
+export function menuPosition(
+  x: number,
+  y: number,
+  menu: { readonly width: number; readonly height: number },
+  area: { readonly width: number; readonly height: number },
+): { x: number; y: number } {
+  const clamp = (value: number, max: number) =>
+    Math.max(0, Math.min(value, Math.max(0, max)));
+  return {
+    x: clamp(
+      x + menu.width > area.width ? x - menu.width : x,
+      area.width - menu.width,
+    ),
+    y: clamp(
+      y + menu.height > area.height ? y - menu.height : y,
+      area.height - menu.height,
+    ),
+  };
 }

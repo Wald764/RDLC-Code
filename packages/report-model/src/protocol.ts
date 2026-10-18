@@ -143,6 +143,8 @@ export type HostMessage =
       readonly accepted: boolean;
       readonly reason: string;
       readonly diagnostics: readonly Diagnostic[];
+      /** Accepted creations only: the item the host created and named in `version`. */
+      readonly created?: { readonly id: string; readonly name: string };
     }
   | {
       readonly protocol: 1;
@@ -182,6 +184,14 @@ function keys(
   allowed: readonly string[],
 ): boolean {
   return Object.keys(value).every((key) => allowed.includes(key));
+}
+/** CLS-compliant report item name (MS-RDL 2.16.1), bounded for transport. */
+function reportName(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length <= 256 &&
+    /^[\p{L}\p{Nl}_][\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}\p{Cf}]*$/u.test(value)
+  );
 }
 function version(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -729,6 +739,7 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
           'baseVersion',
           'changed',
           'mappings',
+          'created',
         ]) &&
         version(value.version) &&
         version(value.baseVersion) &&
@@ -753,7 +764,17 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
         id(value.requestId) &&
         typeof value.accepted === 'boolean' &&
         string(value.reason) &&
-        diagnostics(value.diagnostics);
+        diagnostics(value.diagnostics) &&
+        (value.created === undefined ||
+          (value.changed === true &&
+            !!value.created &&
+            typeof value.created === 'object' &&
+            keys(value.created as Record<string, unknown>, ['id', 'name']) &&
+            nodeId(
+              (value.created as Record<string, unknown>).id,
+              value.version as number,
+            ) &&
+            reportName((value.created as Record<string, unknown>).name)));
       break;
     case 'snapshot':
       valid =

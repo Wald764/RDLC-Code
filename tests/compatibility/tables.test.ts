@@ -66,3 +66,35 @@ test('whole tables and cells keep their existing, separate capabilities', () => 
   assert.ok(report.tables[0]!.groups.length > 0);
   assert.ok(report.tables[0]!.totals.length > 0);
 });
+
+test('unbound tables stay structural and need a dataset only when several exist (MS-RDL 2.23.10)', () => {
+  const source = readFileSync('tests/fixtures/tables/unbound.rdlc', 'utf8');
+  const project = (text: string) =>
+    projectReport(
+      parse({ uri: 'fixture:unbound', source: text, version: 1, eol: '\n' }),
+    );
+  const report = project(source);
+  const table = report.tables[0]!;
+  assert.equal(table.structural, true, table.blockedReason ?? '');
+  assert.equal(table.dataset, null);
+  assert.equal(report.status, 'editable');
+  assert.deepEqual(
+    report.diagnostics.map((d) => d.code),
+    ['TABLE_DATASET_REQUIRED'],
+  );
+  assert.equal(
+    report.diagnostics[0]!.citation,
+    'vendor/02-structures/2.23.10-tablix.datasetname.md',
+  );
+  const single = source.replace(
+    /<DataSet Name="DataSet2">[\s\S]*?<\/DataSet>/,
+    '',
+  );
+  assert.equal(project(single).datasets.length, 1);
+  assert.deepEqual(project(single).diagnostics, []);
+  const bound = source.replace(
+    '<Left>',
+    '<DataSetName>DataSet1</DataSetName><Left>',
+  );
+  assert.deepEqual(project(bound).diagnostics, []);
+});

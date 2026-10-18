@@ -80,13 +80,15 @@ export function planTable(
   names: readonly string[],
   binding: string,
   total: string,
+  /** Host-allocated name for `createTable`. */
+  createdName = '',
 ): PatchPlan {
   const reportBody = child(section.node, 'Body');
   if (!reportBody) throw new Error('Missing Body.');
   const node = table?.node ?? child(reportBody, 'ReportItems') ?? reportBody;
   const e = (name: string, inner: string) => element(node, name, inner);
   const used = new Set(names);
-  if (payload.action === 'createTable') used.add(payload.name);
+  if (payload.action === 'createTable') used.add(createdName);
   const name = (prefix: string) => {
     let value = prefix;
     let suffix = 0;
@@ -111,28 +113,30 @@ export function planTable(
   const raw = (node: XmlNode) =>
     snapshot.source.slice(node.range.start, node.range.end);
   if (payload.action === 'createTable') {
+    // Unbound static table (MS-RDL 2.23.10: DataSetName is optional); bound later.
     const body = child(section.node, 'Body')!;
     const items = child(body, 'ReportItems');
-    const columns = e(
-      'TablixColumns',
-      e('TablixColumn', e('Width', payload.width)),
-    );
-    const detail = e('Group', '').replace(
-      '>',
-      ` Name="${escapeAttribute(name(`${payload.name}Details`))}">`,
-    );
+    const staticRow = () =>
+      e(
+        'TablixRow',
+        e('Height', '0.25in') + e('TablixCells', cell('') + cell('')),
+      );
+    const column = e('TablixColumn', e('Width', '1in'));
     const inner =
-      e('TablixBody', columns + e('TablixRows', row([binding]))) +
-      e('TablixColumnHierarchy', e('TablixMembers', member())) +
-      e('TablixRowHierarchy', e('TablixMembers', member(detail))) +
-      e('DataSetName', escapeText(payload.dataset)) +
-      e('Left', '0in') +
-      e('Top', '0in') +
-      e('Width', payload.width) +
-      e('Height', '0.3in');
+      e(
+        'TablixBody',
+        e('TablixColumns', column + column) +
+          e('TablixRows', staticRow() + staticRow()),
+      ) +
+      e('TablixColumnHierarchy', e('TablixMembers', member() + member())) +
+      e('TablixRowHierarchy', e('TablixMembers', member() + member())) +
+      e('Left', payload.left) +
+      e('Top', payload.top) +
+      e('Width', '2in') +
+      e('Height', '0.5in');
     const xml = e('Tablix', inner).replace(
       '>',
-      ` Name="${escapeAttribute(payload.name)}">`,
+      ` Name="${escapeAttribute(createdName)}">`,
     );
     return patchPlan(snapshot, [
       insertChild(
@@ -145,6 +149,42 @@ export function planTable(
   if (!table) throw new Error('Missing table.');
   if (payload.action === 'deleteTable')
     return patchPlan(snapshot, [sourcePatch(snapshot, table.node.range, '')]);
+  if (payload.action === 'renameTable')
+    return patchPlan(snapshot, [
+      renameNode(snapshot, table.node, payload.name),
+    ]);
+  if (payload.action === 'setTableDataset') {
+    const patches = [
+      setScalar(snapshot, table.node, 'DataSetName', payload.dataset),
+    ];
+    // A bound table needs one detail member; add it to the last static row member.
+    const members = child(
+      child(table.node, 'TablixRowHierarchy')!,
+      'TablixMembers',
+    )!;
+    const hasGroup = (member: XmlNode): boolean =>
+      !!child(member, 'Group') ||
+      member.children.some(
+        (inner) =>
+          inner.expandedName.localName === 'TablixMembers' &&
+          inner.children.some(hasGroup),
+      );
+    if (!members.children.some(hasGroup)) {
+      const last = members.children.at(-1);
+      if (!last) throw new Error('Table has no row members.');
+      patches.push(
+        insertChild(
+          snapshot,
+          last,
+          element(last, 'Group', '').replace(
+            '>',
+            ` Name="${escapeAttribute(name(`${table.name}Details`))}">`,
+          ),
+        ),
+      );
+    }
+    return patchPlan(snapshot, patches);
+  }
   if (payload.action === 'setTableProperty')
     return patchPlan(snapshot, [
       setScalar(

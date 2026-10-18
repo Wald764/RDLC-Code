@@ -11,12 +11,30 @@ import {
 import { length } from './validate.js';
 import { reportItemNames } from './textboxes.js';
 
+/** Creation position: explicit-unit RdlSize values, finite and nonnegative. */
+export function validatePosition(
+  root: XmlNode,
+  left: string,
+  top: string,
+): readonly Diagnostic[] {
+  return [left, top].every((value) => (length(value)?.pixels ?? -1) >= 0)
+    ? []
+    : [
+        authoringError(
+          root,
+          'Drop position must be a nonnegative size with an explicit unit.',
+        ),
+      ];
+}
+
 export function validateTableAction(
   root: XmlNode,
   report: ReportProjection,
   table: Table | null,
   targetId: string,
   payload: AuthoringIntent['payload'],
+  /** Raw source for removals: opaque content then blocks only where it spells the name. */
+  source?: string,
 ): readonly Diagnostic[] {
   const fail = (message: string) => [
     authoringError(table?.node ?? root, message),
@@ -24,20 +42,40 @@ export function validateTableAction(
   if (payload.action === 'createTable') {
     if (targetId !== root.id)
       return fail('Select the report to create a table.');
+    return validatePosition(root, payload.left, payload.top);
+  }
+  if (!table?.structural)
+    return fail(table?.blockedReason ?? 'Select a supported table.');
+  if (payload.action === 'renameTable') {
     const names = validateDatasetName(
       root,
       payload.name,
-      reportItemNames(root),
+      reportItemNames(root).filter((name) => name !== table.name),
     );
-    if (names.length) return names;
-  } else if (!table?.structural)
-    return fail(table?.blockedReason ?? 'Select a supported table.');
-  const datasetName =
-    payload.action === 'createTable' ? payload.dataset : table?.dataset;
-  const dataset = report.datasets.find(
-    (dataset) => dataset.name === datasetName,
+    return names.length
+      ? names
+      : validateDataMutation(root, table.node, 'report-item', table.name);
+  }
+  if (payload.action === 'setTableDataset')
+    return report.datasets.some((dataset) => dataset.name === payload.dataset)
+      ? []
+      : fail('Select an existing local dataset.');
+  const found = report.datasets.find(
+    (dataset) => dataset.name === table.dataset,
   );
-  if (!dataset) return fail('Select an existing local dataset.');
+  // Layout and deletion work on unbound tables; data actions need an explicit binding.
+  if (
+    !found &&
+    ![
+      'setTableProperty',
+      'setColumnWidth',
+      'setRowHeight',
+      'deleteTable',
+      'removeColumn',
+    ].includes(payload.action)
+  )
+    return fail('Bind the table to a dataset first.');
+  const dataset = found!;
   if (payload.action === 'setTableProperty') {
     if (!['left', 'top', 'width', 'height'].includes(payload.property))
       return fail('Choose a table position or dimension.');
@@ -114,7 +152,7 @@ export function validateTableAction(
     const group = table!.groups.find((group) => group.node.id === targetId);
     if (!group || group.expressions.length === 0)
       return fail('Select a non-detail row group.');
-    return validateDataMutation(root, group.node, 'group', group.name);
+    return validateDataMutation(root, group.node, 'group', group.name, source);
   }
   if ('scope' in payload) {
     if (
