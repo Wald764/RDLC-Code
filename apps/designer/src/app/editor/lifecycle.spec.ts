@@ -13,6 +13,108 @@ function snapshot(version: number, status = 'editable') {
   };
 }
 
+describe('nudge continuity', () => {
+  beforeEach(() => TestBed.resetTestingModule());
+  const ops = Object.fromEntries(
+    ['moveX', 'moveY', 'resizeX', 'resizeY'].map((k) => [
+      k,
+      { eligible: true, reason: null },
+    ]),
+  );
+  const scene = (version: number, left: number) => ({
+    ...snapshot(version),
+    scene: {
+      version,
+      page: { left: 0, top: 0, width: 816, height: 1056 },
+      body: { left: 0, top: 0, width: 576, height: 192 },
+      items: [
+        {
+          id: `${version}:1`,
+          kind: 'textbox',
+          label: 'A',
+          name: 'A',
+          placeholder: false,
+          bounds: { left, top: 24, width: 96, height: 24 },
+          operations: ops,
+          capabilities: [],
+        },
+      ],
+    },
+  });
+  const press = (target: EventTarget, type: string, k = 'ArrowRight') =>
+    target.dispatchEvent(
+      new KeyboardEvent(type, { key: k, bubbles: true, cancelable: true }),
+    );
+
+  it('retains selection across accepted nudges so consecutive presses need no reselection', async () => {
+    const fixture = TestBed.createComponent(EditorComponent);
+    const host = TestBed.inject(HostAdapter);
+    host.ingest(scene(2, 24));
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const component = fixture.componentInstance;
+    component.select(0);
+    fixture.detectChanges();
+    const viewport = fixture.nativeElement.querySelector('.viewport');
+    for (const [base, next] of [
+      [2, 3],
+      [3, 4],
+    ] as const) {
+      press(viewport, 'keydown');
+      press(viewport, 'keyup');
+      const edit = host.sent().at(-1) as { requestId: string };
+      expect(edit).toMatchObject({
+        kind: 'edit',
+        baseVersion: base,
+        payload: { targetIds: [`${base}:1`], dxPt: 1 },
+      });
+      host.ingest({
+        protocol: 1,
+        kind: 'editResult',
+        requestId: edit.requestId,
+        baseVersion: base,
+        version: next,
+        accepted: true,
+        changed: true,
+        mappings: [{ sourceId: `${base}:1`, resultId: `${next}:1` }],
+        reason: 'APPLIED',
+        diagnostics: [],
+      });
+      host.ingest(scene(next, 24 + (next - 2) * (4 / 3)));
+      fixture.detectChanges();
+      await fixture.whenStable();
+      expect(component.selectedIds()).toEqual([`${next}:1`]);
+    }
+    expect(
+      host.sent().filter((m) => (m as { kind: string }).kind === 'edit'),
+    ).toHaveLength(2);
+  });
+
+  it('blocks a nudge while pending and cancels repeats before native Undo', async () => {
+    const fixture = TestBed.createComponent(EditorComponent);
+    const host = TestBed.inject(HostAdapter);
+    host.ingest(scene(2, 24));
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.componentInstance.select(0);
+    fixture.detectChanges();
+    const viewport = fixture.nativeElement.querySelector('.viewport');
+    press(viewport, 'keydown');
+    viewport.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }),
+    );
+    expect(fixture.componentInstance.nudge()).toBeNull();
+    press(viewport, 'keyup');
+    expect(host.sent()).toHaveLength(0);
+    press(viewport, 'keydown');
+    press(viewport, 'keyup');
+    expect(host.pending()).not.toBeNull();
+    press(viewport, 'keydown');
+    press(viewport, 'keyup');
+    expect(host.sent()).toHaveLength(1);
+  });
+});
+
 describe('document lifecycle transport', () => {
   beforeEach(() => TestBed.resetTestingModule());
   for (const accepted of [true, false])
@@ -223,7 +325,7 @@ describe('document lifecycle transport', () => {
     };
     accept(1);
     await settle();
-    const draft = element.querySelector<HTMLInputElement>('input')!;
+    const draft = element.querySelector<HTMLInputElement>('fieldset input')!;
     draft.value = 'Obsolete';
     draft.focus();
     const focus = vi.spyOn(HTMLElement.prototype, 'focus');
@@ -235,7 +337,9 @@ describe('document lifecycle transport', () => {
       focus.mockRestore();
     }
     expect(element.contains(draft)).toBe(false);
-    expect(element.querySelector<HTMLInputElement>('input')!.value).toBe('');
+    expect(
+      element.querySelector<HTMLInputElement>('fieldset input')!.value,
+    ).toBe('');
     expect(document.activeElement?.tagName.toLowerCase()).toBe(
       'rdlc-authoring',
     );

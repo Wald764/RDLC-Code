@@ -12,6 +12,7 @@ import { projectReport } from '@rdlc/xml-parser/project-report';
 export async function run(): Promise<void> {
   await groupSynchronization();
   await ambiguousIndependentChange();
+  await independentViewNudge();
   const source = readFileSync(
     resolve(__dirname, '../../../tests/fixtures/textboxes/supported.rdlc'),
     'utf8',
@@ -482,6 +483,71 @@ async function groupSynchronization(): Promise<void> {
 }
 
 /** An independent edit that makes identity ambiguous never lets a stale target replay. */
+/** A nudge in one view is one shared document step; the other view only sees the snapshot. */
+async function independentViewNudge(): Promise<void> {
+  const source = readFileSync(
+    resolve(__dirname, '../../../tests/fixtures/interactive/mixed.rdlc'),
+    'utf8',
+  );
+  const file = join(mkdtempSync(join(tmpdir(), 'rdlc-views-')), 'report.rdlc');
+  writeFileSync(file, source);
+  const document = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(document);
+  const first = observe(document),
+    second = observe(document);
+  try {
+    const behind = projectReport(
+      parse({
+        uri: document.uri.toString(),
+        version: document.version,
+        source,
+        eol: '\n',
+      }),
+    ).textboxes.find((t) => t.name === 'Behind')!.node.id;
+    first.session.receive({
+      protocol: 1,
+      kind: 'edit',
+      requestId: 'view-a-nudge',
+      baseVersion: document.version,
+      operation: 'layout',
+      payload: {
+        action: 'move',
+        targetIds: [behind],
+        unit: 'pt',
+        dxPt: 10,
+        dyPt: 0,
+      },
+    });
+    await until(
+      () =>
+        first.messages.some(
+          (m) => m.kind === 'editResult' && m.requestId === 'view-a-nudge',
+        ),
+      'view A result',
+    );
+    await until(
+      () =>
+        second.messages.some(
+          (m) => m.kind === 'snapshot' && m.version === document.version,
+        ),
+      'view B snapshot',
+    );
+    assert.equal(
+      second.messages.some((m) => m.kind === 'editResult'),
+      false,
+      'results stay with the requesting view',
+    );
+    await vscode.commands.executeCommand('undo');
+    assert.equal(document.getText(), source, 'one shared native step');
+  } finally {
+    first.dispose();
+    second.dispose();
+    await vscode.commands.executeCommand(
+      'workbench.action.revertAndCloseActiveEditor',
+    );
+  }
+}
+
 async function ambiguousIndependentChange(): Promise<void> {
   const source = readFileSync(
     resolve(__dirname, '../../../tests/fixtures/interactive/mixed.rdlc'),

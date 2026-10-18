@@ -1,4 +1,5 @@
 import {
+  afterNextRender,
   ChangeDetectionStrategy,
   Component,
   computed,
@@ -7,7 +8,10 @@ import {
   effect,
   HostListener,
   inject,
+  Injector,
   signal,
+  untracked,
+  viewChild,
 } from '@angular/core';
 import {
   resizeHandles,
@@ -16,9 +20,27 @@ import {
   type EditIntent,
   type LayoutIntent,
 } from '@rdlc/report-model/editing';
-import { pixelsToPoints, pointsToPixels } from '@rdlc/report-model/geometry';
+import {
+  pixelsToPoints,
+  pointsToPixels,
+  sizeUnits,
+  toPoints,
+  type SizeUnit,
+} from '@rdlc/report-model/geometry';
 import type { Bounds, DesignSceneItem } from '@rdlc/report-model/scene';
 import { directProposal, type DirectHandle } from './manipulation';
+import { snapDelta, type Guide } from './placement';
+import {
+  anchoredScroll,
+  clampZoom,
+  clientToBody,
+  edgeScroll,
+  extent,
+  fitZoom,
+  revealScroll,
+  type Frame,
+  type ViewState,
+} from './viewport';
 import { AuthoringComponent } from '../authoring/authoring.component';
 import type { DesignScene } from '@rdlc/report-model/scene';
 import { DiagnosticsComponent } from '../diagnostics/diagnostics.component';
@@ -39,6 +61,35 @@ import {
 } from './selection';
 
 type DraftControl = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+type Origins = readonly { id: string; bounds: Bounds }[];
+const arrows: Readonly<Record<string, readonly [number, number]>> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+};
+const ptBounds = (b: Bounds): Bounds => ({
+  left: pixelsToPoints(b.left),
+  top: pixelsToPoints(b.top),
+  width: pixelsToPoints(b.width),
+  height: pixelsToPoints(b.height),
+});
+const pxBounds = (b: Bounds): Bounds => ({
+  left: pointsToPixels(b.left),
+  top: pointsToPixels(b.top),
+  width: pointsToPixels(b.width),
+  height: pointsToPixels(b.height),
+});
+const union = (all: readonly Bounds[]): Bounds => {
+  const left = Math.min(...all.map((b) => b.left)),
+    top = Math.min(...all.map((b) => b.top));
+  return {
+    left,
+    top,
+    width: Math.max(...all.map((b) => b.left + b.width)) - left,
+    height: Math.max(...all.map((b) => b.top + b.height)) - top,
+  };
+};
 
 @Component({
   selector: 'rdlc-editor',
@@ -57,17 +108,56 @@ export class EditorComponent {
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   readonly handles = resizeHandles;
   readonly alignModes = alignModes;
-  readonly toPt = pixelsToPoints;
+  readonly units = sizeUnits;
+  readonly toggles = [
+    ['gridVisible', 'Show grid'],
+    ['gridSnap', 'Snap to grid'],
+    ['guidesVisible', 'Show guides'],
+    ['guidesSnap', 'Snap to guides'],
+  ] as const;
+  readonly toPx = pointsToPixels;
+  private readonly injector = inject(Injector);
+  private readonly viewport = viewChild<ElementRef<HTMLElement>>('viewport');
+  /** Per-view zoom, scroll, units and placement preferences. */
+  readonly view = signal<ViewState>(this.host.restoredView.state);
+  readonly guides = signal<readonly Guide[]>([]);
+  /** Arrow-key repeats accumulated from the accepted geometry until keyup. */
+  readonly nudge = signal<{
+    version: number;
+    origins: Origins;
+    dx: number;
+    dy: number;
+  } | null>(null);
+  private pan: {
+    pointerId: number;
+    x: number;
+    y: number;
+    left: number;
+    top: number;
+  } | null = null;
+  private space = false;
+  private panned = false;
+  readonly extent = computed(() => {
+    const scene = this.scene();
+    return scene ? extent(scene.page, scene.body, scene.items) : null;
+  });
+  readonly gridPt = computed(
+    () => this.view().gridSpacing * toPoints(`1${this.view().gridUnit}`)!,
+  );
   readonly preview = signal<{
     version: number;
     id: string;
-    origins: readonly { id: string; bounds: Bounds }[];
+    origins: Origins;
     pointerId: number;
     element: HTMLElement;
     handle: DirectHandle;
     origin: Bounds;
+    /** Pointer start in client pixels, for the click threshold. */
     clientX: number;
     clientY: number;
+    /** Body-relative report anchor in unzoomed pixels, independent of later zoom/scroll. */
+    anchorX: number;
+    anchorY: number;
     dx: number;
     dy: number;
     active: boolean;
@@ -180,6 +270,11 @@ export class EditorComponent {
       'pointerdown',
       (event) => {
         if (
+          this.space &&
+          this.viewport()?.nativeElement.contains(event.target as Node)
+        )
+          this.startPan(event);
+        if (
           this.draft() &&
           (event.target as Element | null)?.closest?.('[data-conflicts]')
         )
@@ -202,6 +297,23 @@ export class EditorComponent {
           'The document changed; your unapplied draft was discarded.',
         );
       }
+    });
+    if (this.host.restoredView.invalid.length)
+      this.gestureNotice.set(
+        `Ignored invalid saved view settings (${this.host.restoredView.invalid.join(', ')}); defaults apply.`,
+      );
+    effect(() => this.host.saveView(this.view()));
+    effect(() => {
+      // Restore the saved scroll whenever the canvas is (re)created.
+      if (this.viewport()) {
+        const { scrollLeft, scrollTop } = untracked(this.view);
+        this.scrollTo(scrollLeft, scrollTop);
+      }
+    });
+    effect(() => {
+      const nudge = this.nudge();
+      if (nudge && this.host.snapshot()?.version !== nudge.version)
+        this.cancelGesture('The document changed; the nudge was cancelled.');
     });
     effect(() => {
       const preview = this.preview();
@@ -295,7 +407,7 @@ export class EditorComponent {
     )
       return;
     this.cancelGesture();
-    const common = { targetIds: ids, unit: 'pt' as const };
+    const common = { targetIds: ids, unit: this.view().unit };
     const payload: LayoutIntent['payload'] =
       action === 'align'
         ? {
@@ -323,9 +435,7 @@ export class EditorComponent {
     )
       return;
     const element = event.currentTarget as HTMLElement;
-    const rect = element.getBoundingClientRect();
-    const x = event.clientX - rect.left,
-      y = event.clientY - rect.top;
+    const { x, y } = this.bodyPoint(event.clientX, event.clientY);
     if (
       hitTest(this.scene()!.items, x, y) ||
       this.held(() => this.clearSelection())
@@ -342,8 +452,8 @@ export class EditorComponent {
       pointerId: event.pointerId,
       x,
       y,
-      clientX: event.clientX + window.scrollX,
-      clientY: event.clientY + window.scrollY,
+      clientX: event.clientX,
+      clientY: event.clientY,
       rect: { left: x, top: y, width: 0, height: 0 },
       active: false,
       add: event.shiftKey,
@@ -406,26 +516,11 @@ export class EditorComponent {
     } catch {
       return;
     }
-    const origin = Object.fromEntries(
-      Object.entries(item.bounds!).map(([key, value]) => [
-        key,
-        pixelsToPoints(value),
-      ]),
-    ) as unknown as Bounds;
-    const origins = (handle === 'move' ? this.selectedIds() : [item.id]).map(
-      (id) => {
-        const bounds = this.scene()!.items.find((i) => i.id === id)!.bounds!;
-        return {
-          id,
-          bounds: {
-            left: pixelsToPoints(bounds.left),
-            top: pixelsToPoints(bounds.top),
-            width: pixelsToPoints(bounds.width),
-            height: pixelsToPoints(bounds.height),
-          },
-        };
-      },
+    const origin = ptBounds(item.bounds!);
+    const origins = this.origins(
+      handle === 'move' ? this.selectedIds() : [item.id],
     );
+    const anchor = this.bodyPoint(event.clientX, event.clientY);
     this.preview.set({
       version: this.host.snapshot()!.version,
       id: item.id,
@@ -434,8 +529,10 @@ export class EditorComponent {
       element,
       handle,
       origin,
-      clientX: event.clientX + window.scrollX,
-      clientY: event.clientY + window.scrollY,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      anchorX: anchor.x,
+      anchorY: anchor.y,
       dx: 0,
       dy: 0,
       active: false,
@@ -449,29 +546,55 @@ export class EditorComponent {
 
   @HostListener('window:pointermove', ['$event'])
   moveGesture(event: PointerEvent): void {
+    const pan = this.pan,
+      viewport = this.viewport()?.nativeElement;
+    if (pan && viewport && event.pointerId === pan.pointerId) {
+      viewport.scrollLeft = pan.left - (event.clientX - pan.x);
+      viewport.scrollTop = pan.top - (event.clientY - pan.y);
+      return;
+    }
     const marquee = this.marquee();
     if (marquee && event.pointerId === marquee.pointerId) {
-      const dx = event.clientX + window.scrollX - marquee.clientX,
-        dy = event.clientY + window.scrollY - marquee.clientY;
+      this.autoScroll(event);
+      const { x, y } = this.bodyPoint(event.clientX, event.clientY);
       this.marquee.set({
         ...marquee,
-        active: marquee.active || Math.hypot(dx, dy) >= 3,
+        active:
+          marquee.active ||
+          Math.hypot(
+            event.clientX - marquee.clientX,
+            event.clientY - marquee.clientY,
+          ) >= 3,
         rect: {
-          left: marquee.x + Math.min(0, dx),
-          top: marquee.y + Math.min(0, dy),
-          width: Math.abs(dx),
-          height: Math.abs(dy),
+          left: Math.min(marquee.x, x),
+          top: Math.min(marquee.y, y),
+          width: Math.abs(x - marquee.x),
+          height: Math.abs(y - marquee.y),
         },
       });
       return;
     }
     const preview = this.preview();
     if (!preview || event.pointerId !== preview.pointerId) return;
-    const x = event.clientX + window.scrollX - preview.clientX,
-      y = event.clientY + window.scrollY - preview.clientY;
-    const dx = pixelsToPoints(x),
-      dy = pixelsToPoints(y);
-    const active = preview.active || Math.hypot(x, y) >= 3;
+    // Scroll first, then recompute the same report anchor under the pointer.
+    this.autoScroll(event);
+    const point = this.bodyPoint(event.clientX, event.clientY);
+    let dx = pixelsToPoints(point.x - preview.anchorX),
+      dy = pixelsToPoints(point.y - preview.anchorY);
+    const active =
+      preview.active ||
+      Math.hypot(
+        event.clientX - preview.clientX,
+        event.clientY - preview.clientY,
+      ) >= 3;
+    let guides: Guide[] = [];
+    if (active && !event.altKey) {
+      const snap = this.snap(preview.origins, preview.handle, dx, dy);
+      dx += snap.dx;
+      dy += snap.dy;
+      guides = snap.guides;
+    }
+    this.guides.set(guides);
     const proposal = directProposal(preview.origin, preview.handle, dx, dy);
     const proposals = preview.origins.map((o) =>
       directProposal(o.bounds, preview.handle, dx, dy),
@@ -496,6 +619,14 @@ export class EditorComponent {
 
   @HostListener('window:pointerup', ['$event'])
   finishGesture(event: PointerEvent): void {
+    const pan = this.pan;
+    if (pan && event.pointerId === pan.pointerId) {
+      this.pan = null;
+      const viewport = this.viewport()?.nativeElement;
+      if (viewport?.hasPointerCapture?.(pan.pointerId))
+        viewport.releasePointerCapture(pan.pointerId);
+      return;
+    }
     this.moveGesture(event);
     const marquee = this.marquee();
     if (marquee && event.pointerId === marquee.pointerId) {
@@ -517,6 +648,7 @@ export class EditorComponent {
     const preview = this.preview();
     if (!preview || event.pointerId !== preview.pointerId) return;
     this.preview.set(null);
+    this.guides.set([]);
     this.releaseCapture(preview);
     if (!preview.active) {
       const index =
@@ -533,14 +665,14 @@ export class EditorComponent {
         ? {
             action: 'move',
             targetIds: preview.origins.map((o) => o.id),
-            unit: 'pt',
+            unit: this.view().unit,
             dxPt: preview.dx,
             dyPt: preview.dy,
           }
         : {
             action: 'resize',
             targetIds: [preview.id],
-            unit: 'pt',
+            unit: this.view().unit,
             handle: preview.handle,
             ...(/[ew]/.test(preview.handle)
               ? {
@@ -567,6 +699,12 @@ export class EditorComponent {
   }
 
   cancelGesture(reason = 'Preview cancelled; document unchanged.'): void {
+    this.pan = null;
+    this.guides.set([]);
+    if (this.nudge()) {
+      this.nudge.set(null);
+      this.gestureNotice.set(reason);
+    }
     const marquee = this.marquee();
     if (marquee) {
       this.marquee.set(null);
@@ -600,6 +738,7 @@ export class EditorComponent {
 
   @HostListener('window:blur')
   blur(): void {
+    this.space = false;
     this.cancelGesture();
   }
 
@@ -621,8 +760,25 @@ export class EditorComponent {
       );
     if (event.key === 'Escape') {
       if (this.conflict()) this.cancelConflict();
-      else if (this.preview() || this.marquee()) this.cancelGesture();
+      else if (this.preview() || this.marquee() || this.nudge())
+        this.cancelGesture();
       else if (!editable) this.clearSelection();
+      return;
+    }
+    const canvas =
+      !editable &&
+      event.target instanceof Node &&
+      !!this.viewport()?.nativeElement.contains(event.target);
+    if (canvas && event.key === ' ') {
+      this.space = true;
+      if (event.target === this.viewport()?.nativeElement)
+        event.preventDefault();
+      return;
+    }
+    const arrow = arrows[event.key];
+    if (canvas && arrow && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      this.nudgeBy(arrow[0], arrow[1], event.shiftKey ? 10 : 1);
       return;
     }
     if (
@@ -644,23 +800,333 @@ export class EditorComponent {
       this.cancelGesture();
   }
 
-  groupPreviewPixels(): readonly Bounds[] {
-    const preview = this.preview();
-    if (!preview?.active) return [];
-    return preview.origins.map((o) => {
-      const { bounds } = directProposal(
-        o.bounds,
-        preview.handle,
-        preview.dx,
-        preview.dy,
+  @HostListener('window:keyup', ['$event'])
+  keyup(event: KeyboardEvent): void {
+    if (event.key === ' ') {
+      this.space = false;
+      // A pan must not also activate the focused item button.
+      if (this.panned) event.preventDefault();
+      this.panned = false;
+      return;
+    }
+    const nudge = this.nudge();
+    if (!nudge || !arrows[event.key]) return;
+    this.nudge.set(null);
+    if (nudge.version !== this.host.snapshot()?.version) return;
+    if (!nudge.dx && !nudge.dy) return;
+    if (
+      !nudge.origins.every(
+        (o) => directProposal(o.bounds, 'move', nudge.dx, nudge.dy).valid,
+      )
+    ) {
+      this.gestureNotice.set(
+        'Invalid nudge cancelled: positions must be nonnegative; document unchanged.',
       );
-      return {
-        left: pointsToPixels(bounds.left),
-        top: pointsToPixels(bounds.top),
-        width: pointsToPixels(bounds.width),
-        height: pointsToPixels(bounds.height),
-      };
+      return;
+    }
+    this.gestureNotice.set('');
+    this.host.sendEdit({
+      requestId: crypto.randomUUID(),
+      baseVersion: nudge.version,
+      operation: 'layout',
+      payload: {
+        action: 'move',
+        targetIds: nudge.origins.map((o) => o.id),
+        unit: this.view().unit,
+        dxPt: nudge.dx,
+        dyPt: nudge.dy,
+      },
     });
+  }
+
+  /** Exact 1pt/10pt steps from the accepted origins; snapping never applies. */
+  private nudgeBy(x: number, y: number, step: number): void {
+    const snapshot = this.host.snapshot();
+    if (!snapshot || this.host.pending() || this.preview() || this.marquee())
+      return;
+    let nudge = this.nudge();
+    if (!nudge) {
+      const ids = this.selectedIds();
+      if (!ids.length || this.held(() => {})) return;
+      nudge = {
+        version: snapshot.version,
+        origins: this.origins(ids),
+        dx: 0,
+        dy: 0,
+      };
+    }
+    const reason = this.bulkReason(x ? 'horizontal' : 'vertical');
+    if (reason) {
+      this.gestureNotice.set(reason);
+      return;
+    }
+    const next = { ...nudge, dx: nudge.dx + x * step, dy: nudge.dy + y * step };
+    this.nudge.set(next);
+    this.gestureNotice.set(
+      `Nudge preview ${next.dx}pt, ${next.dy}pt — release the key to apply.`,
+    );
+  }
+
+  /** Accepted body-relative point bounds of the given items. */
+  private origins(ids: readonly string[]): Origins {
+    return ids.map((id) => ({
+      id,
+      bounds: ptBounds(this.scene()!.items.find((i) => i.id === id)!.bounds!),
+    }));
+  }
+
+  /** Grid/guide adjustment for the moving union or dragged edge. */
+  private snap(
+    origins: Origins,
+    handle: DirectHandle,
+    dx: number,
+    dy: number,
+  ): ReturnType<typeof snapDelta> {
+    const view = this.view(),
+      scene = this.scene()!;
+    if (!view.gridSnap && !view.guidesSnap && !view.guidesVisible)
+      return { dx: 0, dy: 0, guides: [] };
+    const selected = new Set(origins.map((o) => o.id));
+    const moving = union(
+      origins.map((o) => directProposal(o.bounds, handle, dx, dy).bounds),
+    );
+    return snapDelta(moving, handle, {
+      scale: pointsToPixels(view.zoom),
+      body: ptBounds(scene.body),
+      targets: scene.items.flatMap((item, index) =>
+        item.bounds && item.kind !== 'cell' && !selected.has(item.id)
+          ? [
+              {
+                id: item.id,
+                label: item.label,
+                order: item.sourceOrder ?? index,
+                bounds: ptBounds(item.bounds),
+              },
+            ]
+          : [],
+      ),
+      grid: view.gridSnap ? this.gridPt() : null,
+      guides: view.guidesSnap,
+    });
+  }
+
+  groupPreviewPixels(): readonly { bounds: Bounds; valid: boolean }[] {
+    const preview = this.preview(),
+      nudge = this.nudge();
+    if (nudge)
+      return nudge.origins.map((o) => {
+        const p = directProposal(o.bounds, 'move', nudge.dx, nudge.dy);
+        return { bounds: pxBounds(p.bounds), valid: p.valid };
+      });
+    if (!preview?.active) return [];
+    return preview.origins.map((o) => ({
+      bounds: pxBounds(
+        directProposal(o.bounds, preview.handle, preview.dx, preview.dy).bounds,
+      ),
+      valid: preview.valid,
+    }));
+  }
+
+  setToggle(key: (typeof this.toggles)[number][0], on: boolean): void {
+    this.setView({ [key]: on });
+  }
+
+  setView(patch: Partial<ViewState>): void {
+    this.view.update((view) => ({ ...view, ...patch }));
+  }
+
+  private frame(): Frame {
+    const element = this.viewport()?.nativeElement;
+    if (!element)
+      return {
+        left: 0,
+        top: 0,
+        width: 0,
+        height: 0,
+        scrollLeft: 0,
+        scrollTop: 0,
+      };
+    const rect = element.getBoundingClientRect();
+    return {
+      left: rect.left + element.clientLeft,
+      top: rect.top + element.clientTop,
+      width: element.clientWidth,
+      height: element.clientHeight,
+      scrollLeft: element.scrollLeft,
+      scrollTop: element.scrollTop,
+    };
+  }
+
+  /** Body-relative unzoomed CSS pixels under a client point. */
+  private bodyPoint(x: number, y: number): { x: number; y: number } {
+    return clientToBody(
+      x,
+      y,
+      this.frame(),
+      this.view().zoom,
+      this.scene()!.body,
+    );
+  }
+
+  private autoScroll(event: PointerEvent): void {
+    const viewport = this.viewport()?.nativeElement;
+    const { dx, dy } = edgeScroll(event.clientX, event.clientY, this.frame());
+    // ponytail: scrolls per pointermove only; add a timer if authors need scrolling while the pointer rests.
+    if (viewport && (dx || dy)) {
+      viewport.scrollLeft += dx;
+      viewport.scrollTop += dy;
+    }
+  }
+
+  private startPan(event: PointerEvent): void {
+    const viewport = this.viewport()!.nativeElement;
+    try {
+      viewport.setPointerCapture(event.pointerId);
+    } catch {
+      // Panning still follows window pointer events.
+    }
+    this.pan = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      left: viewport.scrollLeft,
+      top: viewport.scrollTop,
+    };
+    this.panned = true;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  /** Applies scroll after the resized extent renders; keeps the view state in step. */
+  private scrollTo(scrollLeft: number, scrollTop: number): void {
+    this.setView({ scrollLeft, scrollTop });
+    afterNextRender(
+      () => {
+        const viewport = this.viewport()?.nativeElement;
+        if (!viewport) return;
+        viewport.scrollLeft = scrollLeft;
+        viewport.scrollTop = scrollTop;
+      },
+      { injector: this.injector },
+    );
+  }
+
+  onScroll(): void {
+    const viewport = this.viewport()?.nativeElement;
+    if (viewport)
+      this.setView({
+        scrollLeft: viewport.scrollLeft,
+        scrollTop: viewport.scrollTop,
+      });
+  }
+
+  zoomTo(next: number, x?: number, y?: number): void {
+    const frame = this.frame(),
+      zoom = clampZoom(next);
+    const scroll = anchoredScroll(
+      frame,
+      this.view().zoom,
+      zoom,
+      x ?? frame.left + frame.width / 2,
+      y ?? frame.top + frame.height / 2,
+    );
+    this.setView({ zoom });
+    this.scrollTo(scroll.scrollLeft, scroll.scrollTop);
+  }
+
+  zoomStep(direction: 1 | -1): void {
+    this.zoomTo(this.view().zoom * 1.25 ** direction);
+  }
+
+  zoomPercent(value: string): void {
+    const percent = Number(value);
+    if (!value.trim() || !Number.isFinite(percent) || percent <= 0) {
+      this.gestureNotice.set(
+        'Zoom must be a number from 25 to 400 percent; zoom unchanged.',
+      );
+      return;
+    }
+    this.zoomTo(percent / 100);
+  }
+
+  /** Pointer zoom (Ctrl/Cmd+wheel) keeps the report point under the pointer. */
+  wheel(event: WheelEvent): void {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    this.zoomTo(
+      this.view().zoom * (event.deltaY < 0 ? 1.1 : 1 / 1.1),
+      event.clientX,
+      event.clientY,
+    );
+  }
+
+  fit(target: 'page' | 'body'): void {
+    const scene = this.scene();
+    if (!scene) return;
+    const bounds =
+      target === 'page'
+        ? {
+            left: 0,
+            top: 0,
+            width: scene.page.width,
+            height: scene.page.height,
+          }
+        : scene.body;
+    const zoom = fitZoom(bounds, this.frame());
+    this.setView({ zoom });
+    this.scrollTo(
+      Math.max(0, bounds.left * zoom - 16),
+      Math.max(0, bounds.top * zoom - 16),
+    );
+  }
+
+  revealSelection(): void {
+    const scene = this.scene();
+    const selection = this.acceptedSelection();
+    const ids = selection.cellTargetId
+      ? [selection.cellTargetId]
+      : selection.bodyItemIds;
+    const known = (scene?.items ?? [])
+      .filter((i) => ids.includes(i.id) && i.bounds)
+      .map((i) => i.bounds!);
+    if (!scene || !known.length) {
+      this.gestureNotice.set('Select an item with known bounds to reveal it.');
+      return;
+    }
+    const target = union(known);
+    const scroll = revealScroll(
+      {
+        ...target,
+        left: scene.body.left + target.left,
+        top: scene.body.top + target.top,
+      },
+      this.frame(),
+      this.view().zoom,
+    );
+    this.scrollTo(scroll.scrollLeft, scroll.scrollTop);
+  }
+
+  gridInput(value: string, unit: string): void {
+    const spacing = Number(value);
+    if (
+      !value.trim() ||
+      !Number.isFinite(spacing) ||
+      spacing <= 0 ||
+      !sizeUnits.includes(unit as SizeUnit)
+    ) {
+      const { gridSpacing, gridUnit } = this.view();
+      this.gestureNotice.set(
+        `Grid spacing must be a positive finite number in pt, pc, in, mm or cm; ${gridSpacing}${gridUnit} remains active.`,
+      );
+      return;
+    }
+    this.setView({ gridSpacing: spacing, gridUnit: unit as SizeUnit });
+  }
+
+  /** Accepted geometry in the chosen display unit. */
+  inUnit(pixels: number): string {
+    const unit = this.view().unit;
+    return `${+(pixelsToPoints(pixels) / toPoints(`1${unit}`)!).toFixed(4)}${unit}`;
   }
 
   openSource(): void {

@@ -19,10 +19,60 @@
 .outcome[data-accepted='false'] {
   color: #b00020;
 }
-.page {
-  position: relative;
-  background: #fff;
+.view-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  align-items: center;
+}
+.view-controls input[type='number'] {
+  inline-size: 5rem;
+}
+.viewport {
+  overflow: auto;
+  max-block-size: 70vh;
   border: 1px solid #999;
+}
+.viewport:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, #000);
+}
+.extent {
+  position: relative;
+}
+// Outline, not border: the page/body origin must stay at the content origin.
+.page {
+  position: absolute;
+  transform-origin: 0 0;
+  background: #fff;
+  outline: 1px solid #999;
+}
+.body.grid {
+  background-image:
+    linear-gradient(to right, #0000001f 1px, transparent 1px),
+    linear-gradient(to bottom, #0000001f 1px, transparent 1px);
+  background-size: var(--grid) var(--grid);
+}
+.guide {
+  position: absolute;
+  pointer-events: none;
+  z-index: 2147483647;
+}
+.guide[data-axis='x'] {
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid #c2185b;
+}
+.guide[data-axis='y'] {
+  left: 0;
+  right: 0;
+  border-top: 1px solid #c2185b;
+}
+.guide span {
+  position: absolute;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #c2185b;
+  background: #fff;
 }
 .body {
   touch-action: none;

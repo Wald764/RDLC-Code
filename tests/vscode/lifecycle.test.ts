@@ -129,6 +129,7 @@ async function directManipulation(): Promise<void> {
 export async function run(): Promise<void> {
   await directManipulation();
   await arrangement();
+  await nudging();
   const source = readFileSync(
     resolve(__dirname, '../../../tests/fixtures/textboxes/supported.rdlc'),
     'utf8',
@@ -308,6 +309,118 @@ export async function run(): Promise<void> {
     failureView.dispose();
     registration.dispose();
     volume.dispose();
+  }
+}
+
+/** Held-repeat nudges arrive as one accumulated move; navigation never reaches the host. */
+async function nudging(): Promise<void> {
+  const source = readFileSync(
+    resolve(__dirname, '../../../tests/fixtures/interactive/mixed.rdlc'),
+    'utf8',
+  );
+  const file = join(mkdtempSync(join(tmpdir(), 'rdlc-nudge-')), 'report.rdlc');
+  writeFileSync(file, source);
+  const document = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(document);
+  const view = observe(document);
+  const nudge = async (requestId: string, targetId: string, dxPt: number) => {
+    view.session.receive({
+      protocol: 1,
+      kind: 'edit',
+      requestId,
+      baseVersion: document.version,
+      operation: 'layout',
+      payload: {
+        action: 'move',
+        targetIds: [targetId],
+        unit: 'pt',
+        dxPt,
+        dyPt: 0,
+      },
+    });
+    await until(
+      () =>
+        view.messages.some(
+          (m) => m.kind === 'editResult' && m.requestId === requestId,
+        ),
+      requestId,
+    );
+    const result = view.messages.find(
+      (m) => m.kind === 'editResult' && m.requestId === requestId,
+    );
+    assert.ok(result?.kind === 'editResult', requestId);
+    return result;
+  };
+  try {
+    const behind = () =>
+      projectReport(
+        parse({
+          uri: document.uri.toString(),
+          version: document.version,
+          source: document.getText(),
+          eol: '\n',
+        }),
+      ).textboxes.find((t) => t.name === 'Behind')!;
+    // Navigation/preferences have no host channel: the closed protocol refuses them.
+    const version = document.version;
+    view.session.receive({ protocol: 1, kind: 'viewState', zoom: 2 });
+    await until(
+      () => view.messages.some((m) => m.kind === 'protocolError'),
+      'view state refused',
+    );
+    assert.equal(document.version, version);
+    assert.equal(document.isDirty, false);
+    // Seven held repeats: one move, one native Undo step.
+    const held = await nudge('held', behind().node.id, 7);
+    assert.ok(held.accepted && held.changed, JSON.stringify(held));
+    const once = document.getText();
+    const heldId = held.mappings[0]!.resultId!;
+    // Consecutive presses retarget through the result mapping, not reselection.
+    const second = await nudge('second', heldId, 1);
+    assert.ok(second.accepted, JSON.stringify(second));
+    assert.equal(second.mappings[0]?.sourceId, heldId);
+    assert.equal(
+      second.mappings[0]?.resultId,
+      behind().node.id,
+      'selection survives the accepted nudge',
+    );
+    const twice = document.getText();
+    await vscode.commands.executeCommand('undo');
+    assert.equal(document.getText(), once, 'each press is one Undo step');
+    await vscode.commands.executeCommand('undo');
+    assert.equal(document.getText(), source, 'held repeat is one Undo step');
+    await vscode.commands.executeCommand('redo');
+    await vscode.commands.executeCommand('redo');
+    assert.equal(document.getText(), twice);
+    // A nudge captured before native Undo/Redo is stale and never replays.
+    const refusals = () =>
+      view.messages.filter(
+        (m) =>
+          m.kind === 'protocolError' ||
+          (m.kind === 'editResult' && m.requestId === 'stale'),
+      ).length;
+    const before = refusals();
+    view.session.receive({
+      protocol: 1,
+      kind: 'edit',
+      requestId: 'stale',
+      baseVersion: held.version,
+      operation: 'layout',
+      payload: {
+        action: 'move',
+        targetIds: [heldId],
+        unit: 'pt',
+        dxPt: 1,
+        dyPt: 0,
+      },
+    });
+    await until(() => refusals() > before, 'stale nudge refused');
+    assert.equal(document.getText(), twice);
+  } finally {
+    view.dispose();
+    await vscode.commands.executeCommand(
+      'workbench.action.revertAndCloseActiveEditor',
+    );
   }
 }
 

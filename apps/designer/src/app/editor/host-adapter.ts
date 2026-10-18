@@ -6,6 +6,7 @@ import {
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 import type { EditIntent, TargetMapping } from '@rdlc/report-model/editing';
 import type { DesignScene } from '@rdlc/report-model/scene';
+import { restoreViewState, type ViewState } from './viewport';
 
 export interface EditorSnapshot {
   readonly version: number;
@@ -28,6 +29,8 @@ export interface EditOutcome {
 
 interface VsCodeApi {
   postMessage(message: unknown): void;
+  getState?(): unknown;
+  setState?(state: unknown): void;
 }
 
 /**
@@ -49,11 +52,16 @@ export class HostAdapter {
   } | null>(null);
   private blocked = false;
   private readonly api: VsCodeApi | null;
+  /** Validated per-view preferences from the webview state API; never sent to the host. */
+  readonly restoredView: ReturnType<typeof restoreViewState>;
 
   constructor() {
     const acquire = (globalThis as { acquireVsCodeApi?: () => VsCodeApi })
       .acquireVsCodeApi;
     this.api = typeof acquire === 'function' ? acquire() : null;
+    this.restoredView = restoreViewState(
+      (this.api?.getState?.() as { view?: unknown } | undefined)?.view,
+    );
     const listener = (event: MessageEvent) => this.ingest(event.data);
     globalThis.addEventListener('message', listener);
     inject(DestroyRef).onDestroy(() =>
@@ -169,6 +177,11 @@ export class HostAdapter {
         ? { protocol: 1, kind: 'openSource', version }
         : { protocol: 1, kind: 'openSource', version, targetId },
     );
+  }
+
+  /** Disposable view state survives hide/show and reload of this view only. */
+  saveView(view: ViewState): void {
+    this.api?.setState?.({ view });
   }
 
   private post(message: unknown): void {

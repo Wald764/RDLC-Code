@@ -298,6 +298,7 @@ describe('editor surface', () => {
     host.ingest(multipleSnapshot());
     await settle();
     const component = fixture.componentInstance;
+    component.setView({ gridSnap: false, guidesSnap: false });
     component.select(0);
     component.select(1, true);
     const item = element.querySelector('button.item') as HTMLElement;
@@ -454,6 +455,7 @@ describe('editor surface', () => {
     const { fixture, host, element, settle } = mount();
     host.ingest(directSnapshot());
     await settle();
+    fixture.componentInstance.setView({ gridSnap: false, guidesSnap: false });
     const item = element.querySelector('button.item') as HTMLElement;
     let captured = false;
     item.setPointerCapture = () => {
@@ -1011,5 +1013,298 @@ describe('property drafts, limitations and focus', () => {
     expect(element.querySelector('.status')!.textContent).toContain(
       '4 selected',
     );
+  });
+});
+
+describe('navigation, placement and keyboard nudges', () => {
+  beforeEach(() => TestBed.resetTestingModule());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete (globalThis as { acquireVsCodeApi?: unknown }).acquireVsCodeApi;
+  });
+
+  async function mounted() {
+    const m = mount();
+    m.host.ingest(draftSnapshot());
+    await m.settle();
+    const component = m.fixture.componentInstance;
+    const viewport = m.element.querySelector<HTMLElement>('.viewport')!;
+    return { ...m, component, viewport };
+  }
+  const pointer = (target: HTMLElement, x: number, y: number, alt = false) =>
+    ({
+      button: 0,
+      pointerId: 1,
+      currentTarget: target,
+      clientX: x,
+      clientY: y,
+      altKey: alt,
+      preventDefault() {},
+      stopPropagation() {},
+    }) as unknown as PointerEvent;
+  function grab(m: Awaited<ReturnType<typeof mounted>>, index: number) {
+    const item = m.element.querySelectorAll<HTMLElement>('button.item')[index]!;
+    item.setPointerCapture = () => {};
+    item.hasPointerCapture = () => false;
+    m.component.startGesture(pointer(item, 0, 0), index);
+    return item;
+  }
+  function drag(
+    m: Awaited<ReturnType<typeof mounted>>,
+    index: number,
+    dx: number,
+    dy: number,
+    alt = false,
+  ) {
+    const item = grab(m, index);
+    m.component.moveGesture(pointer(item, dx, dy, alt));
+    m.component.finishGesture(pointer(item, dx, dy, alt));
+  }
+  const key = (
+    target: EventTarget,
+    type: 'keydown' | 'keyup',
+    init: KeyboardEventInit,
+  ) => {
+    const event = new KeyboardEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    target.dispatchEvent(event);
+    return event;
+  };
+  const edits = (host: HostAdapter) =>
+    host.sent().filter((m) => (m as { kind: string }).kind === 'edit');
+
+  it('restores validated per-view state and persists it only through the webview state API', async () => {
+    let saved: unknown = {
+      view: { zoom: 2, unit: 'mm', gridSpacing: -1, guidesSnap: false },
+    };
+    (globalThis as { acquireVsCodeApi?: unknown }).acquireVsCodeApi = () => ({
+      postMessage() {},
+      getState: () => saved,
+      setState: (state: unknown) => (saved = state),
+    });
+    const m = await mounted();
+    expect(m.component.view()).toMatchObject({
+      zoom: 2,
+      unit: 'mm',
+      gridSpacing: 10,
+      guidesSnap: false,
+    });
+    expect(m.element.textContent).toContain('Ignored invalid saved view');
+    m.component.zoomStep(1);
+    m.component.setView({ gridVisible: false });
+    await m.settle();
+    expect(saved).toMatchObject({
+      view: { zoom: 2.5, gridVisible: false, unit: 'mm' },
+    });
+    expect(
+      m.host.sent().map((message) => (message as { kind: string }).kind),
+    ).toEqual(['ready']);
+  });
+
+  it('zooms within 25–400% and navigates without edits or selection changes', async () => {
+    const m = await mounted();
+    m.component.select(0);
+    for (let i = 0; i < 20; i++) m.component.zoomStep(1);
+    expect(m.component.view().zoom).toBe(4);
+    for (let i = 0; i < 20; i++) m.component.zoomStep(-1);
+    expect(m.component.view().zoom).toBe(0.25);
+    m.component.zoomPercent('150');
+    expect(m.component.view().zoom).toBe(1.5);
+    m.component.zoomPercent('abc');
+    expect(m.component.view().zoom).toBe(1.5);
+    expect(m.component.gestureNotice()).toContain('Zoom');
+    m.component.zoomPercent('1000');
+    expect(m.component.view().zoom).toBe(4);
+    m.component.fit('page');
+    m.component.fit('body');
+    m.component.revealSelection();
+    m.component.zoomTo(1);
+    await m.settle();
+    const page = m.element.querySelector<HTMLElement>('.page')!;
+    expect(page.style.transform).toBe('scale(1)');
+    expect(m.component.selectedIds()).toEqual(['2:3']);
+    expect(edits(m.host)).toHaveLength(0);
+    expect(m.element.textContent).toContain('Authoring layout');
+  });
+
+  for (const zoom of [0.25, 0.5, 1, 2, 4])
+    it(`drags the same report-space distance at ${zoom * 100}% with scroll`, async () => {
+      const m = await mounted();
+      m.component.setView({ gridSnap: false, guidesSnap: false });
+      m.component.zoomTo(zoom);
+      await m.settle();
+      m.viewport.scrollLeft = 37;
+      m.viewport.scrollTop = 11;
+      // 32×16 unzoomed CSS px = 24×12pt, beyond the 3px click threshold even at 25%.
+      drag(m, 0, 32 * zoom, 16 * zoom);
+      expect(edits(m.host)[0]).toMatchObject({
+        payload: { action: 'move', dxPt: 24, dyPt: 12 },
+      });
+    });
+
+  it('snaps x to the body-origin grid, y to a nearer guide, and Alt bypasses both', async () => {
+    const m = await mounted();
+    drag(m, 0, 8, 4);
+    // Title (18pt, 18pt) + (6pt, 3pt) = (24, 21): x → grid 20; y → Rectangle top 18
+    // (3pt = 4 CSS px) wins over grid 20 on that axis.
+    const first = edits(m.host)[0] as {
+      payload: { dxPt: number; dyPt: number };
+    };
+    expect(first.payload.dxPt).toBeCloseTo(2, 9);
+    expect(first.payload.dyPt).toBeCloseTo(0, 9);
+    TestBed.resetTestingModule();
+    const alt = await mounted();
+    drag(alt, 0, 8, 4, true);
+    expect(edits(alt.host)[0]).toMatchObject({
+      payload: { dxPt: 6, dyPt: 3 },
+    });
+    expect(alt.component.view()).toMatchObject({ gridSnap: true });
+  });
+
+  it('labels the active sibling guide and snaps to it before the grid', async () => {
+    const m = await mounted();
+    m.component.setView({ gridSnap: false });
+    const item = grab(m, 1);
+    m.component.moveGesture(pointer(item, 4, 40));
+    await m.settle();
+    expect(m.element.querySelector('.guide')?.textContent).toContain('Title');
+    m.component.setView({ guidesVisible: false });
+    await m.settle();
+    expect(m.element.querySelector('.guide')).toBeNull();
+    m.component.finishGesture(pointer(item, 4, 40));
+    expect(edits(m.host)[0]).toMatchObject({
+      payload: { targetIds: ['2:4'], dxPt: 0, dyPt: 30 },
+    });
+  });
+
+  it('keeps the previous grid setting when spacing input is invalid', async () => {
+    const m = await mounted();
+    m.component.gridInput('0', 'pt');
+    expect(m.component.view().gridSpacing).toBe(10);
+    expect(m.component.gestureNotice()).toContain('Grid spacing');
+    m.component.gridInput('0.5', 'cm');
+    expect(m.component.view()).toMatchObject({
+      gridSpacing: 0.5,
+      gridUnit: 'cm',
+    });
+    m.component.gridInput('Infinity', 'mm');
+    expect(m.component.view().gridUnit).toBe('cm');
+    expect(edits(m.host)).toHaveLength(0);
+  });
+
+  it('nudges exactly 1pt and aggregates held repeats into one move on keyup', async () => {
+    const m = await mounted();
+    m.component.select(0);
+    await m.settle();
+    m.viewport.focus();
+    const down = key(m.viewport, 'keydown', { key: 'ArrowRight' });
+    expect(down.defaultPrevented).toBe(true);
+    key(m.viewport, 'keydown', { key: 'ArrowRight', repeat: true });
+    key(m.viewport, 'keydown', { key: 'ArrowRight', repeat: true });
+    expect(edits(m.host)).toHaveLength(0);
+    expect(m.component.nudge()).toMatchObject({ dx: 3, dy: 0 });
+    key(m.viewport, 'keyup', { key: 'ArrowRight' });
+    expect(edits(m.host)).toHaveLength(1);
+    // Exact deltas: the 10pt grid does not apply to nudges.
+    expect(edits(m.host)[0]).toMatchObject({
+      payload: { action: 'move', targetIds: ['2:3'], dxPt: 3, dyPt: 0 },
+    });
+  });
+
+  it('Shift+arrow nudges 10pt and a discrete press is its own operation', async () => {
+    const m = await mounted();
+    m.component.select(0);
+    await m.settle();
+    key(m.viewport, 'keydown', { key: 'ArrowDown', shiftKey: true });
+    key(m.viewport, 'keyup', { key: 'ArrowDown', shiftKey: true });
+    expect(edits(m.host)).toHaveLength(1);
+    expect(edits(m.host)[0]).toMatchObject({
+      payload: { dxPt: 0, dyPt: 10 },
+    });
+  });
+
+  it('cancels repeats on Escape, focus loss and independent versions', async () => {
+    const m = await mounted();
+    m.component.select(0);
+    await m.settle();
+    key(m.viewport, 'keydown', { key: 'ArrowDown' });
+    key(m.viewport, 'keydown', { key: 'Escape' });
+    key(m.viewport, 'keyup', { key: 'ArrowDown' });
+    key(m.viewport, 'keydown', { key: 'ArrowDown' });
+    window.dispatchEvent(new Event('blur'));
+    key(m.viewport, 'keyup', { key: 'ArrowDown' });
+    key(m.viewport, 'keydown', { key: 'ArrowDown' });
+    m.host.ingest(draftSnapshot(3));
+    await m.settle();
+    expect(m.component.nudge()).toBeNull();
+    key(m.viewport, 'keyup', { key: 'ArrowDown' });
+    expect(edits(m.host)).toHaveLength(0);
+  });
+
+  it('refuses an invalid nudge and never intercepts inputs or clipboard shortcuts', async () => {
+    const m = await mounted();
+    m.component.select(0);
+    await m.settle();
+    for (let i = 0; i < 19; i++)
+      key(m.viewport, 'keydown', { key: 'ArrowLeft', repeat: i > 0 });
+    key(m.viewport, 'keyup', { key: 'ArrowLeft' });
+    expect(edits(m.host)).toHaveLength(0);
+    expect(m.component.gestureNotice()).toContain('Invalid');
+    const input = m.element.querySelector<HTMLInputElement>(
+      '[data-property="name"]',
+    )!;
+    expect(key(input, 'keydown', { key: 'ArrowLeft' }).defaultPrevented).toBe(
+      false,
+    );
+    expect(m.component.nudge()).toBeNull();
+    expect(
+      key(m.viewport, 'keydown', { key: 'c', ctrlKey: true }).defaultPrevented,
+    ).toBe(false);
+    expect(
+      key(m.viewport, 'keydown', { key: 'ArrowRight', ctrlKey: true })
+        .defaultPrevented,
+    ).toBe(false);
+    expect(edits(m.host)).toHaveLength(0);
+  });
+
+  it('keeps keyboard controls labeled, overflow reachable and focus usable after refusal', async () => {
+    const m = await mounted();
+    for (const label of [
+      'Zoom out',
+      'Zoom in',
+      '100%',
+      'Fit Page',
+      'Fit Body',
+      'Reveal Selection',
+    ])
+      expect(
+        [...m.element.querySelectorAll('button')].some(
+          (b) => b.textContent?.trim() === label && b.tabIndex >= 0,
+        ),
+      ).toBe(true);
+    for (const label of [
+      'Zoom percent',
+      'Grid spacing',
+      'Grid unit',
+      'Display unit',
+      'Show grid',
+      'Snap to grid',
+      'Show guides',
+      'Snap to guides',
+    ])
+      expect(
+        m.element.querySelector(`[aria-label="${label}"]`),
+        label,
+      ).not.toBeNull();
+    expect(m.viewport.tabIndex).toBe(0);
+    expect(m.viewport.getAttribute('aria-label')).toContain('Authoring layout');
+    // A refused nudge leaves focus on the canvas, not trapped elsewhere.
+    m.viewport.focus();
+    key(m.viewport, 'keydown', { key: 'ArrowLeft' });
+    key(m.viewport, 'keyup', { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(m.viewport);
   });
 });

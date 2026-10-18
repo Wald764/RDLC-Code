@@ -55,7 +55,8 @@
   }
   @if (scene(); as design) {
     <p class="status" role="status">
-      Design surface — {{ status() }} · {{ design.items.length }} item(s) ·
+      Authoring layout (not runtime pagination or a data preview) —
+      {{ status() }} · {{ design.items.length }} item(s) ·
       {{ selectedIds().length }} selected
       @if (primary(); as item) {
         · Primary: {{ item.label }}
@@ -115,108 +116,215 @@
         }
       }
     </div>
+    <div class="view-controls" role="toolbar" aria-label="View and placement">
+      <button type="button" (click)="zoomStep(-1)">Zoom out</button>
+      <input
+        type="number"
+        aria-label="Zoom percent"
+        min="25"
+        max="400"
+        step="5"
+        [value]="+(view().zoom * 100).toFixed(2)"
+        (change)="zoomPercent(zoomField.value)"
+        #zoomField
+      />
+      <button type="button" (click)="zoomStep(1)">Zoom in</button>
+      <button type="button" (click)="zoomTo(1)">100%</button>
+      <button type="button" (click)="fit('page')">Fit Page</button>
+      <button type="button" (click)="fit('body')">Fit Body</button>
+      <button type="button" (click)="revealSelection()">
+        Reveal Selection
+      </button>
+      <input
+        type="number"
+        aria-label="Grid spacing"
+        min="0"
+        step="any"
+        [value]="view().gridSpacing"
+        (change)="gridInput(spacing.value, gridUnit.value)"
+        #spacing
+      />
+      <select
+        aria-label="Grid unit"
+        (change)="gridInput(spacing.value, gridUnit.value)"
+        #gridUnit
+      >
+        @for (unit of units; track unit) {
+          <option [value]="unit" [selected]="unit === view().gridUnit">
+            {{ unit }}
+          </option>
+        }
+      </select>
+      <select
+        aria-label="Display unit"
+        (change)="setView({ unit: $any(displayUnit.value) })"
+        #displayUnit
+      >
+        @for (unit of units; track unit) {
+          <option [value]="unit" [selected]="unit === view().unit">
+            {{ unit }}
+          </option>
+        }
+      </select>
+      @for (toggle of toggles; track toggle[0]) {
+        <label
+          ><input
+            type="checkbox"
+            #box
+            [attr.aria-label]="toggle[1]"
+            [checked]="view()[toggle[0]]"
+            (change)="setToggle(toggle[0], box.checked)"
+          />
+          {{ toggle[1] }}</label
+        >
+      }
+      <span>Alt bypasses snapping; Space+drag pans; Ctrl+wheel zooms.</span>
+    </div>
     <div
-      class="page"
+      class="viewport"
+      #viewport
+      tabindex="0"
       role="group"
-      aria-label="Page"
+      aria-label="Authoring layout canvas — not runtime pagination or a data preview. Arrow keys nudge the selection 1pt, Shift+arrow 10pt."
       data-conflicts
-      [style.width.px]="design.page.width"
-      [style.height.px]="design.page.height"
+      (scroll)="onScroll()"
+      (wheel)="wheel($event)"
     >
       <div
-        class="body"
-        role="group"
-        aria-label="Body"
-        [style.left.px]="design.body.left"
-        [style.top.px]="design.body.top"
-        [style.width.px]="design.body.width"
-        [style.height.px]="design.body.height"
-        (pointerdown)="startMarquee($event)"
+        class="extent"
+        [style.width.px]="extent()!.width * view().zoom"
+        [style.height.px]="extent()!.height * view().zoom"
       >
-        @for (item of design.items; track $index) {
-          @if (item.bounds; as bounds) {
-            <button
-              type="button"
-              class="item"
-              [class.selected]="isSelected(item)"
-              [class.placeholder]="item.placeholder"
-              [attr.data-item]="$index"
-              [attr.aria-pressed]="isSelected(item)"
-              [style.left.px]="bounds.left"
-              [style.top.px]="bounds.top"
-              [style.width.px]="bounds.width"
-              [style.height.px]="bounds.height"
-              [style.z-index]="item.zIndex ?? 0"
-              (click)="selectClick($event, $index)"
-              (pointerdown)="startGesture($event, $index)"
-            >
-              {{ item.label }}
-            </button>
-          }
-        }
-        @if (selected(); as item) {
-          @if (item.bounds; as bounds) {
-            @if (item.kind !== 'cell' && item.operations) {
-              <div
-                class="selection-frame"
-                [style.left.px]="bounds.left"
-                [style.top.px]="bounds.top"
-                [style.width.px]="bounds.width"
-                [style.height.px]="bounds.height"
-                aria-label="Selected item geometry"
-              >
-                @if (item.kind === 'table' && canHandle(item, 'move')) {
-                  <button
-                    type="button"
-                    class="move-grip"
-                    aria-label="Move selected table"
-                    [disabled]="!!host.pending()"
-                    (pointerdown)="startGesture($event, selectedIndex()!)"
-                  >
-                    Move table
-                  </button>
-                }
-                @for (handle of handles; track handle) {
-                  @if (canHandle(item, handle)) {
-                    <button
-                      type="button"
-                      class="handle"
-                      [attr.data-handle]="handle"
-                      [attr.aria-label]="'Resize ' + item.label + ' ' + handle"
-                      [disabled]="!!host.pending()"
-                      (pointerdown)="
-                        startGesture($event, selectedIndex()!, handle)
-                      "
-                    ></button>
-                  }
-                }
-              </div>
-            }
-          }
-        }
-        @for (bounds of groupPreviewPixels(); track $index) {
+        <div
+          class="page"
+          role="group"
+          aria-label="Page"
+          data-conflicts
+          [style.width.px]="design.page.width"
+          [style.height.px]="design.page.height"
+          [style.transform]="'scale(' + view().zoom + ')'"
+        >
           <div
-            class="preview"
-            [class.invalid]="!preview()?.valid"
-            [style.left.px]="bounds.left"
-            [style.top.px]="bounds.top"
-            [style.width.px]="bounds.width > 0 ? bounds.width : 1"
-            [style.height.px]="bounds.height > 0 ? bounds.height : 1"
-            aria-hidden="true"
-          ></div>
-        }
-        @if (marquee(); as state) {
-          @if (state.active) {
-            <div
-              class="marquee"
-              [style.left.px]="state.rect.left"
-              [style.top.px]="state.rect.top"
-              [style.width.px]="state.rect.width"
-              [style.height.px]="state.rect.height"
-              aria-hidden="true"
-            ></div>
-          }
-        }
+            class="body"
+            role="group"
+            aria-label="Body"
+            [class.grid]="view().gridVisible"
+            [style.--grid]="toPx(gridPt()) + 'px'"
+            [style.left.px]="design.body.left"
+            [style.top.px]="design.body.top"
+            [style.width.px]="design.body.width"
+            [style.height.px]="design.body.height"
+            (pointerdown)="startMarquee($event)"
+          >
+            @for (item of design.items; track $index) {
+              @if (item.bounds; as bounds) {
+                <button
+                  type="button"
+                  class="item"
+                  [class.selected]="isSelected(item)"
+                  [class.placeholder]="item.placeholder"
+                  [attr.data-item]="$index"
+                  [attr.aria-pressed]="isSelected(item)"
+                  [style.left.px]="bounds.left"
+                  [style.top.px]="bounds.top"
+                  [style.width.px]="bounds.width"
+                  [style.height.px]="bounds.height"
+                  [style.z-index]="item.zIndex ?? 0"
+                  (click)="selectClick($event, $index)"
+                  (pointerdown)="startGesture($event, $index)"
+                >
+                  {{ item.label }}
+                </button>
+              }
+            }
+            @if (selected(); as item) {
+              @if (item.bounds; as bounds) {
+                @if (item.kind !== 'cell' && item.operations) {
+                  <div
+                    class="selection-frame"
+                    [style.left.px]="bounds.left"
+                    [style.top.px]="bounds.top"
+                    [style.width.px]="bounds.width"
+                    [style.height.px]="bounds.height"
+                    aria-label="Selected item geometry"
+                  >
+                    @if (item.kind === 'table' && canHandle(item, 'move')) {
+                      <button
+                        type="button"
+                        class="move-grip"
+                        aria-label="Move selected table"
+                        [disabled]="!!host.pending()"
+                        (pointerdown)="startGesture($event, selectedIndex()!)"
+                      >
+                        Move table
+                      </button>
+                    }
+                    @for (handle of handles; track handle) {
+                      @if (canHandle(item, handle)) {
+                        <button
+                          type="button"
+                          class="handle"
+                          [attr.data-handle]="handle"
+                          [attr.aria-label]="
+                            'Resize ' + item.label + ' ' + handle
+                          "
+                          [disabled]="!!host.pending()"
+                          (pointerdown)="
+                            startGesture($event, selectedIndex()!, handle)
+                          "
+                        ></button>
+                      }
+                    }
+                  </div>
+                }
+              }
+            }
+            @for (shape of groupPreviewPixels(); track $index) {
+              <div
+                class="preview"
+                [class.invalid]="!shape.valid"
+                [style.left.px]="shape.bounds.left"
+                [style.top.px]="shape.bounds.top"
+                [style.width.px]="
+                  shape.bounds.width > 0 ? shape.bounds.width : 1
+                "
+                [style.height.px]="
+                  shape.bounds.height > 0 ? shape.bounds.height : 1
+                "
+                aria-hidden="true"
+              ></div>
+            }
+            @if (view().guidesVisible) {
+              @for (guide of guides(); track $index) {
+                <div
+                  class="guide"
+                  [attr.data-axis]="guide.axis"
+                  [style.left.px]="
+                    guide.axis === 'x' ? toPx(guide.value) : null
+                  "
+                  [style.top.px]="guide.axis === 'y' ? toPx(guide.value) : null"
+                >
+                  <span
+                    >{{ guide.label }} {{ guide.edge }}:
+                    {{ inUnit(toPx(guide.value)) }}</span
+                  >
+                </div>
+              }
+            }
+            @if (marquee(); as state) {
+              @if (state.active) {
+                <div
+                  class="marquee"
+                  [style.left.px]="state.rect.left"
+                  [style.top.px]="state.rect.top"
+                  [style.width.px]="state.rect.width"
+                  [style.height.px]="state.rect.height"
+                  aria-hidden="true"
+                ></div>
+              }
+            }
+          </div>
+        </div>
       </div>
     </div>
     @if (design.items.length) {
@@ -250,9 +358,9 @@
     @if (selected(); as item) {
       @if (item.bounds; as bounds) {
         <p aria-label="Accepted item geometry">
-          Accepted geometry (pt): left {{ toPt(bounds.left) }}, top
-          {{ toPt(bounds.top) }}, width {{ toPt(bounds.width) }}, height
-          {{ toPt(bounds.height) }}.
+          Accepted geometry: left {{ inUnit(bounds.left) }}, top
+          {{ inUnit(bounds.top) }}, width {{ inUnit(bounds.width) }}, height
+          {{ inUnit(bounds.height) }}.
         </p>
       }
       @if (limitations(); as reasons) {
