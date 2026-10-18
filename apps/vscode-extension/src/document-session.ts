@@ -77,7 +77,9 @@ export class DocumentSession {
         ]),
       ],
       capabilities:
-        projection.status === 'editable' ? ['setProperty', 'author'] : [],
+        projection.status === 'editable'
+          ? ['setProperty', 'author', 'layout']
+          : [],
     };
   }
 
@@ -301,7 +303,12 @@ export class DocumentSession {
     let applied = false;
     let reason = 'REJECTED_BY_HOST';
     try {
-      applied = await this.applyWorkspaceEdit(workspaceEdit);
+      if (
+        vscode.workspace.fs.isWritableFileSystem(this.document.uri.scheme) ===
+        false
+      )
+        reason = 'DOCUMENT_READ_ONLY';
+      else applied = await this.applyWorkspaceEdit(workspaceEdit);
     } catch {
       reason = 'HOST_EDIT_FAILED';
     }

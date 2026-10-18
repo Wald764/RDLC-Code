@@ -18,7 +18,9 @@ import {
   validateTextboxProperty,
   validateTextboxRename,
 } from '@rdlc/validation/textboxes';
-import { verifyCandidate } from './verify-candidate.js';
+import { verifyCandidate, verifyLayoutCandidate } from './verify-candidate.js';
+import { validateLayout } from '@rdlc/validation/layout';
+import { planLayout } from '@rdlc/xml-serializer/layout';
 import { planDataset } from '@rdlc/xml-serializer/datasets';
 import {
   planPage,
@@ -114,17 +116,33 @@ export function planTextboxIntent(
   if (intent.operation === 'author')
     return planAuthoringIntent(snapshot, syntax, projection, intent);
   if (intent.operation === 'layout')
-    return {
-      ok: false,
-      diagnostics: [
-        diagnostic(
-          'LAYOUT_UNAVAILABLE',
-          'Layout planning is not available yet.',
-          'unsupported',
-          { start: 0, end: 0 },
-        ),
-      ],
-    };
+    try {
+      const changes = validateLayout(projection, intent.payload);
+      const plan = planLayout(snapshot, changes, intent.payload.unit);
+      const candidate = verifyCandidate(snapshot, plan, (next, original) =>
+        verifyLayoutCandidate(original, next, changes),
+      ).source;
+      return {
+        ok: true,
+        plan,
+        candidate,
+        changed: candidate !== snapshot.source,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        diagnostics: [
+          diagnostic(
+            'LAYOUT_REFUSED',
+            error instanceof Error
+              ? error.message
+              : 'Layout could not be verified.',
+            'unsupported',
+            { start: 0, end: 0 },
+          ),
+        ],
+      };
+    }
   if (projection.status !== 'editable')
     return {
       ok: false,

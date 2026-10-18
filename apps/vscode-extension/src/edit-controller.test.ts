@@ -32,6 +32,64 @@ test('the shared planner refuses stale scalar edits before creating patches', ()
   if (!outcome.ok) assert.equal(outcome.diagnostics[0]?.code, 'STALE_EDIT');
 });
 
+test('layout refuses a complete invalid set and retains independent-axis capabilities', () => {
+  const snapshot = {
+    uri: 'test:layout',
+    version: 1,
+    source: readFileSync(
+      'tests/fixtures/interactive/optional-geometry.rdlc',
+      'utf8',
+    ),
+    eol: '\n' as const,
+  };
+  const syntax = parse(snapshot),
+    report = projectReport(syntax);
+  const submit = (ids: string[], dxPt: number, dyPt: number) =>
+    planTextboxIntent(snapshot, syntax, report, {
+      operation: 'layout',
+      requestId: 'guard',
+      baseVersion: 1,
+      payload: { action: 'move', targetIds: ids, dxPt, dyPt, unit: 'mm' },
+    });
+  const expression = report.textboxes.find(
+    (t) => t.name === 'ExpressionWidth',
+  )!;
+  assert.equal(submit([expression.node.id], 1, 0).ok, false);
+  assert.equal(
+    submit([expression.node.id], 0, 1).ok,
+    true,
+    'Unknown width does not block safe Y movement',
+  );
+  assert.equal(
+    submit([report.textboxes[0]!.node.id, expression.node.id], 1, 0).ok,
+    false,
+  );
+  const tiny = report.textboxes.find((t) => t.name === 'Tiny')!;
+  assert.equal(submit([tiny.node.id], 0.00001, 0.00001).ok, true);
+  const badTable = readFileSync(
+    'tests/fixtures/tables/grouped.rdlc',
+    'utf8',
+  ).replace(/<Width>[^<]+<\/Width>/, '<Width>999pt</Width>');
+  const badSnapshot = { ...snapshot, source: badTable },
+    badSyntax = parse(badSnapshot),
+    badReport = projectReport(badSyntax);
+  assert.equal(
+    planTextboxIntent(badSnapshot, badSyntax, badReport, {
+      operation: 'layout',
+      requestId: 'inconsistent',
+      baseVersion: 1,
+      payload: {
+        action: 'resize',
+        targetIds: [badReport.tables[0]!.node.id],
+        unit: 'pt',
+        handle: 'e',
+        xPt: 300,
+      },
+    }).ok,
+    false,
+  );
+});
+
 test('geometric scalar no-op preserves original lexemes and creates no patches', () => {
   const original = source.replace(
     '<Left>0.25in</Left>',

@@ -17,6 +17,59 @@ import {
 } from './structure.js';
 import { escapeAttribute, escapeText } from './textboxes.js';
 import { textboxXml } from './authoring.js';
+import {
+  formatSize,
+  toPoints,
+  type SizeUnit,
+} from '@rdlc/report-model/geometry';
+import type { Bounds } from '@rdlc/report-model/scene';
+
+/** Scale every design component once, retaining units and absent outer dimensions. */
+export function planTableGeometry(
+  snapshot: DocumentSnapshot,
+  table: Table,
+  values: Partial<Bounds>,
+  unit: SizeUnit,
+): PatchPlan {
+  const patches: SourcePatch[] = [];
+  for (const [key, name, components] of [
+    [
+      'width',
+      'Width',
+      table.columns.map((c) => ({ node: c.node, raw: c.width })),
+    ],
+    [
+      'height',
+      'Height',
+      table.rows.map((r) => ({ node: r.node, raw: r.height })),
+    ],
+  ] as const) {
+    const desired = values[key];
+    if (desired === undefined) continue;
+    const total = components.reduce((sum, c) => sum + toPoints(c.raw)!, 0);
+    let used = 0;
+    for (const [index, component] of components.entries()) {
+      const value =
+        index === components.length - 1
+          ? desired - used
+          : (toPoints(component.raw)! * desired) / total;
+      const formatted = formatSize(value, component.raw, unit, 'dimension');
+      used += toPoints(formatted)!;
+      if (formatted !== component.raw)
+        patches.push(setScalar(snapshot, component.node, name, formatted));
+    }
+    if (table.bounds[key] !== null)
+      patches.push(
+        setScalar(
+          snapshot,
+          table.node,
+          name,
+          formatSize(desired, table.bounds[key], unit, 'dimension'),
+        ),
+      );
+  }
+  return patchPlan(snapshot, patches);
+}
 
 export function planTable(
   snapshot: DocumentSnapshot,

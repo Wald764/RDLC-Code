@@ -1,17 +1,25 @@
 <section class="editor" aria-label="Report design surface">
-  @if (host.notice()) {
-    <p role="status">{{ host.notice() }}</p>
-  }
-  @if (scene(); as design) {
-    <p class="status" role="status">
-      Design surface — {{ status() }} · {{ design.items.length }} item(s)
-    </p>
+  <div class="feedback" role="status" aria-label="Editor messages" tabindex="0">
+    @if (host.notice()) {
+      <p>{{ host.notice() }}</p>
+    }
+    @if (host.pending()) {
+      <p>Applying edit — mutations are temporarily unavailable.</p>
+    }
+    @if (gestureNotice()) {
+      <p>{{ gestureNotice() }}</p>
+    }
     @if (host.outcome(); as outcome) {
-      <p class="outcome" role="status" [attr.data-accepted]="outcome.accepted">
+      <p class="outcome" [attr.data-accepted]="outcome.accepted">
         {{ outcome.accepted ? 'Applied to document' : 'Blocked' }}:
         {{ outcome.reason }}
       </p>
     }
+  </div>
+  @if (scene(); as design) {
+    <p class="status" role="status">
+      Design surface — {{ status() }} · {{ design.items.length }} item(s)
+    </p>
     <div
       class="page"
       role="group"
@@ -43,10 +51,62 @@
               [style.height.px]="bounds.height"
               [style.z-index]="item.zIndex ?? 0"
               (click)="select($index)"
+              (pointerdown)="startGesture($event, $index)"
             >
               {{ item.label }}
             </button>
           }
+        }
+        @if (selected(); as item) {
+          @if (item.bounds; as bounds) {
+            @if (item.kind !== 'cell' && item.operations) {
+              <div
+                class="selection-frame"
+                [style.left.px]="bounds.left"
+                [style.top.px]="bounds.top"
+                [style.width.px]="bounds.width"
+                [style.height.px]="bounds.height"
+                aria-label="Selected item geometry"
+              >
+                @if (item.kind === 'table' && canHandle(item, 'move')) {
+                  <button
+                    type="button"
+                    class="move-grip"
+                    aria-label="Move selected table"
+                    [disabled]="!!host.pending()"
+                    (pointerdown)="startGesture($event, selectedIndex()!)"
+                  >
+                    Move table
+                  </button>
+                }
+                @for (handle of handles; track handle) {
+                  @if (canHandle(item, handle)) {
+                    <button
+                      type="button"
+                      class="handle"
+                      [attr.data-handle]="handle"
+                      [attr.aria-label]="'Resize ' + item.label + ' ' + handle"
+                      [disabled]="!!host.pending()"
+                      (pointerdown)="
+                        startGesture($event, selectedIndex()!, handle)
+                      "
+                    ></button>
+                  }
+                }
+              </div>
+            }
+          }
+        }
+        @if (previewPixels(); as bounds) {
+          <div
+            class="preview"
+            [class.invalid]="!preview()?.valid"
+            [style.left.px]="bounds.left"
+            [style.top.px]="bounds.top"
+            [style.width.px]="bounds.width > 0 ? bounds.width : 1"
+            [style.height.px]="bounds.height > 0 ? bounds.height : 1"
+            aria-hidden="true"
+          ></div>
         }
       </div>
     </div>
@@ -66,7 +126,16 @@
       </ul>
     }
     @if (selected(); as item) {
-      <rdlc-textbox-properties [item]="item" (commit)="commit($event)" />
+      @if (item.bounds; as bounds) {
+        <p aria-label="Accepted item geometry">
+          Accepted geometry (pt): left {{ toPt(bounds.left) }}, top
+          {{ toPt(bounds.top) }}, width {{ toPt(bounds.width) }}, height
+          {{ toPt(bounds.height) }}.
+        </p>
+      }
+      <fieldset [disabled]="!!host.pending()">
+        <rdlc-textbox-properties [item]="item" (commit)="commit($event)" />
+      </fieldset>
       @for (
         dataset of host.snapshot()?.authoring?.datasets ?? [];
         track dataset.id
@@ -91,11 +160,13 @@
         snapshot?.status === 'editable' && snapshot?.authoring;
         as authoring
       ) {
-        <rdlc-authoring
-          [state]="authoring"
-          [selected]="selected()"
-          (request)="author($event)"
-        />
+        <fieldset [disabled]="!!host.pending()">
+          <rdlc-authoring
+            [state]="authoring"
+            [selected]="selected()"
+            (request)="author($event)"
+          />
+        </fieldset>
       }
     }
     <rdlc-diagnostics

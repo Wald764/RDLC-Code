@@ -39,6 +39,6 @@ export class AuthoringComponent implements AfterViewInit {
   ];
   ngAfterViewInit(): void {
     // A new accepted version discards drafts and gives keyboard users a stable restart point.
-    this.element.nativeElement.focus();
+    this.element.nativeElement.focus({ preventScroll: true });
   }
 }

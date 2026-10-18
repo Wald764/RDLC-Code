@@ -4,7 +4,7 @@ import {
   type AuthoringState,
 } from '@rdlc/report-model/protocol';
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
-import type { EditIntent } from '@rdlc/report-model/editing';
+import type { EditIntent, TargetMapping } from '@rdlc/report-model/editing';
 import type { DesignScene } from '@rdlc/report-model/scene';
 
 export interface EditorSnapshot {
@@ -16,6 +16,10 @@ export interface EditorSnapshot {
   readonly authoring?: AuthoringState | null;
 }
 export interface EditOutcome {
+  readonly baseVersion: number;
+  readonly version: number;
+  readonly changed: boolean;
+  readonly mappings: readonly TargetMapping[];
   readonly requestId: string;
   readonly accepted: boolean;
   readonly reason: string;
@@ -36,6 +40,11 @@ export class HostAdapter {
   readonly outcome = signal<EditOutcome | null>(null);
   readonly sent = signal<readonly unknown[]>([]);
   readonly notice = signal('');
+  readonly pending = signal<{
+    readonly requestId: string;
+    readonly baseVersion: number;
+    readonly result?: EditOutcome;
+  } | null>(null);
   private blocked = false;
   private readonly api: VsCodeApi | null;
 
@@ -59,7 +68,7 @@ export class HostAdapter {
       if (previous && message.version < previous.version) return;
       this.blocked = false;
       if (previous && message.version === previous.version) return;
-      if (previous) {
+      if (previous && !this.pending()) {
         this.notice.set(
           'The document changed. Obsolete drafts were cancelled; select an item and start a new edit.',
         );
@@ -73,32 +82,76 @@ export class HostAdapter {
         scene: message.scene,
         authoring: message.authoring ?? null,
       });
+      this.reconcile();
     } else if (message.kind === 'protocolError') {
       this.blocked = true;
+      this.pending.set(null);
       this.notice.set(
         `Blocked: ${message.reason}. Refreshing the document; the edit will not be retried.`,
       );
       this.post({ protocol: 1, kind: 'ready' });
     } else if (message.kind === 'editResult') {
-      if (message.version < (this.snapshot()?.version ?? 0)) return;
-      this.outcome.set({
+      const pending = this.pending();
+      if (message.version < (this.snapshot()?.version ?? 0)) {
+        if (pending?.requestId === message.requestId) {
+          this.pending.set(null);
+          this.outcome.set(null);
+          this.notice.set(
+            'The document changed independently; the obsolete result was discarded.',
+          );
+        }
+        return;
+      }
+      const result: EditOutcome = {
+        baseVersion: message.baseVersion,
+        version: message.version,
+        changed: message.changed,
+        mappings: message.mappings,
         requestId: message.requestId,
         accepted: message.accepted,
         reason: message.reason,
         diagnostics: message.diagnostics,
-      });
+      };
+      if (pending && pending.requestId !== message.requestId) return;
+      this.outcome.set(result);
+      if (pending) {
+        this.pending.set({ ...pending, result });
+        this.reconcile();
+      }
     }
   }
 
-  sendEdit(intent: EditIntent): void {
+  sendEdit(intent: EditIntent): boolean {
     const snapshot = this.snapshot();
     if (
       this.blocked ||
+      this.pending() !== null ||
       snapshot?.status !== 'editable' ||
       intent.baseVersion !== snapshot.version
     )
-      return;
+      return false;
+    this.pending.set({
+      requestId: intent.requestId,
+      baseVersion: intent.baseVersion,
+    });
+    this.outcome.set(null);
     this.post({ protocol: 1, kind: 'edit', ...intent });
+    return true;
+  }
+
+  private reconcile(): void {
+    const pending = this.pending();
+    const version = this.snapshot()?.version;
+    if (!pending?.result || version === undefined) return;
+    if (version >= pending.result.version) {
+      if (version > pending.result.version) {
+        this.outcome.set(null);
+        this.notice.set(
+          'The document changed independently; select an item again.',
+        );
+      }
+      this.pending.set(null);
+    }
   }
 
   openSource(targetId?: string): void {

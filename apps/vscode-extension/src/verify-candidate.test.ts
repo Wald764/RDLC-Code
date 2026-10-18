@@ -1,7 +1,97 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyCandidate } from './verify-candidate.js';
+import { verifyCandidate, verifyLayoutCandidate } from './verify-candidate.js';
+import { readFileSync } from 'node:fs';
+import { parse } from '@rdlc/xml-parser/parser';
+import { projectReport } from '@rdlc/xml-parser/project-report';
+import { validateLayout } from '@rdlc/validation/layout';
+import { planLayout } from '@rdlc/xml-serializer/layout';
 import type { PatchPlan } from '@rdlc/report-model/editing';
+
+test('layout verification rejects wrong geometry, content, bindings and hierarchy inside edited parents', () => {
+  const snapshot = {
+    uri: 'test:verify-layout',
+    version: 1,
+    source: readFileSync('tests/fixtures/interactive/mixed.rdlc', 'utf8'),
+    eol: '\n' as const,
+  };
+  const original = parse(snapshot),
+    report = projectReport(original);
+  const table = report.tables[0]!;
+  const changes = validateLayout(report, {
+    action: 'resize',
+    targetIds: [table.node.id],
+    handle: 'se',
+    xPt: 300,
+    yPt: 300,
+    unit: 'pt',
+  });
+  const plan = planLayout(snapshot, changes, 'pt');
+  const valid = verifyCandidate(snapshot, plan, (next, old) =>
+    verifyLayoutCandidate(old, next, changes),
+  );
+  for (const source of [
+    valid.source.replace(
+      /<TablixColumn><Width>[^<]+/,
+      '<TablixColumn><Width>1pt',
+    ),
+    valid.source.replace('=Fields!Amount.Value', '=Fields!Category.Value'),
+    valid.source.replace('Orders', 'WrongDataset'),
+    valid.source.replace('ByLabel', 'WrongGroup'),
+  ]) {
+    assert.notEqual(
+      source,
+      valid.source,
+      'The corruption must actually change the candidate',
+    );
+    assert.equal(
+      verifyLayoutCandidate(original, parse({ ...snapshot, source }), changes),
+      false,
+    );
+  }
+});
+
+test('geometry keeps local namespace declarations and refuses loss of scalar annotations', () => {
+  const source = readFileSync(
+    'tests/fixtures/textboxes/supported.rdlc',
+    'utf8',
+  );
+  for (const annotation of ['', '<!--keep--><?keep value?>']) {
+    const snapshot = {
+      uri: 'test:scalar-markup',
+      version: 1,
+      source: source.replace(
+        '<Left>0.25in</Left>',
+        `<Left xmlns:x="urn:local">${annotation}0.25in</Left>`,
+      ),
+      eol: '\n' as const,
+    };
+    const original = parse(snapshot),
+      report = projectReport(original);
+    const changes = validateLayout(report, {
+      action: 'move',
+      targetIds: [report.textboxes[0]!.node.id],
+      dxPt: 1,
+      dyPt: 0,
+      unit: 'pt',
+    });
+    const plan = planLayout(snapshot, changes, 'pt');
+    if (annotation)
+      assert.throws(
+        () =>
+          verifyCandidate(snapshot, plan, (next, old) =>
+            verifyLayoutCandidate(old, next, changes),
+          ),
+        /intended change/,
+      );
+    else {
+      const candidate = verifyCandidate(snapshot, plan, (next, old) =>
+        verifyLayoutCandidate(old, next, changes),
+      );
+      assert.match(candidate.source, /<Left xmlns:x="urn:local">/);
+    }
+  }
+});
 
 test('candidate verification reparses and verifies intention before any host mutation', () => {
   const snapshot = {

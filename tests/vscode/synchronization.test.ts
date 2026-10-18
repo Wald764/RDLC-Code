@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { observe, replaceSource, until } from './session-checks.js';
 import { validateMessage } from '@rdlc/report-model/protocol';
+import { FailingFileSystem } from './failing-file-system.js';
 
 export async function run(): Promise<void> {
   const source = readFileSync(
@@ -44,6 +45,113 @@ export async function run(): Promise<void> {
   const a = observe(document);
   const b = observe(document);
   try {
+    const targetId = a.intent('target', '').targetId;
+    const layoutRequest = {
+      protocol: 1,
+      kind: 'edit',
+      requestId: 'direct-noop',
+      baseVersion: document.version,
+      operation: 'layout',
+      payload: {
+        action: 'move',
+        targetIds: [targetId],
+        dxPt: 0,
+        dyPt: 0,
+        unit: 'pt',
+      },
+    };
+    const volume = new FailingFileSystem(Buffer.from(source));
+    const registration = vscode.workspace.registerFileSystemProvider(
+      'rdlc-direct-readonly',
+      volume,
+      { isReadonly: true },
+    );
+    const readonlyDocument = await vscode.workspace.openTextDocument(
+      vscode.Uri.parse('rdlc-direct-readonly:/report.rdlc'),
+    );
+    let readonlyApplies = 0;
+    const readonlyView = observe(readonlyDocument, async () => {
+      readonlyApplies++;
+      return true;
+    });
+    try {
+      const target = readonlyView.intent('readonly-target', '');
+      readonlyView.session.receive({
+        ...layoutRequest,
+        requestId: 'readonly-layout',
+        baseVersion: readonlyDocument.version,
+        payload: {
+          ...layoutRequest.payload,
+          targetIds: [target.targetId],
+          dxPt: 5,
+        },
+      });
+      await until(
+        () => readonlyView.messages.some((m) => m.kind === 'editResult'),
+        'Read-only layout refusal',
+      );
+      assert.ok(
+        readonlyView.messages.some(
+          (m) =>
+            m.kind === 'editResult' &&
+            !m.accepted &&
+            m.reason === 'DOCUMENT_READ_ONLY',
+        ),
+      );
+      assert.equal(readonlyApplies, 0);
+      assert.equal(readonlyDocument.getText(), source);
+      assert.equal(readonlyDocument.isDirty, false);
+    } finally {
+      readonlyView.dispose();
+      registration.dispose();
+      volume.dispose();
+    }
+    const direct = observe(document, async () => {
+      throw new Error('No-op must never apply');
+    });
+    try {
+      direct.session.receive(layoutRequest);
+      await until(
+        () => direct.messages.some((m) => m.kind === 'editResult'),
+        'Layout no-op',
+      );
+      assert.ok(
+        direct.messages.some(
+          (m) => m.kind === 'editResult' && m.accepted && !m.changed,
+        ),
+      );
+      direct.session.receive(layoutRequest);
+      await until(
+        () => direct.messages.some((m) => m.kind === 'protocolError'),
+        'Duplicate layout',
+      );
+      assert.equal(document.getText(), source);
+    } finally {
+      direct.dispose();
+    }
+    for (const [label, apply] of [
+      ['refused-layout', async () => false],
+      ['uncertain-layout', async () => true],
+    ] as const) {
+      const refused = observe(document, apply);
+      try {
+        refused.session.receive({
+          ...layoutRequest,
+          requestId: label,
+          payload: { ...layoutRequest.payload, dxPt: 5, dyPt: 6 },
+        });
+        await until(
+          () => refused.messages.some((m) => m.kind === 'editResult'),
+          label,
+        );
+        assert.ok(
+          refused.messages.some((m) => m.kind === 'editResult' && !m.accepted),
+        );
+        assert.equal(document.getText(), source);
+      } finally {
+        refused.dispose();
+      }
+    }
     let noOpApplies = 0;
     const noOp = observe(document, async () => {
       noOpApplies++;
@@ -114,7 +222,16 @@ export async function run(): Promise<void> {
       'Duplicate refused',
     );
     assert.equal(document.getText(), after);
-    const stale = a.intent('delayed', 'Must not apply');
+    const stale = {
+      ...layoutRequest,
+      requestId: 'delayed-layout',
+      baseVersion: document.version,
+      payload: {
+        ...layoutRequest.payload,
+        targetIds: [a.intent('current', '').targetId],
+        dxPt: 3,
+      },
+    };
     await replaceSource(document, '<Report>');
     for (const view of [a, b]) {
       await until(
@@ -174,9 +291,16 @@ export async function run(): Promise<void> {
       return true;
     });
     try {
-      interleaved.session.receive(
-        interleaved.intent('interleaved', 'Interleaved source'),
-      );
+      interleaved.session.receive({
+        ...layoutRequest,
+        requestId: 'interleaved',
+        baseVersion: document.version,
+        payload: {
+          ...layoutRequest.payload,
+          targetIds: [interleaved.intent('current', '').targetId],
+          dxPt: 5,
+        },
+      });
       await until(
         () => interleaved.messages.some((m) => m.kind === 'editResult'),
         'Intervening source changes settle',
@@ -190,7 +314,7 @@ export async function run(): Promise<void> {
         ),
       );
       assert.ok(
-        document.getText().includes('Interleaved source'),
+        document.getText() !== source,
         'The authoritative source is published, not rolled back',
       );
     } finally {

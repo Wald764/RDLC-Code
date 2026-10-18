@@ -1,6 +1,16 @@
 .editor {
   display: grid;
   gap: 1rem;
+  // Version-keyed forms must not become scroll anchors during edit reconciliation.
+  overflow-anchor: none;
+}
+.feedback {
+  block-size: 5rem;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.feedback p {
+  margin: 0;
 }
 .status,
 .outcome {
@@ -20,6 +30,7 @@
   background: #f6f6f6;
 }
 .item {
+  touch-action: none;
   position: absolute;
   overflow: hidden;
   text-align: left;
@@ -27,6 +38,73 @@
   border: 1px solid #3366cc;
   font: inherit;
   cursor: pointer;
+}
+.selection-frame,
+.preview {
+  position: absolute;
+  pointer-events: none;
+  border: 2px solid #3366cc;
+  box-sizing: border-box;
+  z-index: 2147483647;
+}
+.preview {
+  background: #3366cc22;
+}
+.preview.invalid {
+  border-color: #b00020;
+  background: #b0002022;
+}
+.handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  background: white;
+  border: 1px solid #3366cc;
+  pointer-events: auto;
+  touch-action: none;
+  transform: translate(-50%, -50%);
+}
+.handle[data-handle='nw'],
+.handle[data-handle='n'],
+.handle[data-handle='ne'] {
+  top: 0;
+}
+.handle[data-handle='sw'],
+.handle[data-handle='s'],
+.handle[data-handle='se'] {
+  top: 100%;
+}
+.handle[data-handle='w'],
+.handle[data-handle='e'] {
+  top: 50%;
+}
+.handle[data-handle='nw'],
+.handle[data-handle='w'],
+.handle[data-handle='sw'] {
+  left: 0;
+}
+.handle[data-handle='n'],
+.handle[data-handle='s'] {
+  left: 50%;
+}
+.handle[data-handle='ne'],
+.handle[data-handle='e'],
+.handle[data-handle='se'] {
+  left: 100%;
+}
+.move-grip {
+  position: absolute;
+  left: 12px;
+  bottom: 100%;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: move;
+}
+button:focus-visible,
+.feedback:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, #000);
+  outline-offset: 2px;
 }
 .item.selected {
   outline: 2px solid #3366cc;

@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 import type { HostMessage } from '@rdlc/report-model/protocol';
 import { EditorComponent } from './editor.component';
@@ -88,6 +88,244 @@ function mount() {
 
 describe('editor surface', () => {
   beforeEach(() => TestBed.resetTestingModule());
+  afterEach(() => vi.restoreAllMocks());
+  function directSnapshot(version = 2, id = '2:3') {
+    const message = snapshotMessage({ version, id });
+    if (message.kind !== 'snapshot' || !message.scene)
+      throw new Error('Expected scene');
+    return {
+      ...message,
+      authoring: {
+        id: `${version}:0`,
+        page: {
+          width: '8.5in',
+          height: '11in',
+          top: '0in',
+          right: '0in',
+          bottom: '0in',
+          left: '0in',
+          bodyWidth: '6in',
+          bodyHeight: '2in',
+        },
+        datasets: [],
+        tables: [],
+      },
+      scene: {
+        ...message.scene,
+        items: message.scene.items.map((item) => ({
+          ...item,
+          kind: 'textbox',
+          operations: Object.fromEntries(
+            ['moveX', 'moveY', 'resizeX', 'resizeY'].map((key) => [
+              key,
+              { eligible: true, reason: null },
+            ]),
+          ),
+        })),
+      },
+    };
+  }
+
+  for (const handle of ['move', 'se'] as const) {
+    for (const snapshotFirst of [true, false]) {
+      it(`uses scroll-neutral authoring focus after ${handle}, snapshot first: ${snapshotFirst}`, async () => {
+        const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+        const { fixture, host, element, settle } = mount();
+        host.ingest(directSnapshot());
+        await settle();
+        const originalAuthoring = element.querySelector('rdlc-authoring')!;
+        const item = element.querySelector('button.item') as HTMLElement;
+        item.setPointerCapture = () => {};
+        item.hasPointerCapture = () => false;
+        const event = {
+          button: 0,
+          pointerId: 1,
+          currentTarget: item,
+          clientX: 0,
+          clientY: 0,
+          preventDefault() {},
+          stopPropagation() {},
+        } as unknown as PointerEvent;
+        const component = fixture.componentInstance;
+        focus.mockClear();
+        component.startGesture(event, 0, handle);
+        component.finishGesture({ ...event, clientX: 8, clientY: 4 });
+        await settle();
+        expect(host.pending()).not.toBeNull();
+        const requestId = (host.sent()[0] as { requestId: string }).requestId;
+        const next = directSnapshot(3, '3:4');
+        const accepted = {
+          ...next,
+          scene: {
+            ...next.scene,
+            items: next.scene.items.map((item) => ({
+              ...item,
+              bounds:
+                handle === 'move'
+                  ? { left: 32, top: 28, width: 288, height: 48 }
+                  : { left: 24, top: 24, width: 296, height: 52 },
+            })),
+          },
+        };
+        const result = {
+          protocol: 1,
+          kind: 'editResult',
+          requestId,
+          baseVersion: 2,
+          version: 3,
+          accepted: true,
+          changed: true,
+          mappings: [{ sourceId: '2:3', resultId: '3:4' }],
+          reason: 'APPLIED',
+          diagnostics: [],
+        };
+        host.ingest(snapshotFirst ? accepted : result);
+        await settle();
+        host.ingest(snapshotFirst ? result : accepted);
+        await settle();
+        expect(element.contains(originalAuthoring)).toBe(false);
+        expect(host.pending()).toBeNull();
+        expect(component.selected()?.id).toBe('3:4');
+        expect(component.selected()?.bounds).toEqual(
+          accepted.scene.items[0]!.bounds,
+        );
+        const authoringCalls = () =>
+          focus.mock.calls.filter((_, index) => {
+            const target = focus.mock.contexts[index];
+            return (
+              target instanceof HTMLElement &&
+              target.tagName === 'RDLC-AUTHORING'
+            );
+          });
+        expect(authoringCalls()).toEqual([[{ preventScroll: true }]]);
+        host.ingest(accepted);
+        await settle();
+        expect(authoringCalls()).toHaveLength(1);
+        expect(host.sent()).toHaveLength(1);
+      });
+    }
+  }
+
+  it('previews after three CSS pixels, captures/releases once and submits one immutable move', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest(directSnapshot());
+    await settle();
+    const item = element.querySelector('button.item') as HTMLElement;
+    let captured = false;
+    item.setPointerCapture = () => {
+      captured = true;
+    };
+    item.hasPointerCapture = () => captured;
+    item.releasePointerCapture = () => {
+      captured = false;
+    };
+    const component = fixture.componentInstance;
+    const event = (x: number, y = 0) =>
+      ({
+        button: 0,
+        pointerId: 1,
+        currentTarget: item,
+        clientX: x,
+        clientY: y,
+        preventDefault() {},
+        stopPropagation() {},
+      }) as unknown as PointerEvent;
+    component.startGesture(event(0), 0);
+    expect(captured).toBe(true);
+    component.moveGesture(event(2));
+    expect(component.preview()?.active).toBe(false);
+    component.moveGesture(event(4));
+    component.moveGesture(event(8, 4));
+    expect(component.preview()?.bounds.left).toBe(24);
+    expect(host.sent()).toHaveLength(0);
+    component.finishGesture(event(8, 4));
+    expect(captured).toBe(false);
+    expect(host.sent()).toHaveLength(1);
+    expect(host.sent()[0]).toMatchObject({
+      operation: 'layout',
+      payload: { action: 'move', dxPt: 6, dyPt: 3 },
+    });
+    component.commit({ property: 'text', value: 'overlap' });
+    expect(host.sent()).toHaveLength(1);
+    await settle();
+    expect(element.querySelectorAll('[data-handle]')).toHaveLength(8);
+    expect(element.textContent).toContain('Applying edit');
+  });
+
+  it('cancels invalid release, Escape, native Undo, capture/focus loss and independent versions', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest(directSnapshot());
+    await settle();
+    const item = element.querySelector('button.item') as HTMLElement;
+    item.setPointerCapture = () => {};
+    item.hasPointerCapture = () => false;
+    const component = fixture.componentInstance;
+    const event = {
+      button: 0,
+      pointerId: 1,
+      currentTarget: item,
+      clientX: 0,
+      clientY: 0,
+      preventDefault() {},
+      stopPropagation() {},
+    } as unknown as PointerEvent;
+    component.startGesture(event, 0);
+    component.finishGesture({ ...event, clientX: -1000 });
+    expect(host.sent()).toHaveLength(0);
+    for (const cancel of [
+      () => component.keydown(new KeyboardEvent('keydown', { key: 'Escape' })),
+      () =>
+        component.keydown(
+          new KeyboardEvent('keydown', { key: 'z', ctrlKey: true }),
+        ),
+      () => component.blur(),
+      () => component.captureLost(event),
+    ]) {
+      component.startGesture(event, 0);
+      component.moveGesture({ ...event, clientX: 8 });
+      cancel();
+      expect(component.preview()).toBeNull();
+    }
+    component.startGesture(event, 0);
+    host.ingest(directSnapshot(3, '3:4'));
+    await settle();
+    expect(component.preview()).toBeNull();
+    expect(component.gestureNotice()).toContain('document changed');
+    expect(host.sent()).toHaveLength(0);
+  });
+
+  for (const snapshotFirst of [true, false])
+    it(`retains selection at the matching mapped result (${snapshotFirst})`, async () => {
+      const { fixture, host, settle } = mount();
+      host.ingest(directSnapshot());
+      await settle();
+      fixture.componentInstance.select(0);
+      fixture.componentInstance.commit({ property: 'left', value: '1in' });
+      const requestId = (host.sent()[0] as { requestId: string }).requestId;
+      const result = {
+        protocol: 1,
+        kind: 'editResult',
+        requestId,
+        baseVersion: 2,
+        version: 3,
+        accepted: true,
+        changed: true,
+        mappings: [{ sourceId: '2:3', resultId: '3:4' }],
+        reason: 'APPLIED',
+        diagnostics: [],
+      };
+      host.ingest(snapshotFirst ? directSnapshot(3, '3:4') : result);
+      await settle();
+      host.ingest(snapshotFirst ? result : directSnapshot(3, '3:4'));
+      await settle();
+      expect(fixture.componentInstance.selected()?.id).toBe('3:4');
+      host.ingest(directSnapshot(3, '3:4'));
+      await settle();
+      expect(fixture.componentInstance.selected()?.id).toBe('3:4');
+      host.ingest(directSnapshot(4, '4:4'));
+      await settle();
+      expect(fixture.componentInstance.selected()).toBeNull();
+    });
 
   it('renders accepted scene items at their authored geometry with labels', async () => {
     const { host, element, settle } = mount();
