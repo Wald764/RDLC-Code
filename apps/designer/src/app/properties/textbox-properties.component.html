@@ -3,34 +3,74 @@
   aria-label="Textbox properties"
   (submit)="$event.preventDefault()"
 >
-  <h2>Textbox</h2>
-  @for (field of fields; track field.property) {
-    <label class="field">
-      <span>{{ field.label }}</span>
-      @if (field.kind === 'select') {
-        <select
-          [attr.data-property]="field.property"
-          [value]="current(field.property)"
-          [disabled]="!can(field.property)"
-          (change)="submit(field.property, $event)"
-          (keydown.enter)="submit(field.property, $event)"
-          (keydown.escape)="cancel(field.property, $event)"
-        >
-          @for (option of field.options; track option) {
-            <option [value]="option">{{ option }}</option>
+  @if (refusal()) {
+    <p role="status" id="textbox-refusal">
+      {{ refusal() }}. Accepted values are shown below each field.
+    </p>
+  }
+  <p>
+    Sizes retain their explicit pt, pc, in, mm or cm units. Expressions and
+    colors remain raw text; no evaluation is performed.
+  </p>
+  @for (section of sections; track section.label) {
+    @if (relevant(section.properties).length) {
+      <details open>
+        <summary>{{ section.label }}</summary>
+        @for (field of relevant(section.properties); track field.property) {
+          <label class="field">
+            <span>{{ field.label }}</span>
+            @if (field.kind === 'select') {
+              <select
+                [attr.data-property]="field.property"
+                [attr.aria-describedby]="refusal() ? 'textbox-refusal' : null"
+                [value]="current(field.property)"
+                [disabled]="!can(field.property)"
+                (change)="submit(field.property, $event)"
+                (keydown.enter)="submit(field.property, $event)"
+                (keydown.escape)="cancel(field.property, $event)"
+              >
+                @if (!current(field.property)) {
+                  <option value="" selected disabled>
+                    Not set (report default)
+                  </option>
+                }
+                @for (option of field.options; track option) {
+                  <option
+                    [value]="option"
+                    [selected]="option === current(field.property)"
+                  >
+                    {{ option }}
+                  </option>
+                }
+                @if (
+                  current(field.property) &&
+                  !field.options.includes(current(field.property))
+                ) {
+                  <option [value]="current(field.property)" [selected]="true">
+                    {{ current(field.property) }} (raw value)
+                  </option>
+                }
+              </select>
+            } @else {
+              <input
+                type="text"
+                [attr.data-property]="field.property"
+                [attr.aria-describedby]="refusal() ? 'textbox-refusal' : null"
+                [value]="current(field.property)"
+                [disabled]="!can(field.property)"
+                (change)="submit(field.property, $event)"
+                (keydown.enter)="submit(field.property, $event)"
+                (keydown.escape)="cancel(field.property, $event)"
+              />
+            }
+          </label>
+          @if (refusal()) {
+            <small
+              >Accepted {{ field.label }}: {{ current(field.property) }}</small
+            >
           }
-        </select>
-      } @else {
-        <input
-          type="text"
-          [attr.data-property]="field.property"
-          [value]="current(field.property)"
-          [disabled]="!can(field.property)"
-          (change)="submit(field.property, $event)"
-          (keydown.enter)="submit(field.property, $event)"
-          (keydown.escape)="cancel(field.property, $event)"
-        />
-      }
-    </label>
+        }
+      </details>
+    }
   }
 </form>

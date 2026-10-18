@@ -50,7 +50,9 @@ export class DocumentBinding {
     const message = validateMessage(input);
     if (
       !message ||
-      !['ready', 'edit', 'openSource', 'clipboard'].includes(message.kind)
+      !['ready', 'edit', 'openSource', 'clipboard', 'history'].includes(
+        message.kind,
+      )
     )
       return reject('Invalid client envelope or unsupported protocol');
     if (message.kind === 'ready') {
@@ -67,20 +69,27 @@ export class DocumentBinding {
         return reject('Stale or foreign source target');
       return { ok: true, message };
     }
-    if (message.kind !== 'edit' && message.kind !== 'clipboard')
+    if (
+      message.kind !== 'edit' &&
+      message.kind !== 'clipboard' &&
+      message.kind !== 'history'
+    )
       return reject('Host-only message');
     const targets =
-      message.kind === 'clipboard'
-        ? (message.targetIds ?? [])
-        : message.operation === 'layout'
-          ? message.payload.targetIds
-          : [message.targetId];
+      message.kind === 'history'
+        ? []
+        : message.kind === 'clipboard'
+          ? (message.targetIds ?? [])
+          : message.operation === 'layout'
+            ? message.payload.targetIds
+            : [message.targetId];
     if (
       message.baseVersion !== this.version ||
       targets.some((id) => !this.ids.has(id))
     )
       return reject('Stale edit or foreign target');
     if (
+      message.kind !== 'history' &&
       !this.capabilities.has(
         message.kind === 'clipboard' ? 'clipboard' : message.operation,
       )

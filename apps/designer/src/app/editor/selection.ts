@@ -10,6 +10,8 @@ export interface Selection {
   readonly bodyItemIds: readonly string[];
   readonly primaryId: string | null;
   readonly cellTargetId: string | null;
+  /** Creation may select an accepted local definition without inventing a canvas rectangle. */
+  readonly structureTargetId?: string | null;
 }
 
 export function emptySelection(version: number): Selection {
@@ -95,6 +97,9 @@ export function mapSelection(
     bodyItemIds: ids,
     primaryId: mapped(selection.primaryId) ?? ids.at(-1) ?? null,
     cellTargetId: mapped(selection.cellTargetId),
+    ...(selection.structureTargetId
+      ? { structureTargetId: mapped(selection.structureTargetId) }
+      : {}),
   };
 }
 

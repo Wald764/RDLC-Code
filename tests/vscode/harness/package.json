@@ -3,6 +3,20 @@
   "publisher": "rdlc-tests",
   "version": "0.0.0",
   "private": true,
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "rdlcCode.historyProof",
+        "displayName": "RDLC native history test",
+        "selector": [
+          {
+            "filenamePattern": "*.rdlc"
+          }
+        ],
+        "priority": "option"
+      }
+    ]
+  },
   "engines": {
     "vscode": "^1.142.0"
   }

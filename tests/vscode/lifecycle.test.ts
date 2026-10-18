@@ -16,6 +16,8 @@ import { projectReport } from '@rdlc/xml-parser/project-report';
 import { toPoints } from '@rdlc/report-model/geometry';
 import { WindowClipboard } from '../../apps/vscode-extension/src/clipboard.js';
 import { memory, view } from './clipboard.test.js';
+import { DocumentSession } from '../../apps/vscode-extension/src/document-session.js';
+import type { HostMessage } from '@rdlc/report-model/protocol';
 
 async function directManipulation(): Promise<void> {
   const source = readFileSync(
@@ -390,6 +392,8 @@ async function mixedHistory(): Promise<void> {
 }
 
 export async function run(): Promise<void> {
+  await mvpTextboxJourney();
+  await guardedHistoryTargets();
   await mixedHistory();
   await directManipulation();
   await arrangement();
@@ -573,6 +577,179 @@ export async function run(): Promise<void> {
     failureView.dispose();
     registration.dispose();
     volume.dispose();
+  }
+}
+
+async function mvpTextboxJourney(): Promise<void> {
+  const source = readFileSync(
+    resolve(__dirname, '../../../tests/fixtures/datasets/blank.rdlc'),
+    'utf8',
+  );
+  const file = join(mkdtempSync(join(tmpdir(), 'rdlc-mvp-')), 'title.rdlc');
+  writeFileSync(file, source);
+  const document = await vscode.workspace.openTextDocument(file);
+  const observed = observe(document);
+  try {
+    const root = parse({
+      uri: document.uri.toString(),
+      version: document.version,
+      source,
+      eol: '\n',
+    }).root!;
+    observed.session.receive({
+      protocol: 1,
+      kind: 'edit',
+      requestId: 'mvp-title',
+      baseVersion: document.version,
+      targetId: root.id,
+      operation: 'author',
+      payload: { action: 'createTextbox', name: 'Title' },
+    });
+    await until(
+      () =>
+        observed.messages.some(
+          (m) => m.kind === 'editResult' && m.requestId === 'mvp-title',
+        ),
+      'MVP Title creation',
+    );
+    for (const [property, value] of Object.entries({
+      text: 'Quarterly report',
+      left: '12pt',
+      top: '24pt',
+      width: '3in',
+      height: '0.5in',
+      fontFamily: 'Arial',
+      fontSize: '18pt',
+      color: '#123456',
+    })) {
+      const requestId = `mvp-${property}`;
+      observed.session.receive({
+        ...observed.intent(requestId, value),
+        payload: { property, value },
+      });
+      await until(
+        () =>
+          observed.messages.some(
+            (m) => m.kind === 'editResult' && m.requestId === requestId,
+          ),
+        requestId,
+      );
+      const result = observed.messages.find(
+        (m) => m.kind === 'editResult' && m.requestId === requestId,
+      );
+      assert.ok(
+        result?.kind === 'editResult' && result.accepted,
+        JSON.stringify(result),
+      );
+    }
+    const accepted = document.getText();
+    observed.session.receive({
+      ...observed.intent('mvp-invalid-width', ''),
+      payload: { property: 'width', value: '-1in' },
+    });
+    await until(
+      () =>
+        observed.messages.some(
+          (m) => m.kind === 'editResult' && m.requestId === 'mvp-invalid-width',
+        ),
+      'MVP invalid size refusal',
+    );
+    assert.equal(document.getText(), accepted);
+    const projected = projectReport(
+      parse({
+        uri: document.uri.toString(),
+        version: document.version,
+        source: accepted,
+        eol: '\n',
+      }),
+    );
+    assert.equal(projected.textboxes.length, 1);
+    assert.equal(projected.textboxes[0]!.name, 'Title');
+    assert.equal(projected.textboxes[0]!.style.color, '#123456');
+    assert.equal(await document.save(), true);
+    assert.equal(readFileSync(file, 'utf8'), accepted);
+    await vscode.window.showTextDocument(document);
+    const tabs = () =>
+      vscode.window.tabGroups.all.flatMap((group) =>
+        group.tabs.filter(
+          (tab) =>
+            tab.input instanceof vscode.TabInputText &&
+            tab.input.uri.toString() === document.uri.toString(),
+        ),
+      );
+    assert.ok(tabs().length > 0);
+    assert.equal(await vscode.window.tabGroups.close(tabs()), true);
+    assert.equal(tabs().length, 0);
+    const reopened = await vscode.workspace.openTextDocument(file);
+    await vscode.window.showTextDocument(reopened);
+    assert.equal(tabs().length, 1);
+    assert.equal(reopened.getText(), accepted);
+  } finally {
+    observed.dispose();
+  }
+}
+
+async function guardedHistoryTargets(): Promise<void> {
+  const source = readFileSync(
+    resolve(__dirname, '../../../tests/fixtures/textboxes/supported.rdlc'),
+    'utf8',
+  );
+  const file = join(
+    mkdtempSync(join(tmpdir(), 'rdlc-history-guards-')),
+    'report.rdlc',
+  );
+  writeFileSync(file, source);
+  const document = await vscode.workspace.openTextDocument(file);
+  for (const mode of ['unverifiable', 'activation-race'] as const) {
+    const messages: HostMessage[] = [];
+    const session = new DocumentSession(
+      document,
+      undefined,
+      undefined,
+      mode === 'activation-race'
+        ? async () => {
+            await replaceSource(
+              document,
+              source + '\n<!-- Independent source change -->',
+            );
+            return true;
+          }
+        : undefined,
+    );
+    session.onMessage((message) => messages.push(message));
+    session.receive({ protocol: 1, kind: 'ready' });
+    await until(
+      () => messages.some((m) => m.kind === 'snapshot'),
+      'History guard ready',
+    );
+    const before = document.version;
+    session.receive({
+      protocol: 1,
+      kind: 'history',
+      requestId: mode,
+      baseVersion: before,
+      action: 'undo',
+    });
+    await until(() => messages.some((m) => m.kind === 'historyResult'), mode);
+    const result = messages.find((m) => m.kind === 'historyResult');
+    assert.ok(result?.kind === 'historyResult' && !result.accepted);
+    assert.equal(result.changed, mode === 'activation-race');
+    assert.equal(
+      document.getText(),
+      mode === 'activation-race'
+        ? source + '\n<!-- Independent source change -->'
+        : source,
+    );
+    const count = messages.length;
+    session.dispose();
+    session.receive({
+      protocol: 1,
+      kind: 'history',
+      requestId: 'disposed-history',
+      baseVersion: document.version,
+      action: 'undo',
+    });
+    assert.equal(messages.length, count);
   }
 }
 

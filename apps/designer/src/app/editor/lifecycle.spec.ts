@@ -8,10 +8,96 @@ function snapshot(version: number, status = 'editable') {
     protocol: 1,
     kind: 'snapshot',
     version,
+    sourceLength: 0,
+    structure: { nodes: [], truncated: false },
     projection: { status, capabilities: [], diagnostics: [] },
     scene: null,
   };
 }
+
+describe('native history settlement', () => {
+  it('retains source access for invalid hierarchy metadata and reflects failed history that changed the document', () => {
+    TestBed.resetTestingModule();
+    const host = TestBed.inject(HostAdapter);
+    host.ingest({
+      ...snapshot(2, 'source-only'),
+      structure: { nodes: [{ id: 'forged' }], truncated: false },
+    });
+    expect(host.snapshot()?.version).toBe(2);
+    expect(host.notice()).toContain('Code XML');
+    host.openSource();
+    expect(host.sent().at(-1)).toMatchObject({
+      kind: 'openSource',
+      version: 2,
+    });
+    host.sendHistory('failed-history', 'undo');
+    host.ingest({
+      protocol: 1,
+      kind: 'historyResult',
+      requestId: 'failed-history',
+      baseVersion: 2,
+      resultVersion: 3,
+      action: 'undo',
+      accepted: false,
+      changed: true,
+      reason: 'Command failed after observed change',
+    });
+    expect(host.pending()).not.toBeNull();
+    host.ingest(snapshot(3, 'source-only'));
+    expect(host.pending()).toBeNull();
+    expect(host.snapshot()?.version).toBe(3);
+    expect(host.outcome()?.accepted).toBe(false);
+    expect(host.outcome()?.changed).toBe(true);
+    expect(host.sent()).toHaveLength(2);
+  });
+  for (const snapshotFirst of [false, true])
+    it(`settles changed history exactly once, snapshot first ${snapshotFirst}`, () => {
+      TestBed.resetTestingModule();
+      const host = TestBed.inject(HostAdapter);
+      host.ingest(snapshot(2, 'source-only'));
+      expect(host.sendHistory('history-1', 'undo')).toBe(true);
+      expect(host.sendHistory('history-2', 'redo')).toBe(false);
+      const result = {
+        protocol: 1,
+        kind: 'historyResult',
+        requestId: 'history-1',
+        baseVersion: 2,
+        resultVersion: 3,
+        action: 'undo',
+        accepted: true,
+        changed: true,
+      };
+      if (snapshotFirst) host.ingest(snapshot(3, 'source-only'));
+      host.ingest(result);
+      if (!snapshotFirst) {
+        expect(host.pending()).not.toBeNull();
+        host.ingest(snapshot(3, 'source-only'));
+      }
+      expect(host.pending()).toBeNull();
+      host.ingest(result);
+      expect(host.sent().length).toBe(1);
+    });
+  for (const accepted of [false, true])
+    it(`settles no-op/failure without a new version (${accepted})`, () => {
+      TestBed.resetTestingModule();
+      const host = TestBed.inject(HostAdapter);
+      host.ingest(snapshot(2));
+      host.sendHistory('history-1', 'redo');
+      host.ingest({
+        protocol: 1,
+        kind: 'historyResult',
+        requestId: 'history-1',
+        baseVersion: 2,
+        resultVersion: 2,
+        action: 'redo',
+        accepted,
+        changed: false,
+        reason: 'Nothing changed',
+      });
+      expect(host.pending()).toBeNull();
+      expect(host.notice()).toContain('Nothing changed');
+    });
+});
 
 describe('nudge continuity', () => {
   beforeEach(() => TestBed.resetTestingModule());
@@ -105,13 +191,25 @@ describe('nudge continuity', () => {
     );
     expect(fixture.componentInstance.nudge()).toBeNull();
     press(viewport, 'keyup');
-    expect(host.sent()).toHaveLength(0);
+    expect(host.sent()).toHaveLength(1);
+    expect(host.sent()[0]).toMatchObject({ kind: 'history', action: 'undo' });
+    const request = host.sent()[0] as { requestId: string };
+    host.ingest({
+      protocol: 1,
+      kind: 'historyResult',
+      requestId: request.requestId,
+      baseVersion: 2,
+      resultVersion: 2,
+      action: 'undo',
+      accepted: true,
+      changed: false,
+    });
     press(viewport, 'keydown');
     press(viewport, 'keyup');
     expect(host.pending()).not.toBeNull();
     press(viewport, 'keydown');
     press(viewport, 'keyup');
-    expect(host.sent()).toHaveLength(1);
+    expect(host.sent()).toHaveLength(2);
   });
 });
 
@@ -376,7 +474,7 @@ describe('document lifecycle transport', () => {
     accept(2);
     await settle();
     try {
-      expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+      expect(focus).not.toHaveBeenCalled();
     } finally {
       focus.mockRestore();
     }
@@ -384,7 +482,7 @@ describe('document lifecycle transport', () => {
     expect(
       element.querySelector<HTMLInputElement>('fieldset input')!.value,
     ).toBe('');
-    expect(document.activeElement?.tagName.toLowerCase()).toBe(
+    expect(document.activeElement?.tagName.toLowerCase()).not.toBe(
       'rdlc-authoring',
     );
     expect(element.textContent).toContain('Obsolete drafts were cancelled');

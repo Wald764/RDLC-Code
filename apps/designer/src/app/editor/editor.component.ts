@@ -32,6 +32,8 @@ import { directProposal, type DirectHandle } from './manipulation';
 import { snapDelta, type Guide } from './placement';
 import {
   anchoredScroll,
+  centerScroll,
+  rulerTicks,
   clampZoom,
   clientToBody,
   edgeScroll,
@@ -42,12 +44,14 @@ import {
   type ViewState,
 } from './viewport';
 import { AuthoringComponent } from '../authoring/authoring.component';
+import {
+  ComponentsCatalogComponent,
+  type CreationKind,
+} from './components-catalog.component';
+import { ContextualInspectorComponent } from './contextual-inspector.component';
 import type { DesignScene } from '@rdlc/report-model/scene';
 import { DiagnosticsComponent } from '../diagnostics/diagnostics.component';
-import {
-  TextboxPropertiesComponent,
-  type TextboxCommit,
-} from '../properties/textbox-properties.component';
+import type { TextboxCommit } from '../properties/textbox-properties.component';
 import { HostAdapter } from './host-adapter';
 import {
   emptySelection,
@@ -96,8 +100,9 @@ const union = (all: readonly Bounds[]): Bounds => {
   standalone: true,
   imports: [
     DiagnosticsComponent,
-    TextboxPropertiesComponent,
+    ContextualInspectorComponent,
     AuthoringComponent,
+    ComponentsCatalogComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './editor.component.html',
@@ -165,6 +170,30 @@ export class EditorComponent {
     valid: boolean;
   } | null>(null);
   readonly gestureNotice = signal('');
+  readonly workspaceWidth = signal(1280);
+  readonly overlay = signal<'left' | 'right' | null>(null);
+  readonly creation = signal<CreationKind | null>(null);
+  private creating: {
+    requestId: string;
+    kind: CreationKind;
+    name: string;
+    baseVersion: number;
+  } | null = null;
+  private layoutFrame: Frame | null = null;
+  private workspaceHeight = 0;
+  private deferredLayout: (() => void) | null = null;
+  private overlayInvoker: HTMLElement | null = null;
+  readonly rulerX = computed(() =>
+    rulerTicks(
+      this.workspaceWidth(),
+      this.view().zoom,
+      this.view().scrollLeft,
+      this.view().unit,
+    ),
+  );
+  readonly rulerY = computed(() =>
+    rulerTicks(1600, this.view().zoom, this.view().scrollTop, this.view().unit),
+  );
   private readonly selection = signal<Selection>(emptySelection(0));
   private suppressClick = false;
   readonly marquee = signal<{
@@ -197,6 +226,7 @@ export class EditorComponent {
     const result = this.host.outcome();
     if (
       result?.accepted &&
+      !result.history &&
       result.baseVersion === selection.version &&
       result.version === version
     ) {
@@ -231,6 +261,15 @@ export class EditorComponent {
   readonly acceptedSelection = computed(() => this.reconciled().selection);
   readonly selectionLost = computed(() => this.reconciled().lost);
   readonly selectedIds = computed(() => this.acceptedSelection().bodyItemIds);
+  readonly selectedDataset = computed(
+    () =>
+      this.host
+        .snapshot()
+        ?.authoring?.datasets.find(
+          (dataset) =>
+            dataset.id === this.acceptedSelection().structureTargetId,
+        ) ?? null,
+  );
   readonly primary = computed(
     () =>
       this.scene()?.items.find(
@@ -276,6 +315,16 @@ export class EditorComponent {
   constructor() {
     inject(DestroyRef).onDestroy(() => this.cancelGesture());
     const root = this.element.nativeElement;
+    afterNextRender(() => {
+      if (typeof ResizeObserver === 'undefined') return;
+      const observer = new ResizeObserver((entries) => {
+        const rect = entries[0]?.contentRect;
+        if (rect) this.workspaceResize(rect.width, rect.height);
+      });
+      observer.observe(root);
+      this.layoutFrame = this.frame();
+      this.destroyRef.onDestroy(() => observer.disconnect());
+    });
     // Capture phase: runs before native blur/change and before inner submit handlers.
     root.addEventListener(
       'pointerdown',
@@ -351,6 +400,46 @@ export class EditorComponent {
       }
     });
     effect(() => {
+      const outcome = this.host.outcome();
+      const snapshot = this.host.snapshot();
+      const creation = this.creating;
+      if (
+        !creation ||
+        !outcome ||
+        outcome.requestId !== creation.requestId ||
+        !snapshot ||
+        snapshot.version < outcome.version
+      )
+        return;
+      this.creating = null;
+      if (
+        !outcome.accepted ||
+        !outcome.changed ||
+        snapshot.version !== outcome.version
+      )
+        return;
+      this.creation.set(null);
+      const matches =
+        snapshot.scene?.items.filter(
+          (item) => item.name === creation.name && item.kind === creation.kind,
+        ) ?? [];
+      if (matches.length === 1)
+        this.select(snapshot.scene!.items.indexOf(matches[0]!));
+      else if (creation.kind === 'dataset') {
+        const datasets =
+          snapshot.authoring?.datasets.filter(
+            (dataset) => dataset.name === creation.name,
+          ) ?? [];
+        if (datasets.length === 1) {
+          this.selection.set({
+            ...emptySelection(snapshot.version),
+            structureTargetId: datasets[0]!.id,
+          });
+          afterNextRender(() => this.pageSetup(), { injector: this.injector });
+        }
+      }
+    });
+    effect(() => {
       const accepted = this.acceptedSelection();
       const snapshot = this.host.snapshot();
       const selection = this.selection();
@@ -362,6 +451,44 @@ export class EditorComponent {
         this.selection.set(accepted);
       }
     });
+  }
+
+  private readonly destroyRef = inject(DestroyRef);
+
+  workspaceResize(width: number, height: number): void {
+    if (width === this.workspaceWidth() && height === this.workspaceHeight)
+      return;
+    this.workspaceHeight = height;
+    const before = this.layoutFrame ?? this.frame();
+    this.cancelGesture(
+      'Workspace resized; the uncommitted gesture was cancelled.',
+    );
+    this.workspaceWidth.set(width);
+    afterNextRender(
+      () => {
+        const next = this.frame();
+        const scroll = centerScroll(before, next);
+        const viewport = this.viewport()?.nativeElement;
+        if (viewport) {
+          viewport.scrollLeft = scroll.scrollLeft;
+          viewport.scrollTop = scroll.scrollTop;
+          this.onScroll();
+        }
+        this.layoutFrame = this.frame();
+      },
+      { injector: this.injector },
+    );
+  }
+
+  toggleOverlay(panel: 'left' | 'right'): void {
+    this.overlayInvoker =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const run = () => this.overlay.set(this.overlay() === panel ? null : panel);
+    if (this.preview() || this.marquee() || this.nudge() || this.pan)
+      this.deferredLayout = run;
+    else run();
   }
 
   select(index: number, toggle = false): void {
@@ -690,6 +817,7 @@ export class EditorComponent {
   // One handler per window event: a second @HostListener for the same event replaces this one.
   @HostListener('window:pointerup', ['$event'])
   finishGesture(event: PointerEvent): void {
+    queueMicrotask(() => this.drainLayout());
     this.releaseGuard();
     const pan = this.pan;
     if (pan && event.pointerId === pan.pointerId) {
@@ -771,6 +899,7 @@ export class EditorComponent {
   }
 
   cancelGesture(reason = 'Preview cancelled; document unchanged.'): void {
+    queueMicrotask(() => this.drainLayout());
     this.pan = null;
     this.guides.set([]);
     if (this.nudge()) {
@@ -796,6 +925,13 @@ export class EditorComponent {
   }): void {
     if (preview.element.hasPointerCapture(preview.pointerId))
       preview.element.releasePointerCapture(preview.pointerId);
+  }
+
+  private drainLayout(): void {
+    if (this.preview() || this.marquee() || this.nudge() || this.pan) return;
+    const run = this.deferredLayout;
+    this.deferredLayout = null;
+    run?.();
   }
 
   @HostListener('window:pointercancel', ['$event'])
@@ -833,6 +969,22 @@ export class EditorComponent {
         'input, textarea, select, [contenteditable="true"]',
       );
     if (event.key === 'Escape') {
+      const overflow =
+        event.target instanceof Element
+          ? event.target.closest<HTMLDetailsElement>('details.command-overflow')
+          : null;
+      if (overflow?.open) {
+        overflow.open = false;
+        overflow
+          .querySelector<HTMLElement>('summary')
+          ?.focus({ preventScroll: true });
+        return;
+      }
+      if (this.overlay()) {
+        this.overlay.set(null);
+        this.overlayInvoker?.focus({ preventScroll: true });
+        return;
+      }
       if (this.conflict()) this.cancelConflict();
       else if (this.preview() || this.marquee() || this.nudge())
         this.cancelGesture();
@@ -843,6 +995,20 @@ export class EditorComponent {
       !editable &&
       event.target instanceof Node &&
       !!this.viewport()?.nativeElement.contains(event.target);
+    if (
+      !editable &&
+      !event.altKey &&
+      (event.ctrlKey || event.metaKey) &&
+      ['z', 'y'].includes(event.key.toLowerCase()) &&
+      event.target instanceof Node &&
+      this.element.nativeElement.contains(event.target)
+    ) {
+      event.preventDefault();
+      this.history(
+        event.key.toLowerCase() === 'y' || event.shiftKey ? 'redo' : 'undo',
+      );
+      return;
+    }
     if (canvas && event.key === ' ') {
       this.space = true;
       if (event.target === this.viewport()?.nativeElement)
@@ -867,7 +1033,7 @@ export class EditorComponent {
       return;
     }
     if (
-      !editable &&
+      canvas &&
       (event.ctrlKey || event.metaKey) &&
       event.key.toLowerCase() === 'a' &&
       event.target instanceof Node &&
@@ -917,6 +1083,7 @@ export class EditorComponent {
 
   @HostListener('window:keyup', ['$event'])
   keyup(event: KeyboardEvent): void {
+    queueMicrotask(() => this.drainLayout());
     if (event.key === ' ') {
       this.space = false;
       // A pan must not also activate the focused item button.
@@ -1121,12 +1288,15 @@ export class EditorComponent {
         if (!viewport) return;
         viewport.scrollLeft = scrollLeft;
         viewport.scrollTop = scrollTop;
+        this.onScroll();
+        this.layoutFrame = this.frame();
       },
       { injector: this.injector },
     );
   }
 
   onScroll(): void {
+    this.layoutFrame = this.frame();
     const viewport = this.viewport()?.nativeElement;
     if (viewport)
       this.setView({
@@ -1245,7 +1415,39 @@ export class EditorComponent {
   }
 
   openSource(): void {
-    this.host.openSource(this.selected()?.id);
+    if (this.held(() => this.openSource())) return;
+    this.host.openSource(
+      this.selected()?.id ??
+        this.acceptedSelection().structureTargetId ??
+        undefined,
+    );
+  }
+
+  history(action: 'undo' | 'redo'): void {
+    if (this.host.pending() || this.held(() => this.history(action))) return;
+    this.cancelGesture();
+    this.host.sendHistory(crypto.randomUUID(), action);
+  }
+
+  openCreation(kind: CreationKind | null): void {
+    if (this.host.pending() || this.held(() => this.openCreation(kind))) return;
+    this.creation.set(kind);
+    if (this.workspaceWidth() < 800) this.overlay.set('left');
+  }
+
+  pageSetup(): void {
+    if (this.held(() => this.pageSetup())) return;
+    if (this.workspaceWidth() < 800) this.overlay.set('right');
+    const details =
+      this.element.nativeElement.querySelector<HTMLDetailsElement>(
+        '[data-page-setup]',
+      );
+    if (details) {
+      details.open = true;
+      details
+        .querySelector<HTMLElement>('summary')
+        ?.focus({ preventScroll: true });
+    }
   }
 
   @HostListener('focusin', ['$event'])
@@ -1335,12 +1537,32 @@ export class EditorComponent {
     this.cancelGesture();
     const snapshot = this.host.snapshot();
     if (!snapshot || snapshot.status !== 'editable') return;
-    this.host.sendEdit({
-      requestId: crypto.randomUUID(),
+    const requestId = crypto.randomUUID();
+    const accepted = this.host.sendEdit({
+      requestId,
       baseVersion: snapshot.version,
       operation: 'author',
       ...request,
     });
+    if (
+      accepted &&
+      ['createTextbox', 'createTable', 'createDataset'].includes(
+        request.payload.action,
+      )
+    ) {
+      const payload = request.payload as { name: string };
+      this.creating = {
+        requestId,
+        baseVersion: snapshot.version,
+        name: payload.name,
+        kind:
+          request.payload.action === 'createTextbox'
+            ? 'textbox'
+            : request.payload.action === 'createTable'
+              ? 'table'
+              : 'dataset',
+      };
+    }
     this.draft.set(null);
   }
 

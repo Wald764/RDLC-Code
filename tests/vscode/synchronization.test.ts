@@ -10,8 +10,12 @@ import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
 import { WindowClipboard } from '../../apps/vscode-extension/src/clipboard.js';
 import { memory, open, view } from './clipboard.test.js';
+import { DocumentSession } from '../../apps/vscode-extension/src/document-session.js';
+import { activateHistoryTarget } from '../../apps/vscode-extension/src/editor-provider.js';
+import type { HostMessage } from '@rdlc/report-model/protocol';
 
 export async function run(): Promise<void> {
+  await nativeDesignerHistory();
   await clipboardViewRace();
   await groupSynchronization();
   await ambiguousIndependentChange();
@@ -355,6 +359,311 @@ export async function run(): Promise<void> {
   } finally {
     a.dispose();
     b.dispose();
+  }
+}
+
+async function nativeDesignerHistory(): Promise<void> {
+  const type = 'rdlcCode.historyProof';
+  const views: {
+    panel: vscode.WebviewPanel;
+    session: DocumentSession;
+    messages: HostMessage[];
+  }[] = [];
+  const registration = vscode.window.registerCustomEditorProvider(
+    type,
+    {
+      resolveCustomTextEditor(document, panel) {
+        panel.webview.html =
+          '<html><body>Native history targeting proof</body></html>';
+        const session = new DocumentSession(
+          document,
+          undefined,
+          undefined,
+          () => activateHistoryTarget(document, panel, type),
+        );
+        const messages: HostMessage[] = [];
+        session.onMessage((message) => messages.push(message));
+        panel.onDidDispose(() => session.dispose());
+        views.push({ panel, session, messages });
+        session.receive({ protocol: 1, kind: 'ready' });
+      },
+    },
+    {
+      supportsMultipleEditorsPerDocument: true,
+      webviewOptions: { retainContextWhenHidden: true },
+    },
+  );
+  const source = readFileSync(
+    resolve(__dirname, '../../../tests/fixtures/interactive/mixed.rdlc'),
+    'utf8',
+  );
+  const dir = mkdtempSync(join(tmpdir(), 'rdlc-history-'));
+  const aFile = join(dir, 'a.rdlc'),
+    bFile = join(dir, 'b.rdlc');
+  writeFileSync(aFile, source);
+  writeFileSync(bFile, source);
+  const a = await vscode.workspace.openTextDocument(aFile),
+    b = await vscode.workspace.openTextDocument(bFile);
+  try {
+    await vscode.commands.executeCommand('vscode.openWith', a.uri, type, {
+      viewColumn: vscode.ViewColumn.One,
+    });
+    await vscode.commands.executeCommand('workbench.action.keepEditor');
+    await vscode.commands.executeCommand('workbench.action.splitEditor');
+    await until(
+      () =>
+        views.length >= 2 &&
+        views.every((v) => v.messages.some((m) => m.kind === 'snapshot')),
+      `Two real history designer panels (initial views ${views.length}, messages ${JSON.stringify(views.map((v) => v.messages.map((m) => m.kind)))})`,
+    );
+    const first = views[0]!;
+    const texts = [source];
+    for (let i = 0; i < 20; i++) {
+      const syntax = parse({
+        uri: a.uri.toString(),
+        version: a.version,
+        source: a.getText(),
+        eol: '\n',
+      });
+      const report = projectReport(syntax);
+      const textbox = report.textboxes.find(
+        (t) => t.context === 'body' && t.capabilities.includes('text'),
+      )!;
+      const requestId = `mixed-history-${i}`;
+      first.session.receive({
+        protocol: 1,
+        kind: 'edit',
+        requestId,
+        baseVersion: a.version,
+        ...(i % 5 === 2
+          ? {
+              operation: 'author',
+              targetId: syntax.root!.id,
+              payload: { action: 'createDataset', name: `HistoryData${i}` },
+            }
+          : i % 5 === 3
+            ? {
+                operation: 'author',
+                targetId: report.tables.find((t) => t.structural)!.node.id,
+                payload: {
+                  action: 'setColumnWidth',
+                  column: '0',
+                  width: `${72 + i}pt`,
+                },
+              }
+            : {
+                targetId: textbox.node.id,
+                operation: 'setProperty',
+                payload:
+                  i % 2
+                    ? { property: 'left', value: `${20 + i}pt` }
+                    : { property: 'text', value: `Title ${i}` },
+              }),
+      });
+      await until(
+        () =>
+          first.messages.some(
+            (m) => m.kind === 'editResult' && m.requestId === requestId,
+          ),
+        requestId,
+      );
+      const result = first.messages.find(
+        (m) => m.kind === 'editResult' && m.requestId === requestId,
+      );
+      assert.ok(
+        result?.kind === 'editResult' && result.accepted && result.changed,
+        JSON.stringify(result),
+      );
+      texts.push(a.getText());
+    }
+    await vscode.window.showTextDocument(b, vscode.ViewColumn.Three);
+    await replaceSource(b, source + '\n<!-- Unrelated B -->');
+    const exactB = b.getText();
+    // Simulate returning to the originating designer, not opening its source text editor.
+    first.panel.reveal(vscode.ViewColumn.One, false);
+    await until(
+      () => first.panel.active,
+      'Originating designer active after B',
+    );
+    for (const action of ['undo', 'redo'] as const) {
+      const expected =
+        action === 'undo' ? texts.slice(0, -1).reverse() : texts.slice(1);
+      for (const [i, text] of expected.entries()) {
+        const requestId = `native-${action}-${i}`;
+        first.session.receive({
+          protocol: 1,
+          kind: 'history',
+          requestId,
+          baseVersion: a.version,
+          action,
+        });
+        await until(
+          () =>
+            first.messages.some(
+              (m) => m.kind === 'historyResult' && m.requestId === requestId,
+            ),
+          requestId,
+        );
+        const result = first.messages.find(
+          (m) => m.kind === 'historyResult' && m.requestId === requestId,
+        );
+        assert.ok(
+          result?.kind === 'historyResult' && result.accepted && result.changed,
+          JSON.stringify(result),
+        );
+        await until(
+          () =>
+            a.getText() === text &&
+            views.every((v) =>
+              v.messages.some(
+                (m) => m.kind === 'snapshot' && m.version === a.version,
+              ),
+            ),
+          'A-only native history and split refresh',
+        );
+        assert.equal(b.getText(), exactB);
+      }
+      if (action === 'undo') {
+        first.session.receive({
+          protocol: 1,
+          kind: 'history',
+          requestId: 'empty-history',
+          baseVersion: a.version,
+          action: 'undo',
+        });
+        await until(
+          () =>
+            first.messages.some(
+              (m) =>
+                m.kind === 'historyResult' && m.requestId === 'empty-history',
+            ),
+          'Empty history settles',
+        );
+        const result = first.messages.find(
+          (m) => m.kind === 'historyResult' && m.requestId === 'empty-history',
+        );
+        assert.ok(
+          result?.kind === 'historyResult' &&
+            result.accepted &&
+            !result.changed,
+        );
+        assert.equal(a.getText(), source);
+        assert.equal(b.getText(), exactB);
+        for (const requestId of ['pending-history-1', 'pending-history-2'])
+          first.session.receive({
+            protocol: 1,
+            kind: 'history',
+            requestId,
+            baseVersion: a.version,
+            action: 'undo',
+          });
+        await until(
+          () =>
+            first.messages.some(
+              (m) =>
+                m.kind === 'historyResult' &&
+                m.requestId === 'pending-history-2',
+            ),
+          'Concurrent history request settles',
+        );
+        const pending = first.messages.find(
+          (m) =>
+            m.kind === 'historyResult' && m.requestId === 'pending-history-2',
+        );
+        assert.ok(
+          pending?.kind === 'historyResult' &&
+            !pending.accepted &&
+            !pending.changed,
+        );
+        const errors = first.messages.filter(
+          (m) => m.kind === 'protocolError',
+        ).length;
+        first.session.receive({
+          protocol: 1,
+          kind: 'history',
+          requestId: 'stale-history',
+          baseVersion: a.version - 1,
+          action: 'redo',
+        });
+        await until(
+          () =>
+            first.messages.filter((m) => m.kind === 'protocolError').length >
+            errors,
+          'Stale native history refused',
+        );
+        assert.equal(a.getText(), source);
+        assert.equal(b.getText(), exactB);
+      }
+    }
+    assert.equal(await a.save(), true);
+    assert.equal(readFileSync(aFile, 'utf8'), texts.at(-1));
+    assert.equal(
+      (await vscode.workspace.openTextDocument(aFile)).getText(),
+      texts.at(-1),
+    );
+    await replaceSource(a, '<Report');
+    await until(
+      () =>
+        views.every((v) =>
+          v.messages.some(
+            (m) =>
+              m.kind === 'snapshot' &&
+              m.version === a.version &&
+              m.projection.status === 'invalid-source',
+          ),
+        ),
+      'Source-only snapshot published',
+    );
+    first.session.receive({
+      protocol: 1,
+      kind: 'history',
+      requestId: 'source-only-history',
+      baseVersion: a.version,
+      action: 'undo',
+    });
+    await until(
+      () =>
+        first.messages.some(
+          (m) =>
+            m.kind === 'historyResult' && m.requestId === 'source-only-history',
+        ),
+      'Source-only native history',
+    );
+    assert.equal(a.getText(), texts.at(-1));
+    assert.equal(b.getText(), exactB);
+    const version = a.version;
+    await vscode.window.showTextDocument(b, vscode.ViewColumn.Three);
+    first.session.receive({
+      protocol: 1,
+      kind: 'history',
+      requestId: 'inactive-history',
+      baseVersion: version,
+      action: 'undo',
+    });
+    await until(
+      () =>
+        first.messages.some(
+          (m) =>
+            m.kind === 'historyResult' && m.requestId === 'inactive-history',
+        ),
+      'Inactive target refused',
+    );
+    assert.equal(a.version, version);
+    assert.equal(b.getText(), exactB);
+    const refused = first.messages.find(
+      (m) => m.kind === 'historyResult' && m.requestId === 'inactive-history',
+    );
+    assert.ok(
+      refused?.kind === 'historyResult' &&
+        !refused.accepted &&
+        !refused.changed,
+    );
+  } finally {
+    for (const v of views) {
+      v.session.dispose();
+      v.panel.dispose();
+    }
+    registration.dispose();
   }
 }
 

@@ -37,9 +37,9 @@ if (packaged) {
 }
 await runTests({
   vscodeExecutablePath: executable,
-  extensionDevelopmentPath: resolve(
-    packaged ? 'tests/vscode/harness' : 'apps/vscode-extension',
-  ),
+  extensionDevelopmentPath: packaged
+    ? resolve('tests/vscode/harness')
+    : [resolve('apps/vscode-extension'), resolve('tests/vscode/harness')],
   extensionTestsPath: resolve('dist/tests/vscode/suite.cjs'),
   launchArgs: [
     '--user-data-dir',

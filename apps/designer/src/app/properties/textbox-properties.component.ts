@@ -37,6 +37,7 @@ const none: readonly string[] = [];
 })
 export class TextboxPropertiesComponent {
   readonly item = input.required<DesignSceneItem>();
+  readonly refusal = input('');
   readonly commit = output<TextboxCommit>();
 
   readonly fields: readonly Field[] = [
@@ -73,6 +74,31 @@ export class TextboxPropertiesComponent {
       options: ['Default', 'Left', 'Center', 'Right'],
     },
   ];
+  readonly sections = [
+    { label: 'General', properties: ['name', 'text'] },
+    {
+      label: 'Position and size',
+      properties: ['left', 'top', 'width', 'height'],
+    },
+    {
+      label: 'Typography',
+      properties: [
+        'fontFamily',
+        'fontSize',
+        'fontWeight',
+        'fontStyle',
+        'color',
+        'textAlign',
+      ],
+    },
+  ] as const;
+
+  relevant(properties: readonly string[]): readonly Field[] {
+    return this.fields.filter(
+      (field) =>
+        properties.includes(field.property) && this.can(field.property),
+    );
+  }
 
   can(property: TextboxProperty): boolean {
     const item = this.item();

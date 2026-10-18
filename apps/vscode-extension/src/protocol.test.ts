@@ -16,6 +16,84 @@ const edit = {
   operation: 'setProperty',
   payload: { property: 'text', value: 'safe <text>' },
 };
+
+test('structure is closed, version-local, source-bounded and parent ordered', () => {
+  const node = {
+    id: '2:1',
+    parentId: null,
+    kind: 'report',
+    label: 'Report',
+    name: null,
+    range: { start: 0, end: 20 },
+    preservedReason: null,
+  };
+  const snapshot = {
+    protocol: 1,
+    kind: 'snapshot',
+    version: 2,
+    sourceLength: 20,
+    projection: { status: 'source-only', capabilities: [], diagnostics: [] },
+    scene: null,
+    structure: { nodes: [node], truncated: false },
+  };
+  assert.ok(validateMessage(snapshot));
+  for (const nodes of [
+    [node, node],
+    [{ ...node, id: '1:1' }],
+    [{ ...node, parentId: '2:9' }],
+    [{ ...node, parentId: node.id }],
+    [{ ...node, range: { start: 0, end: 21 } }],
+    [{ ...node, kind: 'command' }],
+    [{ ...node, uri: 'file:///secret' }],
+    Array.from({ length: 2001 }, (_, i) => ({ ...node, id: `2:${i + 1}` })),
+    Array.from({ length: 33 }, (_, i) => ({
+      ...node,
+      id: `2:${i + 1}`,
+      parentId: i ? `2:${i}` : null,
+    })),
+  ])
+    assert.equal(
+      validateMessage({ ...snapshot, structure: { nodes, truncated: false } }),
+      null,
+    );
+});
+
+test('history has fixed closed actions, correlated results and replay protection', () => {
+  const history = {
+    protocol: 1,
+    kind: 'history',
+    requestId: 'history-1',
+    baseVersion: 2,
+    action: 'undo',
+  };
+  assert.ok(validateMessage(history));
+  for (const extra of [
+    { action: 'save' },
+    { uri: 'file:///other' },
+    { command: 'undo' },
+    { targetId: '2:1' },
+  ])
+    assert.equal(validateMessage({ ...history, ...extra }), null);
+  const result = {
+    ...history,
+    kind: 'historyResult',
+    resultVersion: 3,
+    accepted: false,
+    changed: true,
+    reason: 'Observed change after command failure',
+  };
+  assert.ok(validateMessage(result));
+  assert.equal(validateMessage({ ...result, resultVersion: 2 }), null);
+  const binding = new DocumentBinding('fixture:a', 2, [], []);
+  assert.equal(binding.receive(history).ok, false);
+  binding.receive({ protocol: 1, kind: 'ready' });
+  assert.equal(binding.receive(history).ok, true);
+  assert.equal(binding.receive(history).ok, false);
+  assert.equal(
+    binding.receive({ ...history, requestId: 'history-2', baseVersion: 1 }).ok,
+    false,
+  );
+});
 test('authoring envelopes accept only closed string-valued action payloads', () => {
   const author = {
     ...edit,

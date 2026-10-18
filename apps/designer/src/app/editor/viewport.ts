@@ -1,4 +1,9 @@
-import { sizeUnits, type SizeUnit } from '@rdlc/report-model/geometry';
+import {
+  sizeUnits,
+  toPoints,
+  pointsToPixels,
+  type SizeUnit,
+} from '@rdlc/report-model/geometry';
 import type { Bounds } from '@rdlc/report-model/scene';
 
 export const minZoom = 0.25,
@@ -16,6 +21,41 @@ export interface Frame {
   readonly scrollTop: number;
 }
 type Scroll = { scrollLeft: number; scrollTop: number };
+
+/** Preserve the idle page point at the viewport center; the browser clamps the final extent. */
+export function centerScroll(
+  old: Frame,
+  next: Pick<Frame, 'width' | 'height'>,
+): Scroll {
+  return {
+    scrollLeft: Math.max(0, old.scrollLeft + (old.width - next.width) / 2),
+    scrollTop: Math.max(0, old.scrollTop + (old.height - next.height) / 2),
+  };
+}
+
+/** Page-relative ruler marks outside scroll content; no body or device-pixel offset. */
+export function rulerTicks(
+  length: number,
+  zoom: number,
+  scroll: number,
+  unit: SizeUnit,
+): readonly { pixels: number; position: number; label: string }[] {
+  const unitPx = pointsToPixels(toPoints(`1${unit}`)!);
+  const raw = 60 / (unitPx * zoom);
+  const power = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].find((n) => n * power >= raw)! * power;
+  const start = Math.max(0, Math.ceil(scroll / (zoom * unitPx * step)));
+  const count = Math.min(200, Math.ceil(length / (zoom * unitPx * step)) + 1);
+  return Array.from({ length: count }, (_, i) => {
+    const value = (start + i) * step;
+    const pixels = value * unitPx;
+    return {
+      pixels,
+      position: pixels * zoom - scroll,
+      label: String(+value.toFixed(4)),
+    };
+  });
+}
 
 /**
  * Client → scroll content → unzoomed body CSS pixels (96px/in), applied once.

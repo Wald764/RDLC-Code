@@ -7,6 +7,8 @@ import type { XmlNode } from '@rdlc/report-model/syntax';
 import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
 import { renderScene } from '@rdlc/renderer/render';
+import { projectStructure } from '@rdlc/renderer/structure';
+import { validateMessage } from '@rdlc/report-model/protocol';
 import { DocumentBinding } from './protocol.js';
 import { planTextboxIntent, correlateTargets } from './edit-controller.js';
 import { PasteCounter, runClipboard, WindowClipboard } from './clipboard.js';
@@ -46,6 +48,7 @@ export class DocumentSession {
     private readonly document: vscode.TextDocument,
     private readonly applyWorkspaceEdit = vscode.workspace.applyEdit,
     private readonly clipboard = windowClipboard,
+    private readonly activateHistoryTarget?: () => Promise<boolean>,
   ) {
     const current = this.evaluate();
     this.binding = new DocumentBinding(
@@ -111,10 +114,12 @@ export class DocumentSession {
 
   private async publish(): Promise<void> {
     const { snapshot, projection, syntax } = this.evaluate();
-    this.emitter.fire({
+    let message: HostMessage & { kind: 'snapshot' } = {
       protocol: 1,
       kind: 'snapshot',
       version: snapshot.version,
+      sourceLength: snapshot.source.length,
+      structure: projectStructure(syntax, projection),
       projection: {
         status: projection.status,
         capabilities: projection.capabilities,
@@ -163,18 +168,59 @@ export class DocumentSession {
               })),
             }
           : null,
-    });
+    };
+    // Use the remaining transport budget; never enlarge the existing envelope limits.
+    while (!validateMessage(message) && message.structure?.nodes.length) {
+      message = {
+        ...message,
+        structure: {
+          nodes: message.structure.nodes.slice(
+            0,
+            Math.floor(message.structure.nodes.length / 2),
+          ),
+          truncated: true,
+        },
+      };
+    }
+    if (validateMessage(message)) this.emitter.fire(message);
+    else
+      this.emitter.fire({
+        protocol: 1,
+        kind: 'snapshot',
+        version: snapshot.version,
+        sourceLength: snapshot.source.length,
+        structure: { nodes: [], truncated: true },
+        scene: null,
+        projection: {
+          status: 'source-only',
+          capabilities: [],
+          diagnostics: [
+            {
+              code: 'TRANSPORT_BUDGET',
+              category: 'unsupported',
+              severity: 'warning',
+              range: { start: 0, end: 0 },
+              message: 'Report exceeds the designer transport budget.',
+              correctiveAction: 'Open Code XML to inspect the report.',
+              blockedOperations: ['visual-edit'],
+            },
+          ],
+        },
+      });
   }
 
   receive(input: unknown): void {
     if (this.disposed) return;
+    const historyBusy =
+      DocumentSession.queues.has(this.document) &&
+      validateMessage(input)?.kind === 'history';
     const previous =
       DocumentSession.queues.get(this.document) ?? Promise.resolve();
     const next = previous.then(async () => {
       if (this.disposed || this.document.isClosed) return;
       try {
         this.sync();
-        await this.handle(input);
+        await this.handle(input, historyBusy);
       } catch {
         this.emitter.fire({
           protocol: 1,
@@ -193,7 +239,7 @@ export class DocumentSession {
     });
   }
 
-  private async handle(input: unknown): Promise<void> {
+  private async handle(input: unknown, historyBusy = false): Promise<void> {
     const result = this.binding.receive(input);
     if (!result.ok) {
       this.emitter.fire(result.error);
@@ -212,7 +258,68 @@ export class DocumentSession {
       await this.runClipboard(message);
       return;
     }
+    if (message.kind === 'history') {
+      await this.history(message, historyBusy);
+      return;
+    }
     await this.applyEdit(message);
+  }
+
+  private async history(
+    message: ClientMessage & { kind: 'history' },
+    busy: boolean,
+  ): Promise<void> {
+    const before = this.document.version;
+    let accepted = false;
+    let reason = '';
+    try {
+      if (busy)
+        reason =
+          'Another report operation was pending. Wait for it to finish before invoking history.';
+      else if (
+        !vscode.workspace.isTrusted ||
+        vscode.workspace.fs.isWritableFileSystem(this.document.uri.scheme) ===
+          false
+      )
+        reason =
+          'Native history is unavailable in this read-only or restricted document.';
+      else if (
+        !this.activateHistoryTarget ||
+        !(await this.activateHistoryTarget())
+      )
+        reason =
+          'Cannot verify the originating designer. Focus this report and try again.';
+      else if (
+        this.disposed ||
+        this.document.isClosed ||
+        this.document.version !== message.baseVersion
+      )
+        reason =
+          'The report changed while activating history; no command was executed.';
+      else {
+        await vscode.commands.executeCommand(
+          message.action === 'undo' ? 'undo' : 'redo',
+        );
+        accepted = true;
+      }
+    } catch {
+      reason =
+        'Native history failed. The actual current document is shown; inspect Code XML.';
+    }
+    if (this.disposed || this.document.isClosed) return;
+    this.sync();
+    await this.publish();
+    this.emitter.fire({
+      protocol: 1,
+      kind: 'historyResult',
+      requestId: message.requestId,
+      baseVersion: message.baseVersion,
+      resultVersion: this.document.version,
+      action: message.action,
+      accepted,
+      changed: this.document.version !== before,
+      ...(reason ? { reason } : {}),
+    });
   }
 
   private async openSource(

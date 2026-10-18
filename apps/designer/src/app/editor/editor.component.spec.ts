@@ -29,6 +29,8 @@ function snapshotMessage(options: {
     protocol: 1,
     kind: 'snapshot',
     version,
+    sourceLength: 0,
+    structure: { nodes: [], truncated: false },
     projection: {
       status: 'editable',
       capabilities: ['source', 'projection'],
@@ -88,6 +90,271 @@ function mount() {
 }
 
 describe('editor surface', () => {
+  it('selects an accepted dataset definition without a geometry selection', async () => {
+    const { fixture, host, settle } = mount();
+    host.ingest(directSnapshot());
+    await settle();
+    fixture.componentInstance.openCreation('dataset');
+    fixture.componentInstance.author({
+      targetId: '2:1',
+      payload: { action: 'createDataset', name: 'Orders' },
+    });
+    const request = host.sent().at(-1) as { requestId: string };
+    const next = directSnapshot(3, '3:4');
+    host.ingest({
+      ...next,
+      authoring: {
+        ...next.authoring,
+        datasets: [{ id: '3:20', name: 'Orders', fields: [] }],
+      },
+    });
+    host.ingest({
+      protocol: 1,
+      kind: 'editResult',
+      requestId: request.requestId,
+      baseVersion: 2,
+      version: 3,
+      changed: true,
+      accepted: true,
+      mappings: [],
+      reason: 'APPLIED',
+      diagnostics: [],
+    });
+    await settle();
+    expect(fixture.componentInstance.selectedDataset()?.name).toBe('Orders');
+    expect(fixture.componentInstance.selectedIds()).toEqual([]);
+    expect(fixture.componentInstance.selected()).toBeNull();
+    expect(host.sent()).toHaveLength(1);
+  });
+  it('preserves raw expressions/colors on initialization and expansion and associates refusal with accepted fields', async () => {
+    const { fixture, host, element, settle } = mount();
+    const snapshot = directSnapshot();
+    host.ingest({
+      ...snapshot,
+      scene: {
+        ...snapshot.scene,
+        items: snapshot.scene.items.map((item) => ({
+          ...item,
+          style: {
+            ...item.style,
+            fontWeight: '=Parameters!Weight.Value',
+            color: '#80112233',
+          },
+        })),
+      },
+    });
+    await settle();
+    fixture.componentInstance.select(0);
+    await settle();
+    const weight = element.querySelector<HTMLSelectElement>(
+      '[data-property="fontWeight"]',
+    )!;
+    const color = element.querySelector<HTMLInputElement>(
+      '[data-property="color"]',
+    )!;
+    expect(weight.value).toBe('=Parameters!Weight.Value');
+    expect(color.value).toBe('#80112233');
+    for (const details of element.querySelectorAll<HTMLDetailsElement>(
+      'rdlc-textbox-properties details',
+    )) {
+      details.open = false;
+      details.open = true;
+    }
+    fixture.componentInstance.setView({ unit: 'mm' });
+    expect(host.sent()).toHaveLength(0);
+    fixture.componentInstance.commit({ property: 'width', value: '-1in' });
+    const request = host.sent().at(-1) as { requestId: string };
+    host.ingest({
+      protocol: 1,
+      kind: 'editResult',
+      requestId: request.requestId,
+      baseVersion: 2,
+      version: 2,
+      changed: false,
+      accepted: false,
+      mappings: [],
+      reason: 'Width must be positive',
+      diagnostics: [],
+    });
+    await settle();
+    expect(fixture.componentInstance.selected()?.bounds?.width).toBe(288);
+    expect(
+      element
+        .querySelector('[data-property="width"]')
+        ?.getAttribute('aria-describedby'),
+    ).toBe('textbox-refusal');
+    expect(element.textContent).toContain('Accepted Width: 3in');
+  });
+  for (const gesture of ['nudge', 'marquee', 'resize', 'pan'] as const)
+    it(`host resize cancels ${gesture} and drains deferred panels without committing`, async () => {
+      const { fixture, host, element, settle } = mount();
+      host.ingest(directSnapshot());
+      await settle();
+      const component = fixture.componentInstance;
+      component.select(0);
+      await settle();
+      const canvas = element.querySelector<HTMLElement>('.viewport')!;
+      const target = element.querySelector<HTMLElement>(
+        gesture === 'marquee' ? '.body' : '.item',
+      )!;
+      target.setPointerCapture = () => {};
+      target.hasPointerCapture = () => false;
+      const event = {
+        button: 0,
+        pointerId: 1,
+        currentTarget: target,
+        target,
+        clientX: gesture === 'marquee' ? 500 : 30,
+        clientY: gesture === 'marquee' ? 150 : 30,
+        preventDefault() {},
+        stopPropagation() {},
+      } as unknown as PointerEvent;
+      if (gesture === 'pan') {
+        canvas.setPointerCapture = () => {};
+        canvas.dispatchEvent(
+          new KeyboardEvent('keydown', { key: ' ', bubbles: true }),
+        );
+        canvas.dispatchEvent(
+          new PointerEvent('pointerdown', {
+            pointerId: 1,
+            button: 0,
+            clientX: 30,
+            clientY: 30,
+            bubbles: true,
+          }),
+        );
+      } else if (gesture === 'nudge')
+        canvas.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
+        );
+      else if (gesture === 'marquee') component.startMarquee(event);
+      else component.startGesture(event, 0, 'se');
+      component.toggleOverlay('left');
+      expect(component.overlay()).toBeNull();
+      component.workspaceResize(640, 480);
+      await settle();
+      expect(component.preview()).toBeNull();
+      expect(component.marquee()).toBeNull();
+      expect(component.nudge()).toBeNull();
+      expect(host.sent()).toHaveLength(0);
+      expect(component.overlay()).toBe('left');
+    });
+  for (const snapshotFirst of [false, true])
+    it(`closes creation and selects only an accepted named textbox (${snapshotFirst})`, async () => {
+      const { fixture, host, element, settle } = mount();
+      const blank = directSnapshot();
+      host.ingest({ ...blank, scene: { ...blank.scene, items: [] } });
+      await settle();
+      fixture.componentInstance.openCreation('textbox');
+      await settle();
+      const form = element.querySelector<HTMLFormElement>('.left-panel form')!;
+      form.querySelector('input')!.value = 'Title';
+      form.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+      await settle();
+      const request = host.sent().at(-1) as { requestId: string };
+      expect(fixture.componentInstance.selected()).toBeNull();
+      const next = directSnapshot(3, '3:4');
+      const result = {
+        protocol: 1,
+        kind: 'editResult',
+        requestId: request.requestId,
+        baseVersion: 2,
+        version: 3,
+        changed: true,
+        accepted: true,
+        mappings: [],
+        reason: 'APPLIED',
+        diagnostics: [],
+      };
+      host.ingest(snapshotFirst ? next : result);
+      await settle();
+      host.ingest(snapshotFirst ? result : next);
+      await settle();
+      expect(fixture.componentInstance.creation()).toBeNull();
+      expect(fixture.componentInstance.selected()?.name).toBe('Title');
+      expect(host.sent()).toHaveLength(1);
+    });
+  it('retains a refused creation without fabricating selection or retrying', async () => {
+    const { fixture, host, settle } = mount();
+    host.ingest(directSnapshot());
+    await settle();
+    fixture.componentInstance.openCreation('textbox');
+    fixture.componentInstance.author({
+      targetId: '2:1',
+      payload: { action: 'createTextbox', name: 'Title' },
+    });
+    const request = host.sent().at(-1) as { requestId: string };
+    host.ingest({
+      protocol: 1,
+      kind: 'editResult',
+      requestId: request.requestId,
+      baseVersion: 2,
+      version: 2,
+      changed: false,
+      accepted: false,
+      mappings: [],
+      reason: 'Name already exists',
+      diagnostics: [],
+    });
+    await settle();
+    expect(fixture.componentInstance.creation()).toBe('textbox');
+    expect(fixture.componentInstance.selected()).toBeNull();
+    expect(host.sent()).toHaveLength(1);
+  });
+  it('keeps local input history native and guards Code XML behind Apply/Discard/Cancel', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest(directSnapshot());
+    await settle();
+    fixture.componentInstance.select(0);
+    await settle();
+    const input = element.querySelector<HTMLInputElement>(
+      '[data-property="text"]',
+    )!;
+    input.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    input.value = 'Draft';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const undo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    input.dispatchEvent(undo);
+    expect(undo.defaultPrevented).toBe(false);
+    fixture.componentInstance.openSource();
+    expect(fixture.componentInstance.conflict()).not.toBeNull();
+    expect(host.sent()).toHaveLength(0);
+    fixture.componentInstance.cancelConflict();
+    expect(input.value).toBe('Draft');
+    fixture.componentInstance.openSource();
+    fixture.componentInstance.discardDraft();
+    expect(host.sent().at(-1)).toMatchObject({ kind: 'openSource' });
+  });
+  it('cancels even a below-threshold pointer anchor before host layout changes without sending edits', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest(directSnapshot());
+    await settle();
+    fixture.componentInstance.select(0);
+    const item = element.querySelector<HTMLElement>('.item')!;
+    item.setPointerCapture = vi.fn();
+    item.hasPointerCapture = () => false;
+    fixture.componentInstance.startGesture(
+      new PointerEvent('pointerdown', {
+        pointerId: 1,
+        button: 0,
+        clientX: 30,
+        clientY: 30,
+      }),
+      0,
+      'move',
+    );
+    const count = host.sent().length;
+    fixture.componentInstance.workspaceResize(640, 480);
+    expect(fixture.componentInstance.preview()).toBeNull();
+    expect(host.sent().length).toBe(count);
+  });
   beforeEach(() => TestBed.resetTestingModule());
   afterEach(() => vi.restoreAllMocks());
   function directSnapshot(version = 2, id = '2:3') {
@@ -129,7 +396,7 @@ describe('editor surface', () => {
 
   for (const handle of ['move', 'se'] as const) {
     for (const snapshotFirst of [true, false]) {
-      it(`uses scroll-neutral authoring focus after ${handle}, snapshot first: ${snapshotFirst}`, async () => {
+      it(`does not steal authoring focus after ${handle}, snapshot first: ${snapshotFirst}`, async () => {
         const focus = vi.spyOn(HTMLElement.prototype, 'focus');
         const { fixture, host, element, settle } = mount();
         host.ingest(directSnapshot());
@@ -198,10 +465,10 @@ describe('editor surface', () => {
               target.tagName === 'RDLC-AUTHORING'
             );
           });
-        expect(authoringCalls()).toEqual([[{ preventScroll: true }]]);
+        expect(authoringCalls()).toHaveLength(0);
         host.ingest(accepted);
         await settle();
-        expect(authoringCalls()).toHaveLength(1);
+        expect(authoringCalls()).toHaveLength(0);
         expect(host.sent()).toHaveLength(1);
       });
     }
@@ -706,16 +973,13 @@ describe('editor surface', () => {
     expect(fixture.componentInstance.selected()).toBeNull();
   });
 
-  it('disables preservation-only properties while keeping them visible', async () => {
+  it('omits unsupported sections while retaining supported textbox properties', async () => {
     const { host, element, settle } = mount();
     host.ingest(snapshotMessage({ capabilities: ['textbox', 'name', 'text'] }));
     await settle();
     (element.querySelector('button.item') as HTMLButtonElement).click();
     await settle();
-    expect(
-      element.querySelector<HTMLInputElement>('[data-property="left"]')
-        ?.disabled,
-    ).toBe(true);
+    expect(element.querySelector('[data-property="left"]')).toBeNull();
     expect(
       element.querySelector<HTMLInputElement>('[data-property="name"]')
         ?.disabled,

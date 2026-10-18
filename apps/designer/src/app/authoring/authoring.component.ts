@@ -4,9 +4,8 @@ import {
   input,
   output,
   computed,
-  inject,
-  ElementRef,
-  type AfterViewInit,
+  signal,
+  effect,
 } from '@angular/core';
 import type { AuthoringRequest } from '@rdlc/report-model/editing';
 import type { AuthoringState } from '@rdlc/report-model/protocol';
@@ -23,11 +22,51 @@ import { TablePropertiesComponent } from '../tables/table-properties.component';
   styleUrl: './authoring.component.scss',
   host: { tabindex: '-1' },
 })
-export class AuthoringComponent implements AfterViewInit {
-  private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
+export class AuthoringComponent {
   readonly state = input.required<AuthoringState>();
   readonly selected = input<DesignSceneItem | null>(null);
   readonly request = output<AuthoringRequest>();
+  readonly creation = input<'textbox' | 'dataset' | 'table' | null>(null);
+  readonly compact = input(false);
+  readonly pending = input(false);
+  readonly cancel = output<void>();
+  readonly prerequisite = output<void>();
+  readonly submitted = signal(false);
+  readonly datasetName = signal('');
+  readonly dataset = computed(
+    () =>
+      this.state().datasets.find((d) => d.name === this.datasetName()) ??
+      this.state().datasets[0],
+  );
+  constructor() {
+    effect(() => {
+      if (!this.pending()) this.submitted.set(false);
+    });
+  }
+  submitCreation(
+    form: HTMLFormElement,
+    name: string,
+    field = '',
+    width = '',
+  ): void {
+    if (this.pending() || this.submitted() || !form.reportValidity()) return;
+    const kind = this.creation();
+    if (!kind) return;
+    const payload: AuthoringRequest['payload'] =
+      kind === 'textbox'
+        ? { action: 'createTextbox', name }
+        : kind === 'dataset'
+          ? { action: 'createDataset', name }
+          : {
+              action: 'createTable',
+              name,
+              dataset: this.dataset()?.name ?? '',
+              field,
+              width,
+            };
+    this.submitted.set(true);
+    this.request.emit({ targetId: this.state().id, payload });
+  }
   readonly pageProperties = [
     'width',
     'height',
@@ -45,8 +84,4 @@ export class AuthoringComponent implements AfterViewInit {
       ? item
       : null;
   });
-  ngAfterViewInit(): void {
-    // A new accepted version discards drafts and gives keyboard users a stable restart point.
-    this.element.nativeElement.focus({ preventScroll: true });
-  }
 }

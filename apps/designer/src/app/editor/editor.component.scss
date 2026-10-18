@@ -1,11 +1,26 @@
+:host {
+  display: block;
+  height: 100dvh;
+  min-width: 0;
+}
 .editor {
   display: grid;
-  gap: 1rem;
+  position: relative;
+  height: 100dvh;
+  min-width: 0;
+  overflow: hidden;
+  grid-template: 40px minmax(0, 1fr) 28px / 220px minmax(0, 1fr) 300px;
   // Version-keyed forms must not become scroll anchors during edit reconciliation.
   overflow-anchor: none;
 }
 .feedback {
-  block-size: 5rem;
+  position: absolute;
+  bottom: 30px;
+  left: 242px;
+  right: 302px;
+  max-height: 90px;
+  z-index: 10;
+  background: var(--vscode-editorWidget-background, #fff);
   overflow: auto;
   scrollbar-gutter: stable;
 }
@@ -16,12 +31,156 @@
 .outcome {
   margin: 0;
 }
+.status {
+  grid-area: 3 / 1 / 4 / 4;
+  white-space: nowrap;
+  overflow: auto;
+}
+.toolbar {
+  grid-area: 1 / 1 / 2 / 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.toolbar [role='group'] {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.toolbar button {
+  min-height: 24px;
+}
+.toolbar > *,
+.view-controls > * {
+  flex-shrink: 0;
+}
+.command-overflow summary {
+  cursor: pointer;
+  min-height: 24px;
+  line-height: 24px;
+}
+.toolbar .overflow-content {
+  position: absolute;
+  top: 40px;
+  left: 4px;
+  right: 4px;
+  max-height: 50vh;
+  overflow: auto;
+  z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px;
+  white-space: normal;
+  background: var(--vscode-editorWidget-background, #fff);
+  border: 1px solid var(--vscode-focusBorder, #3366cc);
+}
+.empty-state {
+  grid-area: 2 / 1 / 3 / 4;
+  overflow: auto;
+  padding: 16px;
+}
+.left-panel {
+  grid-area: 2 / 1;
+}
+.inspector {
+  grid-area: 2 / 3;
+}
+.left-panel,
+.inspector {
+  overflow: auto;
+  min-width: 0;
+  padding: 8px;
+  box-sizing: border-box;
+  background: var(--vscode-sideBar-background, #f3f3f3);
+}
+.canvas-frame {
+  grid-area: 2 / 2;
+  display: grid;
+  grid-template: 20px minmax(0, 1fr) / 20px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+.ruler {
+  position: relative;
+  overflow: hidden;
+  font-size: 10px;
+  background: var(--vscode-editorGroupHeader-tabsBackground, #eee);
+}
+.ruler span,
+.body-origin {
+  position: absolute;
+  border-left: 1px solid currentColor;
+}
+.horizontal {
+  grid-area: 1 / 2;
+}
+.vertical {
+  grid-area: 2 / 1;
+}
+.vertical span {
+  border-top: 1px solid currentColor;
+}
+.body-origin {
+  color: var(--vscode-focusBorder, #3366cc);
+}
+.left-access,
+.right-access {
+  display: none;
+}
+.compact-left {
+  grid-template-columns: 0 minmax(0, 1fr) 300px;
+}
+.compact-left .left-access,
+.compact-right .right-access {
+  display: block;
+}
+.compact-left .left-panel,
+.compact-right .inspector {
+  display: none;
+  position: absolute;
+  top: 40px;
+  bottom: 28px;
+  z-index: 20;
+  width: 300px;
+  box-shadow: 0 0 8px #0005;
+}
+.compact-left .left-panel {
+  left: 0;
+  width: 220px;
+}
+.compact-right .inspector {
+  right: 0;
+}
+.compact-left .left-panel.open,
+.compact-right .inspector.open {
+  display: block;
+}
+.compact-right {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+.compact-left .feedback {
+  left: 24px;
+}
+.compact-right .feedback {
+  right: 4px;
+}
+.draft {
+  position: absolute;
+  top: 44px;
+  left: 25%;
+  right: 25%;
+  z-index: 30;
+  background: var(--vscode-editorWidget-background, #fff);
+}
 .outcome[data-accepted='false'] {
   color: #b00020;
 }
 .view-controls {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.25rem 0.5rem;
   align-items: center;
 }
@@ -29,8 +188,10 @@
   inline-size: 5rem;
 }
 .viewport {
+  grid-area: 2 / 2;
+  min-width: 0;
+  min-height: 0;
   overflow: auto;
-  max-block-size: 70vh;
   border: 1px solid #999;
 }
 .viewport:focus-visible {
@@ -77,7 +238,7 @@
 .body {
   touch-action: none;
   position: absolute;
-  border: 1px dashed #666;
+  outline: 1px dashed #666;
   background: #f6f6f6;
 }
 .item {

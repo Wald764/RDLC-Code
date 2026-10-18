@@ -43,6 +43,59 @@ export interface AuthoringState {
   }[];
 }
 
+export const structureKinds = [
+  'report',
+  'sections',
+  'section',
+  'body',
+  'header',
+  'footer',
+  'textbox',
+  'table',
+  'row',
+  'cell',
+  'dataset',
+  'field',
+  'container',
+  'preserved',
+] as const;
+export interface StructureNode {
+  /** Actual XML node ID in the accepted version; unique within snapshot. */
+  readonly id: string;
+  /** Emitted parent ID or null for root; no missing parent, cycle or >32-level chain. */
+  readonly parentId: string | null;
+  readonly kind: (typeof structureKinds)[number];
+  /** Actual type/name or honest structural label; never evaluated content. */
+  readonly label: string;
+  /** Existing declared name or null; not an authorization to rename. */
+  readonly name: string | null;
+  /** Actual source range with finite integer 0 <= start <= end <= source.length. */
+  readonly range: { readonly start: number; readonly end: number };
+  /** Null or an explanation of preserved/opaque scope, including actual unsupported type where known. */
+  readonly preservedReason: string | null;
+}
+export interface ReportStructure {
+  /** Flat, source-ordered structural entries; maximum 2,000. */
+  readonly nodes: readonly StructureNode[];
+  /** True when entry/depth/available transport budgets prevent a complete projection; visible limitation and source access required. */
+  readonly truncated: boolean;
+}
+export interface HistoryRequestMessage {
+  readonly protocol: 1;
+  readonly kind: 'history';
+  readonly requestId: string;
+  readonly baseVersion: number;
+  readonly action: 'undo' | 'redo';
+}
+export interface HistoryResultMessage
+  extends Omit<HistoryRequestMessage, 'kind'> {
+  readonly kind: 'historyResult';
+  readonly resultVersion: number;
+  readonly accepted: boolean;
+  readonly changed: boolean;
+  readonly reason?: string;
+}
+
 export type ClientMessage =
   | { readonly protocol: 1; readonly kind: 'ready' }
   | ({ readonly protocol: 1; readonly kind: 'edit' } & EditIntent)
@@ -52,7 +105,8 @@ export type ClientMessage =
       readonly version: number;
       readonly targetId?: string;
     }
-  | ClipboardRequestMessage;
+  | ClipboardRequestMessage
+  | HistoryRequestMessage;
 /** Selection-bearing actions name body roots; Paste carries no XML or manifest. */
 export interface ClipboardRequestMessage {
   readonly protocol: 1;
@@ -64,6 +118,7 @@ export interface ClipboardRequestMessage {
   readonly unit?: SizeUnit;
 }
 export type HostMessage =
+  | HistoryResultMessage
   | {
       readonly protocol: 1;
       readonly kind: 'snapshot';
@@ -73,6 +128,8 @@ export type HostMessage =
         'status' | 'capabilities' | 'diagnostics'
       >;
       readonly scene: DesignScene | null;
+      readonly sourceLength?: number;
+      readonly structure?: ReportStructure;
       readonly authoring?: AuthoringState | null;
     }
   | {
@@ -506,6 +563,30 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
     return null;
   let valid = false;
   switch (value.kind) {
+    case 'history':
+    case 'historyResult': {
+      const result = value.kind === 'historyResult';
+      valid =
+        keys(value, [
+          'protocol',
+          'kind',
+          'requestId',
+          'baseVersion',
+          'action',
+          ...(result ? ['resultVersion', 'accepted', 'changed', 'reason'] : []),
+        ]) &&
+        id(value.requestId) &&
+        version(value.baseVersion) &&
+        ['undo', 'redo'].includes(String(value.action)) &&
+        (!result ||
+          (version(value.resultVersion) &&
+            value.resultVersion >= value.baseVersion &&
+            typeof value.accepted === 'boolean' &&
+            typeof value.changed === 'boolean' &&
+            value.changed === value.resultVersion > value.baseVersion &&
+            (value.reason === undefined || string(value.reason))));
+      break;
+    }
     case 'ready':
       valid = keys(value, ['protocol', 'kind']);
       break;
@@ -683,6 +764,8 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
           'projection',
           'scene',
           'authoring',
+          'sourceLength',
+          'structure',
         ]) &&
         version(value.version) &&
         record(value.projection) &&
@@ -693,10 +776,65 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
         strings(value.projection.capabilities) &&
         diagnostics(value.projection.diagnostics) &&
         scene(value.scene, value.version) &&
-        authoring(value.authoring);
+        authoring(value.authoring) &&
+        (value.sourceLength === undefined || version(value.sourceLength)) &&
+        (value.structure === undefined ||
+          (version(value.sourceLength) &&
+            structure(value.structure, value.version, value.sourceLength)));
       break;
   }
   return valid ? (value as unknown as ProtocolMessage) : null;
+}
+
+function structure(
+  value: unknown,
+  expectedVersion: number,
+  sourceLength: number,
+): boolean {
+  if (
+    !record(value) ||
+    !keys(value, ['nodes', 'truncated']) ||
+    typeof value.truncated !== 'boolean' ||
+    !Array.isArray(value.nodes) ||
+    value.nodes.length > 2000
+  )
+    return false;
+  const depths = new Map<string, number>();
+  let start = -1;
+  for (const node of value.nodes) {
+    if (
+      !record(node) ||
+      !keys(node, [
+        'id',
+        'parentId',
+        'kind',
+        'label',
+        'name',
+        'range',
+        'preservedReason',
+      ]) ||
+      !nodeId(node.id, expectedVersion) ||
+      depths.has(node.id) ||
+      !structureKinds.includes(node.kind as never) ||
+      !string(node.label) ||
+      !(node.name === null || string(node.name)) ||
+      !(node.preservedReason === null || string(node.preservedReason)) ||
+      !range(node.range)
+    )
+      return false;
+    const r = node.range as { start: number; end: number };
+    if (r.start < start || r.end > sourceLength) return false;
+    const depth =
+      node.parentId === null
+        ? 1
+        : typeof node.parentId === 'string'
+          ? (depths.get(node.parentId) ?? 99) + 1
+          : 99;
+    if (depth > 32) return false;
+    depths.set(node.id, depth);
+    start = r.start;
+  }
+  return true;
 }
 
 function mappings(

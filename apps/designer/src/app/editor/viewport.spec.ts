@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { pixelsToPoints } from '@rdlc/report-model/geometry';
 import {
   anchoredScroll,
+  centerScroll,
+  rulerTicks,
   clampZoom,
   clientToBody,
   defaultViewState,
@@ -24,6 +26,23 @@ const body = { left: 96, top: 48 };
 const zooms = [0.25, 0.5, 1, 2, 4] as const;
 
 describe('viewport transforms', () => {
+  for (const zoom of zooms)
+    it(`rebases idle center and page ruler without a body/DPR offset at ${zoom}`, () => {
+      const old = { ...frame, scrollLeft: 600, scrollTop: 400 };
+      const next = centerScroll(old, { width: 400, height: 300 });
+      expect((next.scrollLeft + 200) / zoom).toBe(
+        (old.scrollLeft + 400) / zoom,
+      );
+      expect((next.scrollTop + 150) / zoom).toBe((old.scrollTop + 300) / zoom);
+      const ticks = rulerTicks(500, zoom, 75, 'pt');
+      expect(ticks.length).toBeGreaterThan(0);
+      for (const tick of ticks)
+        expect(tick.position).toBeCloseTo(tick.pixels * zoom - 75, 8);
+      expect(centerScroll(frame, { width: 2000, height: 2000 })).toEqual({
+        scrollLeft: 0,
+        scrollTop: 0,
+      });
+    });
   for (const zoom of zooms)
     it(`converts client → scroll → body origin once at ${zoom * 100}%`, () => {
       const scrolled = { ...frame, scrollLeft: 120, scrollTop: 75 };

@@ -3,6 +3,7 @@ import {
   validateMessage,
   type AuthoringState,
   type ClipboardRequestMessage,
+  type ReportStructure,
 } from '@rdlc/report-model/protocol';
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 import type { EditIntent, TargetMapping } from '@rdlc/report-model/editing';
@@ -15,9 +16,11 @@ export interface EditorSnapshot {
   readonly capabilities: readonly string[];
   readonly diagnostics: readonly Diagnostic[];
   readonly scene: DesignScene | null;
+  readonly structure?: ReportStructure;
   readonly authoring?: AuthoringState | null;
 }
 export interface EditOutcome {
+  readonly history?: boolean;
   readonly baseVersion: number;
   readonly version: number;
   readonly changed: boolean;
@@ -79,7 +82,24 @@ export class HostAdapter {
 
   ingest(input: unknown): void {
     const message = validateMessage(input);
-    if (!message) return;
+    if (!message) {
+      if (
+        input &&
+        typeof input === 'object' &&
+        (input as { kind?: unknown }).kind === 'snapshot'
+      ) {
+        // Invalid metadata grants no authority; retain validated report/source access only.
+        const safe = { ...input } as Record<string, unknown>;
+        delete safe['structure'];
+        if (validateMessage(safe)) {
+          this.ingest(safe);
+          this.notice.set(
+            'Structure is unavailable. Open Code XML to inspect the report.',
+          );
+        }
+      }
+      return;
+    }
     if (message.kind === 'snapshot') {
       const previous = this.snapshot();
       if (previous && message.version < previous.version) return;
@@ -99,7 +119,41 @@ export class HostAdapter {
         diagnostics: message.projection.diagnostics,
         scene: message.scene,
         authoring: message.authoring ?? null,
+        ...(message.structure ? { structure: message.structure } : {}),
       });
+      if (!message.structure)
+        this.notice.update((text) =>
+          `${text} Structure is unavailable. Open Code XML to inspect the report.`.trim(),
+        );
+      else if (message.structure.truncated)
+        this.notice.update((text) =>
+          `${text} Structure is incomplete because a presentation or transport limit was reached. Open Code XML for the complete report.`.trim(),
+        );
+      this.reconcile();
+    } else if (message.kind === 'historyResult') {
+      const pending = this.pending();
+      if (
+        !pending ||
+        pending.requestId !== message.requestId ||
+        pending.baseVersion !== message.baseVersion
+      )
+        return;
+      const result: EditOutcome = {
+        baseVersion: message.baseVersion,
+        version: message.resultVersion,
+        requestId: message.requestId,
+        accepted: message.accepted,
+        changed: message.changed,
+        reason:
+          message.reason ??
+          (message.changed ? 'Native history applied.' : 'No history change.'),
+        mappings: [],
+        diagnostics: [],
+        history: true,
+      };
+      this.outcome.set(result);
+      this.notice.set(result.reason);
+      this.pending.set({ ...pending, result });
       this.reconcile();
     } else if (message.kind === 'protocolError') {
       this.blocked = true;
@@ -167,6 +221,21 @@ export class HostAdapter {
     });
     this.outcome.set(null);
     this.post({ protocol: 1, kind: 'edit', ...intent });
+    return true;
+  }
+
+  sendHistory(requestId: string, action: 'undo' | 'redo'): boolean {
+    const snapshot = this.snapshot();
+    if (!snapshot || this.blocked || this.pending()) return false;
+    this.pending.set({ requestId, baseVersion: snapshot.version });
+    this.outcome.set(null);
+    this.post({
+      protocol: 1,
+      kind: 'history',
+      requestId,
+      baseVersion: snapshot.version,
+      action,
+    });
     return true;
   }
 

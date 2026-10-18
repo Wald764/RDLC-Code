@@ -1,4 +1,9 @@
-<section class="editor" aria-label="Report design surface">
+<section
+  class="editor"
+  aria-label="Report design surface"
+  [class.compact-left]="workspaceWidth() < 1100"
+  [class.compact-right]="workspaceWidth() < 800"
+>
   <div
     class="feedback"
     role="status"
@@ -55,6 +60,9 @@
   }
   @if (scene(); as design) {
     <p class="status" role="status">
+      <button type="button" data-conflicts (click)="openSource()">
+        Code XML
+      </button>
       Authoring layout (not runtime pagination or a data preview) —
       {{ status() }} · {{ design.items.length }} item(s) ·
       {{ selectedIds().length }} selected
@@ -62,396 +70,574 @@
         · Primary: {{ item.label }}
       }
     </p>
-    <div role="group" aria-label="Selection and arrangement" data-conflicts>
-      <button type="button" (click)="selectAll()" [disabled]="!!host.pending()">
-        Select All body items
-      </button>
-      <button
-        type="button"
-        (click)="clearSelection()"
-        [disabled]="!!host.pending()"
-      >
-        Clear selection
-      </button>
-      <button
-        type="button"
-        (click)="clipboard('copy')"
-        [disabled]="!!host.pending() || !selectedIds().length"
-      >
-        Copy
-      </button>
-      <button
-        type="button"
-        (click)="clipboard('cut')"
-        [disabled]="!!host.pending() || !selectedIds().length"
-      >
-        Cut
-      </button>
-      <button
-        type="button"
-        (click)="clipboard('paste')"
-        [disabled]="!!host.pending()"
-      >
-        Paste
-      </button>
-      <button
-        type="button"
-        (click)="clipboard('duplicate')"
-        [disabled]="!!host.pending() || !selectedIds().length"
-      >
-        Duplicate
-      </button>
-      @if (selectedIds().length > 1) {
-        @for (mode of alignModes; track mode) {
-          <button
-            type="button"
-            (click)="arrange('align', mode)"
-            [disabled]="
-              !!host.pending() ||
-              !!bulkReason(
-                ['left', 'center', 'right'].includes(mode)
-                  ? 'horizontal'
-                  : 'vertical'
-              )
-            "
-          >
-            Align {{ mode }}
-          </button>
-        }
-        @for (axis of ['horizontal', 'vertical']; track axis) {
-          <button
-            type="button"
-            (click)="
-              arrange(
-                'distribute',
-                axis === 'horizontal' ? 'horizontal' : 'vertical'
-              )
-            "
-            [disabled]="
-              !!host.pending() ||
-              selectedIds().length < 3 ||
-              !!bulkReason(axis === 'horizontal' ? 'horizontal' : 'vertical')
-            "
-          >
-            Distribute {{ axis }}
-          </button>
-        }
-        @if (bulkReason('horizontal')) {
-          <p role="status">Horizontal: {{ bulkReason('horizontal') }}</p>
-        }
-        @if (bulkReason('vertical')) {
-          <p role="status">Vertical: {{ bulkReason('vertical') }}</p>
-        }
-      }
-    </div>
-    <div class="view-controls" role="toolbar" aria-label="View and placement">
-      <button type="button" (click)="zoomStep(-1)">Zoom out</button>
-      <input
-        type="number"
-        aria-label="Zoom percent"
-        min="25"
-        max="400"
-        step="5"
-        [value]="+(view().zoom * 100).toFixed(2)"
-        (change)="zoomPercent(zoomField.value)"
-        #zoomField
-      />
-      <button type="button" (click)="zoomStep(1)">Zoom in</button>
-      <button type="button" (click)="zoomTo(1)">100%</button>
-      <button type="button" (click)="fit('page')">Fit Page</button>
-      <button type="button" (click)="fit('body')">Fit Body</button>
-      <button type="button" (click)="revealSelection()">
-        Reveal Selection
-      </button>
-      <input
-        type="number"
-        aria-label="Grid spacing"
-        min="0"
-        step="any"
-        [value]="view().gridSpacing"
-        (change)="gridInput(spacing.value, gridUnit.value)"
-        #spacing
-      />
-      <select
-        aria-label="Grid unit"
-        (change)="gridInput(spacing.value, gridUnit.value)"
-        #gridUnit
-      >
-        @for (unit of units; track unit) {
-          <option [value]="unit" [selected]="unit === view().gridUnit">
-            {{ unit }}
-          </option>
-        }
-      </select>
-      <select
-        aria-label="Display unit"
-        (change)="setView({ unit: $any(displayUnit.value) })"
-        #displayUnit
-      >
-        @for (unit of units; track unit) {
-          <option [value]="unit" [selected]="unit === view().unit">
-            {{ unit }}
-          </option>
-        }
-      </select>
-      @for (toggle of toggles; track toggle[0]) {
-        <label
-          ><input
-            type="checkbox"
-            #box
-            [attr.aria-label]="toggle[1]"
-            [checked]="view()[toggle[0]]"
-            (change)="setToggle(toggle[0], box.checked)"
-          />
-          {{ toggle[1] }}</label
-        >
-      }
-      <span>Alt bypasses snapping; Space+drag pans; Ctrl+wheel zooms.</span>
-    </div>
     <div
-      class="viewport"
-      #viewport
-      tabindex="0"
-      role="group"
-      aria-label="Authoring layout canvas — not runtime pagination or a data preview. Arrow keys nudge the selection 1pt, Shift+arrow 10pt. Ctrl or Cmd with C, X, V or D copies, cuts, pastes or duplicates."
+      class="toolbar"
+      role="toolbar"
+      aria-label="Report commands"
       data-conflicts
-      (scroll)="onScroll()"
-      (wheel)="wheel($event)"
     >
+      <div role="group" aria-label="Native history">
+        <button
+          type="button"
+          [disabled]="!!host.pending()"
+          (click)="history('undo')"
+          title="Undo (Ctrl/Cmd+Z)"
+        >
+          Undo
+        </button>
+        <button
+          type="button"
+          [disabled]="!!host.pending()"
+          (click)="history('redo')"
+          title="Redo (Ctrl/Cmd+Shift+Z)"
+        >
+          Redo
+        </button>
+      </div>
+      <button class="left-access" type="button" (click)="toggleOverlay('left')">
+        Components
+      </button>
+      <button
+        class="right-access"
+        type="button"
+        (click)="toggleOverlay('right')"
+      >
+        Properties
+      </button>
+      <details class="command-overflow">
+        <summary>Arrange and clipboard</summary>
+        <div
+          class="overflow-content"
+          role="group"
+          aria-label="Selection and arrangement"
+          data-conflicts
+        >
+          <button
+            type="button"
+            (click)="selectAll()"
+            [disabled]="!!host.pending()"
+          >
+            Select All body items
+          </button>
+          <button
+            type="button"
+            (click)="clearSelection()"
+            [disabled]="!!host.pending()"
+          >
+            Clear selection
+          </button>
+          <button
+            type="button"
+            (click)="clipboard('copy')"
+            [disabled]="!!host.pending() || !selectedIds().length"
+          >
+            Copy
+          </button>
+          <button
+            type="button"
+            (click)="clipboard('cut')"
+            [disabled]="!!host.pending() || !selectedIds().length"
+          >
+            Cut
+          </button>
+          <button
+            type="button"
+            (click)="clipboard('paste')"
+            [disabled]="!!host.pending()"
+          >
+            Paste
+          </button>
+          <button
+            type="button"
+            (click)="clipboard('duplicate')"
+            [disabled]="!!host.pending() || !selectedIds().length"
+          >
+            Duplicate
+          </button>
+          @for (mode of alignModes; track mode) {
+            <button
+              type="button"
+              (click)="arrange('align', mode)"
+              [disabled]="
+                !!host.pending() ||
+                selectedIds().length < 2 ||
+                !!bulkReason(
+                  ['left', 'center', 'right'].includes(mode)
+                    ? 'horizontal'
+                    : 'vertical'
+                )
+              "
+            >
+              Align {{ mode }}
+            </button>
+          }
+          @for (axis of ['horizontal', 'vertical']; track axis) {
+            <button
+              type="button"
+              (click)="
+                arrange(
+                  'distribute',
+                  axis === 'horizontal' ? 'horizontal' : 'vertical'
+                )
+              "
+              [disabled]="
+                !!host.pending() ||
+                selectedIds().length < 3 ||
+                !!bulkReason(axis === 'horizontal' ? 'horizontal' : 'vertical')
+              "
+            >
+              Distribute {{ axis }}
+            </button>
+          }
+          @if (bulkReason('horizontal')) {
+            <p role="status">Horizontal: {{ bulkReason('horizontal') }}</p>
+          }
+          @if (bulkReason('vertical')) {
+            <p role="status">Vertical: {{ bulkReason('vertical') }}</p>
+          }
+          @if (selectedIds().length < 2) {
+            <p>
+              Select at least two eligible body items to align, or three to
+              distribute.
+            </p>
+          }
+        </div>
+      </details>
+      <div class="view-controls" role="toolbar" aria-label="View and placement">
+        <button type="button" (click)="zoomStep(-1)">Zoom out</button>
+        <input
+          type="number"
+          aria-label="Zoom percent"
+          min="25"
+          max="400"
+          step="5"
+          [value]="+(view().zoom * 100).toFixed(2)"
+          (change)="zoomPercent(zoomField.value)"
+          #zoomField
+        />
+        <button type="button" (click)="zoomStep(1)">Zoom in</button>
+        <button type="button" (click)="zoomTo(1)">100%</button>
+        <button type="button" (click)="fit('page')">Fit Page</button>
+        <button type="button" (click)="fit('body')">Fit Body</button>
+        <button type="button" (click)="revealSelection()">
+          Reveal Selection
+        </button>
+        @for (toggle of toggles.slice(0, 2); track toggle[0]) {
+          <label
+            ><input
+              type="checkbox"
+              #quick
+              [attr.aria-label]="toggle[1]"
+              [checked]="view()[toggle[0]]"
+              (change)="setToggle(toggle[0], quick.checked)"
+            />{{ toggle[1] }}</label
+          >
+        }
+        <button type="button" (click)="pageSetup()">Page setup</button>
+        <details class="command-overflow">
+          <summary>More view and placement settings</summary>
+          <div class="overflow-content">
+            <input
+              type="number"
+              aria-label="Grid spacing"
+              min="0"
+              step="any"
+              [value]="view().gridSpacing"
+              (change)="gridInput(spacing.value, gridUnit.value)"
+              #spacing
+            />
+            <select
+              aria-label="Grid unit"
+              (change)="gridInput(spacing.value, gridUnit.value)"
+              #gridUnit
+            >
+              @for (unit of units; track unit) {
+                <option [value]="unit" [selected]="unit === view().gridUnit">
+                  {{ unit }}
+                </option>
+              }
+            </select>
+            <select
+              aria-label="Display unit"
+              (change)="setView({ unit: $any(displayUnit.value) })"
+              #displayUnit
+            >
+              @for (unit of units; track unit) {
+                <option [value]="unit" [selected]="unit === view().unit">
+                  {{ unit }}
+                </option>
+              }
+            </select>
+            @for (toggle of toggles.slice(2); track toggle[0]) {
+              <label
+                ><input
+                  type="checkbox"
+                  #box
+                  [attr.aria-label]="toggle[1]"
+                  [checked]="view()[toggle[0]]"
+                  (change)="setToggle(toggle[0], box.checked)"
+                />
+                {{ toggle[1] }}</label
+              >
+            }
+            <span
+              >Alt bypasses snapping; Space+drag pans; Ctrl+wheel zooms.</span
+            >
+          </div>
+        </details>
+      </div>
+    </div>
+    <aside
+      class="left-panel"
+      data-conflicts
+      [class.open]="overlay() === 'left'"
+      aria-label="Components"
+    >
+      <h2>Components</h2>
+      <rdlc-components-catalog
+        [disabled]="
+          !!host.pending() ||
+          host.snapshot()?.status !== 'editable' ||
+          !host.snapshot()?.authoring
+        "
+        (create)="openCreation($event)"
+      />
+      @if (creation()) {
+        @for (version of [host.snapshot()?.version]; track version) {
+          @if (host.snapshot()?.authoring; as authoring) {
+            <fieldset [disabled]="!!host.pending()">
+              <rdlc-authoring
+                [state]="authoring"
+                [compact]="true"
+                [creation]="creation()"
+                [pending]="!!host.pending()"
+                (request)="author($event)"
+                (cancel)="openCreation(null)"
+                (prerequisite)="openCreation('dataset')"
+              />
+            </fieldset>
+          }
+        }
+      }
+    </aside>
+    <div class="canvas-frame">
+      <div class="ruler horizontal" aria-label="Horizontal page ruler">
+        @for (tick of rulerX(); track tick.pixels) {
+          <span [style.left.px]="tick.position">{{ tick.label }}</span>
+        }
+        <b
+          class="body-origin"
+          [style.left.px]="design.body.left * view().zoom - view().scrollLeft"
+          title="Body origin"
+          >B</b
+        >
+      </div>
+      <div class="ruler vertical" aria-label="Vertical page ruler">
+        @for (tick of rulerY(); track tick.pixels) {
+          <span [style.top.px]="tick.position">{{ tick.label }}</span>
+        }
+        <b
+          class="body-origin"
+          [style.top.px]="design.body.top * view().zoom - view().scrollTop"
+          title="Body origin"
+          >B</b
+        >
+      </div>
       <div
-        class="extent"
-        [style.width.px]="extent()!.width * view().zoom"
-        [style.height.px]="extent()!.height * view().zoom"
+        class="viewport"
+        #viewport
+        tabindex="0"
+        role="group"
+        aria-label="Authoring layout canvas — not runtime pagination or a data preview. Arrow keys nudge the selection 1pt, Shift+arrow 10pt. Ctrl or Cmd with C, X, V or D copies, cuts, pastes or duplicates."
+        data-conflicts
+        (scroll)="onScroll()"
+        (wheel)="wheel($event)"
       >
         <div
-          class="page"
-          role="group"
-          aria-label="Page"
-          data-conflicts
-          [style.width.px]="design.page.width"
-          [style.height.px]="design.page.height"
-          [style.transform]="'scale(' + view().zoom + ')'"
+          class="extent"
+          [style.width.px]="extent()!.width * view().zoom"
+          [style.height.px]="extent()!.height * view().zoom"
         >
           <div
-            class="body"
+            class="page"
             role="group"
-            aria-label="Body"
-            [class.grid]="view().gridVisible"
-            [style.--grid]="toPx(gridPt()) + 'px'"
-            [style.left.px]="design.body.left"
-            [style.top.px]="design.body.top"
-            [style.width.px]="design.body.width"
-            [style.height.px]="design.body.height"
-            (pointerdown)="startMarquee($event)"
+            aria-label="Page"
+            data-conflicts
+            [style.width.px]="design.page.width"
+            [style.height.px]="design.page.height"
+            [style.transform]="'scale(' + view().zoom + ')'"
           >
-            @for (item of design.items; track $index) {
-              @if (item.bounds; as bounds) {
-                <button
-                  type="button"
-                  class="item"
-                  [class.selected]="isSelected(item)"
-                  [class.placeholder]="item.placeholder"
-                  [attr.data-item]="$index"
-                  [attr.aria-pressed]="isSelected(item)"
-                  [style.left.px]="bounds.left"
-                  [style.top.px]="bounds.top"
-                  [style.width.px]="bounds.width"
-                  [style.height.px]="bounds.height"
-                  [style.z-index]="item.zIndex ?? 0"
-                  (click)="selectClick($event, $index)"
-                  (pointerdown)="startGesture($event, $index)"
-                >
-                  {{ item.label }}
-                </button>
-              }
-            }
-            @if (selected(); as item) {
-              @if (item.bounds; as bounds) {
-                @if (item.kind !== 'cell' && item.operations) {
-                  <div
-                    class="selection-frame"
+            <div
+              class="body"
+              role="group"
+              aria-label="Body"
+              [class.grid]="view().gridVisible"
+              [style.--grid]="toPx(gridPt()) + 'px'"
+              [style.left.px]="design.body.left"
+              [style.top.px]="design.body.top"
+              [style.width.px]="design.body.width"
+              [style.height.px]="design.body.height"
+              (pointerdown)="startMarquee($event)"
+            >
+              @for (item of design.items; track $index) {
+                @if (item.bounds; as bounds) {
+                  <button
+                    type="button"
+                    class="item"
+                    [class.selected]="isSelected(item)"
+                    [class.placeholder]="item.placeholder"
+                    [attr.data-item]="$index"
+                    [attr.aria-pressed]="isSelected(item)"
                     [style.left.px]="bounds.left"
                     [style.top.px]="bounds.top"
                     [style.width.px]="bounds.width"
                     [style.height.px]="bounds.height"
-                    aria-label="Selected item geometry"
+                    [style.z-index]="item.zIndex ?? 0"
+                    (click)="selectClick($event, $index)"
+                    (pointerdown)="startGesture($event, $index)"
                   >
-                    @if (item.kind === 'table' && canHandle(item, 'move')) {
-                      <button
-                        type="button"
-                        class="move-grip"
-                        aria-label="Move selected table"
-                        [disabled]="!!host.pending()"
-                        (pointerdown)="startGesture($event, selectedIndex()!)"
-                      >
-                        Move table
-                      </button>
-                    }
-                    @for (handle of handles; track handle) {
-                      @if (canHandle(item, handle)) {
-                        <button
-                          type="button"
-                          class="handle"
-                          [attr.data-handle]="handle"
-                          [attr.aria-label]="
-                            'Resize ' + item.label + ' ' + handle
-                          "
-                          [disabled]="!!host.pending()"
-                          (pointerdown)="
-                            startGesture($event, selectedIndex()!, handle)
-                          "
-                        ></button>
-                      }
-                    }
-                  </div>
+                    {{ item.label }}
+                  </button>
                 }
               }
-            }
-            @for (shape of groupPreviewPixels(); track $index) {
-              <div
-                class="preview"
-                [class.invalid]="!shape.valid"
-                [style.left.px]="shape.bounds.left"
-                [style.top.px]="shape.bounds.top"
-                [style.width.px]="
-                  shape.bounds.width > 0 ? shape.bounds.width : 1
-                "
-                [style.height.px]="
-                  shape.bounds.height > 0 ? shape.bounds.height : 1
-                "
-                aria-hidden="true"
-              ></div>
-            }
-            @if (view().guidesVisible) {
-              @for (guide of guides(); track $index) {
-                <div
-                  class="guide"
-                  [attr.data-axis]="guide.axis"
-                  [style.left.px]="
-                    guide.axis === 'x' ? toPx(guide.value) : null
-                  "
-                  [style.top.px]="guide.axis === 'y' ? toPx(guide.value) : null"
-                >
-                  <span
-                    >{{ guide.label }} {{ guide.edge }}:
-                    {{ inUnit(toPx(guide.value)) }}</span
-                  >
-                </div>
+              @if (selected(); as item) {
+                @if (item.bounds; as bounds) {
+                  @if (item.kind !== 'cell' && item.operations) {
+                    <div
+                      class="selection-frame"
+                      [style.left.px]="bounds.left"
+                      [style.top.px]="bounds.top"
+                      [style.width.px]="bounds.width"
+                      [style.height.px]="bounds.height"
+                      aria-label="Selected item geometry"
+                    >
+                      @if (item.kind === 'table' && canHandle(item, 'move')) {
+                        <button
+                          type="button"
+                          class="move-grip"
+                          aria-label="Move selected table"
+                          [disabled]="!!host.pending()"
+                          (pointerdown)="startGesture($event, selectedIndex()!)"
+                        >
+                          Move table
+                        </button>
+                      }
+                      @for (handle of handles; track handle) {
+                        @if (canHandle(item, handle)) {
+                          <button
+                            type="button"
+                            class="handle"
+                            [attr.data-handle]="handle"
+                            [attr.aria-label]="
+                              'Resize ' + item.label + ' ' + handle
+                            "
+                            [disabled]="!!host.pending()"
+                            (pointerdown)="
+                              startGesture($event, selectedIndex()!, handle)
+                            "
+                          ></button>
+                        }
+                      }
+                    </div>
+                  }
+                }
               }
-            }
-            @if (marquee(); as state) {
-              @if (state.active) {
+              @for (shape of groupPreviewPixels(); track $index) {
                 <div
-                  class="marquee"
-                  [style.left.px]="state.rect.left"
-                  [style.top.px]="state.rect.top"
-                  [style.width.px]="state.rect.width"
-                  [style.height.px]="state.rect.height"
+                  class="preview"
+                  [class.invalid]="!shape.valid"
+                  [style.left.px]="shape.bounds.left"
+                  [style.top.px]="shape.bounds.top"
+                  [style.width.px]="
+                    shape.bounds.width > 0 ? shape.bounds.width : 1
+                  "
+                  [style.height.px]="
+                    shape.bounds.height > 0 ? shape.bounds.height : 1
+                  "
                   aria-hidden="true"
                 ></div>
               }
-            }
+              @if (view().guidesVisible) {
+                @for (guide of guides(); track $index) {
+                  <div
+                    class="guide"
+                    [attr.data-axis]="guide.axis"
+                    [style.left.px]="
+                      guide.axis === 'x' ? toPx(guide.value) : null
+                    "
+                    [style.top.px]="
+                      guide.axis === 'y' ? toPx(guide.value) : null
+                    "
+                  >
+                    <span
+                      >{{ guide.label }} {{ guide.edge }}:
+                      {{ inUnit(toPx(guide.value)) }}</span
+                    >
+                  </div>
+                }
+              }
+              @if (marquee(); as state) {
+                @if (state.active) {
+                  <div
+                    class="marquee"
+                    [style.left.px]="state.rect.left"
+                    [style.top.px]="state.rect.top"
+                    [style.width.px]="state.rect.width"
+                    [style.height.px]="state.rect.height"
+                    aria-hidden="true"
+                  ></div>
+                }
+              }
+            </div>
           </div>
         </div>
       </div>
     </div>
-    @if (design.items.length) {
-      <ul aria-label="Report items" data-conflicts>
-        @for (item of design.items; track $index) {
-          <li>
-            <button
-              type="button"
-              (click)="select($index, $event.shiftKey)"
-              [attr.aria-pressed]="isSelected(item)"
-            >
-              {{ item.label }}{{ item.bounds ? '' : ' — unknown bounds' }}
-              {{ primary()?.id === item.id ? ' — primary' : '' }}
-            </button>
-            @if (item.kind !== 'cell') {
-              <label
-                ><input
-                  type="checkbox"
-                  data-membership
-                  [checked]="isSelected(item)"
-                  [disabled]="!!host.pending()"
-                  (change)="select($index, true)"
-                />
-                Include {{ item.label }} in selection</label
-              >
-            }
-          </li>
-        }
-      </ul>
-    }
-    @if (selected(); as item) {
-      @if (item.bounds; as bounds) {
-        <p aria-label="Accepted item geometry">
-          Accepted geometry: left {{ inUnit(bounds.left) }}, top
-          {{ inUnit(bounds.top) }}, width {{ inUnit(bounds.width) }}, height
-          {{ inUnit(bounds.height) }}.
-        </p>
-      }
-      @if (limitations(); as reasons) {
-        <section class="limitations" role="group" aria-label="Limitations">
-          <p role="status">
-            {{ item.label }} — {{ item.kind ?? 'item' }} limitations:
-          </p>
-          <ul>
-            @for (reason of reasons; track reason) {
-              <li>{{ reason }}</li>
-            }
-          </ul>
-          <button type="button" (click)="openSource()">
-            Open {{ item.label }} in source
-          </button>
-        </section>
-      }
-      <!-- Keyed by version: an accepted or independent snapshot recreates fields, so no stale draft survives. -->
+    <aside
+      class="inspector"
+      [class.open]="overlay() === 'right'"
+      aria-label="Properties"
+    >
       @for (version of [host.snapshot()?.version]; track version) {
         <fieldset [disabled]="!!host.pending()">
-          <rdlc-textbox-properties [item]="item" (commit)="commit($event)" />
+          <rdlc-contextual-inspector
+            [scene]="scene()"
+            [item]="selected()"
+            [count]="selectedIds().length"
+            [primary]="primary()"
+            [dataset]="selectedDataset()"
+            [refusal]="
+              host.outcome()?.accepted === false
+                ? (host.outcome()?.reason ?? '')
+                : ''
+            "
+            (commit)="commit($event)"
+          />
         </fieldset>
       }
-      @for (
-        dataset of host.snapshot()?.authoring?.datasets ?? [];
-        track dataset.id
-      ) {
-        <form (submit)="$event.preventDefault(); bindField(field.value)">
-          <label
-            >Bind selected textbox to {{ dataset.name }} field
-            <select #field>
-              @for (field of dataset.fields; track field.id) {
-                <option [value]="field.name" [disabled]="field.type === null">
-                  {{ field.name }}
-                </option>
+      @if (design.items.length) {
+        <ul aria-label="Report items" data-conflicts>
+          @for (item of design.items; track $index) {
+            <li>
+              <button
+                type="button"
+                (click)="select($index, $event.shiftKey)"
+                [attr.aria-pressed]="isSelected(item)"
+              >
+                {{ item.label }}{{ item.bounds ? '' : ' — unknown bounds' }}
+                {{ primary()?.id === item.id ? ' — primary' : '' }}
+              </button>
+              @if (item.kind !== 'cell') {
+                <label
+                  ><input
+                    type="checkbox"
+                    data-membership
+                    [checked]="isSelected(item)"
+                    [disabled]="!!host.pending()"
+                    (change)="select($index, true)"
+                  />
+                  Include {{ item.label }} in selection</label
+                >
               }
-            </select></label
-          >
-          <button type="submit">Bind field</button>
-        </form>
+            </li>
+          }
+        </ul>
       }
-    }
-    @if (selectedIds().length < 2) {
-      @for (snapshot of [host.snapshot()]; track snapshot?.version) {
-        @if (
-          snapshot?.status === 'editable' && snapshot?.authoring;
-          as authoring
+      @if (selected(); as item) {
+        @if (item.bounds; as bounds) {
+          <p aria-label="Accepted item geometry">
+            Accepted geometry: left {{ inUnit(bounds.left) }}, top
+            {{ inUnit(bounds.top) }}, width {{ inUnit(bounds.width) }}, height
+            {{ inUnit(bounds.height) }}.
+          </p>
+        }
+        @if (limitations(); as reasons) {
+          <section class="limitations" role="group" aria-label="Limitations">
+            <p role="status">
+              {{ item.label }} — {{ item.kind ?? 'item' }} limitations:
+            </p>
+            <ul>
+              @for (reason of reasons; track reason) {
+                <li>{{ reason }}</li>
+              }
+            </ul>
+            <button type="button" (click)="openSource()">
+              Open {{ item.label }} in source
+            </button>
+          </section>
+        }
+        @for (
+          dataset of host.snapshot()?.authoring?.datasets ?? [];
+          track dataset.id
         ) {
-          <fieldset [disabled]="!!host.pending()">
-            <rdlc-authoring
-              [state]="authoring"
-              [selected]="selected()"
-              (request)="author($event)"
-            />
-          </fieldset>
+          <form (submit)="$event.preventDefault(); bindField(field.value)">
+            <label
+              >Bind selected textbox to {{ dataset.name }} field
+              <select #field>
+                @for (field of dataset.fields; track field.id) {
+                  <option [value]="field.name" [disabled]="field.type === null">
+                    {{ field.name }}
+                  </option>
+                }
+              </select></label
+            >
+            <button type="submit">Bind field</button>
+          </form>
         }
       }
-    }
-    <rdlc-diagnostics
-      [diagnostics]="diagnostics()"
-      (openSource)="openSource()"
-    />
+      @if (selectedIds().length < 2) {
+        @for (snapshot of [host.snapshot()]; track snapshot?.version) {
+          @if (
+            snapshot?.status === 'editable' && snapshot?.authoring;
+            as authoring
+          ) {
+            <details data-page-setup>
+              <summary>Page setup and report authoring</summary>
+              <fieldset [disabled]="!!host.pending()">
+                <rdlc-authoring
+                  [state]="authoring"
+                  [selected]="selected()"
+                  (request)="author($event)"
+                />
+              </fieldset>
+            </details>
+          }
+        }
+      }
+      <rdlc-diagnostics
+        [diagnostics]="diagnostics()"
+        (openSource)="openSource()"
+      />
+    </aside>
   } @else {
-    <p role="status">Waiting for the RDLC host to provide a document…</p>
+    <div class="empty-state">
+      @if (host.snapshot(); as snapshot) {
+        <p role="status">
+          {{ snapshot.status }} — visual editing is unavailable. Inspect
+          diagnostics and Code XML.
+        </p>
+        <button type="button" (click)="openSource()">Code XML</button>
+        <button
+          type="button"
+          [disabled]="!!host.pending()"
+          (click)="history('undo')"
+        >
+          Undo
+        </button>
+        <button
+          type="button"
+          [disabled]="!!host.pending()"
+          (click)="history('redo')"
+        >
+          Redo
+        </button>
+        <rdlc-diagnostics
+          [diagnostics]="diagnostics()"
+          (openSource)="openSource()"
+        />
+      } @else {
+        <p role="status">Waiting for the RDLC host to provide a document…</p>
+      }
+    </div>
   }
 </section>
