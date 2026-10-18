@@ -105,6 +105,8 @@ Completed [research.md](research.md) resolves architecture, atomic apply, option
 
 The highest-impact findings are same-offset missing-property insertion normalization, preservation of namespace dependencies, scalar table setters' incompatible implicit-size/unit behavior, snapshot-before-result ordering, and decoded-expression versus raw-XML reference ranges. The design handles these explicitly; no technical clarification remains unresolved.
 
+Analyze refinements U1/U2/C1 are resolved as follows: clipboard insertion preserves captured physical sizes and materializes implicit textbox dimensions only when needed after offset/destination changes; the clipboard contract defines the minimal project-owned annotation classification and explicit refusal examples; T082 owns real interaction timing collection as well as evidence validation. These are implementation obligations, not executed acceptance evidence.
+
 ## Phase 1: Design and Contracts
 
 ### Foundation and intended implementation order
@@ -115,6 +117,8 @@ The highest-impact findings are same-offset missing-property insertion normaliza
 4. **Arrangement and placement/navigation (FR-011–016/026).** Add host-authoritative align/distribute, keyboard repeat aggregation, zoom/fit/reveal/pan/scroll/edge auto-scroll and deterministic grid/guides/Alt bypass. Persist validated per-view preferences only. Test every tie/axis/zoom and normal form shortcut isolation.
 5. **Clipboard and duplication (P2; FR-017–021/024/025).** Add typed captures/dependency declarations, narrow reference operands/raw lexical mapping, typed unique identities and whole-removal-set guards. Implement host token/clipboard coordination and complete insertion/removal plans; preserve full XML and local namespace meaning. Integrate labeled actions/platform canvas shortcuts, paste sequence and selected-copy reveal. No broad expression grammar or resource authoring expansion.
 6. **Acceptance and regression completion (FR-027; SC-001–008).** Extend all affected test layers and provenance manifest, exercise 20-operation native Undo/Redo, source/visual races, clipboard refusal/failure, lexical corpus and installed offline/accessibility runs. Update existing measurement validation for new feedback/accepted-paint boundaries and record timed representative workflow. Preserve all existing quality/release gates.
+
+For SC-005, T082 adds a bounded installed-webview measurement harness at `tests/performance/measure-interactive.ts`, following the collection protocol in `quickstart.md`. It records same-webview monotonic input/submission markers and correlates visible feedback or the matching accepted request/version with presented-frame evidence. T084 consumes its raw sample export. Host completion, DOM mutation or a requestAnimationFrame callback alone cannot establish a painted result.
 
 This ordering is design guidance for subsequent tasks, not an implementation execution or a generated task list.
 

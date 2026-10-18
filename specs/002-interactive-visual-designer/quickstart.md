@@ -42,4 +42,13 @@ For SC-001 record the representative fixture and a timed run of selection, diago
 
 For SC-005 record CPU, RAM, OS, display scaling, VS Code version, fixture size (at most 1 MiB) and 100 selectable body items. At both 100% and 200%, collect 100 samples for selection/manipulation feedback (input event to painted preview) and accepted edits (submission to painted authoritative snapshot), including a 20-item move. At least 95 samples in each applicable series must meet 50ms/200ms respectively. Extend the existing measurement validator rather than interpreting baseline measurements as proof of these new boundaries.
 
+### SC-005 collection protocol (implemented by T082)
+
+- Entry point: `tests/performance/measure-interactive.ts`, invoked by the installed test driver; T082 documents its exact runnable invocation here after integration. Reuse the existing installed VSIX/test tooling and add no dependency.
+- Start timestamps use the webview's monotonic `performance.now()` clock at the input handler entry (selection/manipulation feedback) or immediately before submission (accepted edit). Record operation/sample ID, zoom, selection size and, for submissions, request ID and base/result versions.
+- The driver captures Chromium rendering trace/presented-frame evidence for the visible installed designer. Correlate the feedback state or matching request/result-version authoritative DOM state with its first presented frame; record trace clock alignment to the same webview clock. Selection feedback means its visible selection state, not a required drag preview. Do not combine unsynchronized host/webview clocks.
+- DOM updates, host apply completion and requestAnimationFrame callbacks are readiness markers only, not proof of presentation. Hidden/throttled views, missing frame evidence or unmatched request/version leave the run unresolved; do not silently discard slow valid samples or substitute synthetic timings.
+- Export raw start/end timestamps, durations, state/request/version correlations and trace/frame references alongside the candidate/VSIX/environment/fixture identity under the validation evidence location. Record 100 valid samples for each applicable selection, manipulation and accepted-edit series at each zoom, including 20-item moves. Validate the full export and retain failed/unresolved runs.
+- Add focused harness/validator checks for wrong result versions, missing presentation evidence, clock mismatch, nonfinite/negative durations and incomplete series. Synthetic records exercise these checks only; T084 records actual desktop runs.
+
 Automated tests establish source/layout behavior; installed timed, accessibility and offline runs supply their own evidence. Neither proves external RDLC runtime rendering fidelity.

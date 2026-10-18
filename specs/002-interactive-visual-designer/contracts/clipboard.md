@@ -42,6 +42,8 @@ Before insertion, allocate deterministic valid case-sensitive names for every ne
 
 Patch captured fragments only for required identities, understood references, geometry offsets and local namespace closure. Add inherited declarations on copied roots where needed; preserve prefixes, default namespaces and internal rebinding without editing destination bindings. Compare expanded names and namespace meaning against the original capture, including unprefixed attribute rules. Preserve all other lexical content exactly.
 
+Capture physical bounds and explicit/derived provenance before any offset. Paste/Duplicate preserve each root's captured width/height within 0.01pt, not the destination-relative derived size. After applying the offset, materialize a missing textbox Width/Height only if destination derivation would change that captured size, using the destination view's displayed unit (pt by default). Preserve existing explicit size lexemes and leave absent dimensions absent when derivation still matches. Refuse unknown/unprovable required bounds. Include necessary size insertion in the transformed subtree and the same native undo step. Test first/repeated Paste and Duplicate in the source body and Paste into narrower/wider and shorter/taller bodies, including both dimensions omitted and mixed units.
+
 Build final fragment strings before a single destination insertion plan. Reparse/verify the complete candidate and every inserted subtree against its capture transformation, not only the untouched original nodes. For a missing/self-closing `ReportItems`, reuse namespace-aware structural insertion. Preserve existing root order and destination content outside the declared insertion footprint.
 
 ## Dependency proof
@@ -59,6 +61,19 @@ Extend bounded expression analysis with exact identity operands and typed datase
 Destination dataset compatibility checks required field names, declared/supported types, definitions and scope placement. Same dataset name is insufficient. Conservatively require identical required field definitions; unknown/ambiguous types, unanalysable calculated fields and incompatible scope ancestry refuse. Do not duplicate/change external datasets/resources. External item/group name matches also require compatible kind and valid scope.
 
 Namespace preservation does not prove extension semantics. Preserve known identity-independent metadata byte-for-byte; only an explicit documented semantic classification may establish its insertion safety. Unknown attributes/children/processing instructions that may carry identities or dependencies refuse insertion rather than being removed. Add positive fixtures for proven safe preserved metadata and refusal fixtures for opaque identity-bearing metadata. This restriction must not block unrelated geometry edits.
+
+### Minimal foreign-metadata classification
+
+This project explicitly defines `{urn:rdlc-code:extension}Opaque` as an inert annotation only when it has exactly one unqualified `keep` attribute with literal value `1`, no other non-namespace attributes, and text-only content (including CDATA/entity spelling), with no child elements or processing instructions. Its text and `keep` flag have no identity, reference, expression, resource or execution semantics. This is a project-owned extension contract, not an MS-RDL or external runtime compatibility claim. Preserve the complete original lexical content and namespace meaning; do not scan or rewrite annotation text as references. Match expanded names, not prefixes. The shape already occurs in `tests/fixtures/textboxes/supported.rdlc`; its separate `rd:DefaultName` attribute is not classified by this rule.
+
+| Example | Decision |
+| --- | --- |
+| `<x:Opaque xmlns:x="urn:rdlc-code:extension" keep="1">preserve</x:Opaque>` | Safe annotation; preserve byte-for-byte except necessary namespace closure. |
+| The same annotation with text `ReportItems!Title.Value` | Safe literal annotation; never rewrite its text. |
+| Same element with `target="Title"`, a nested element, a processing instruction or a different `keep` value | Unclassified semantics; refuse insertion. |
+| `Opaque` in another namespace, `x:Chart`, or `rd:DefaultName` | Not covered; refuse unless a separate reviewed classification/reference rule proves safety. |
+
+Positive clipboard fixtures must isolate this classified annotation from other unclassified metadata. Existing fixtures remain preservation regressions; their presence alone does not establish insertion safety. Additional classifications require documented semantics and positive/negative regression fixtures before they can grant insertion capability.
 
 For Cut, extend existing removal guards to exclude the complete removal set, then check every removed nested identity against the remaining report. References between removed members are safe; known or opaque potential references from remaining content can block removal. Outside references to originals do not themselves block Copy when originals survive and copied dependencies are valid. Apply the existing contained-content acknowledgement once for the entire selection.
 

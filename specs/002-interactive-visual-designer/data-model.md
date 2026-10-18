@@ -50,6 +50,8 @@ Axis, target body/sibling identity, source order, target edge/center, report coo
 
 A capture is an immutable host-owned snapshot of complete selected XML subtrees in source order, their original point geometry, namespace environments, item/group identity declarations, understood reference spans and external dependency descriptors. It records source schema/profile and capture format version; it is not a live reference to source IDs.
 
+Root geometry includes captured physical width/height and explicit/derived provenance. Insertion preserves those sizes across offsets and destination body changes, materializing missing textbox dimensions only when needed in the destination display unit; required unknown bounds refuse insertion. Metadata classification follows the explicit expanded-name/shape rules in the clipboard contract, never namespace-only trust.
+
 Relationships: each capture has one or more roots; a table root includes its cells/groups; understood reference edges target internal copied identities or external dataset/field/item/scope dependencies. Opaque potential references/identities carry an explicit uncertainty reason and prevent unsafe identity-changing insertion or removal. Destination validation resolves external dependencies without creating them.
 
 The native clipboard contains a bounded versioned same-window capture token, not patch authority. Host retention and limits are defined in the [clipboard contract](contracts/clipboard.md). View-local paste sequence is keyed to capture generation: next offset is `(successfulPastes + 1) * 10pt` on both axes; new copy/cut resets generation, failure does not advance, duplicate is always 10pt and leaves clipboard untouched.
