@@ -65,3 +65,41 @@ test('known preserved/query expression properties and unknown extension semantic
     false,
   );
 });
+test('typed operands carry exact name ranges for ReportItems and Sum scopes only', () => {
+  const text =
+    '=ReportItems!Título.Value & Sum(Fields!Amount.Value, "ByLabel")';
+  const result = analyze(text);
+  assert.ok(result.complete);
+  const [item, , scope] = result.references;
+  assert.equal(item!.kind, 'report-item');
+  assert.equal(
+    text.slice(item!.nameRange!.start, item!.nameRange!.end),
+    'Título',
+  );
+  assert.equal(scope!.name, 'ByLabel');
+  assert.equal(
+    text.slice(scope!.nameRange!.start, scope!.nameRange!.end),
+    'ByLabel',
+  );
+  assert.equal(
+    analyze('=Sum(Fields!A.Value, "By""Label")').references[1]!.nameRange,
+    undefined,
+  );
+  // Scope kind stays syntactic; typed resolution happens against declared identities.
+  assert.equal(
+    analyze('=Sum(Fields!A.Value, "T")', ['T']).references[1]!.kind,
+    'group',
+  );
+  assert.equal(
+    analyze('=Sum(Fields!A.Value, "T")').references[1]!.kind,
+    'dataset',
+  );
+  for (const opaque of [
+    '=ReportItems("Title").Value',
+    '=Scopes!Group.Value',
+    '=Code.Lookup(ReportItems!Title.Value)',
+    '=Count(Fields!A.Value, "Orders")',
+  ])
+    assert.equal(analyze(opaque).complete, false, opaque);
+  assert.deepEqual(analyze('="ReportItems!Title.Value"').references, []);
+});

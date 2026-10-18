@@ -24,7 +24,7 @@ Add a closed `clipboard` request with `requestId`, `baseVersion`, action and act
 | Action | Input | Result and mutation |
 | --- | --- | --- |
 | Copy | Complete eligible body selection | Host validates insertion-safe capture, writes the token, then installs capture/generation. No document edit. |
-| Cut | Complete eligible selection and existing `delete-contained-content` acknowledgement | Validate capture and whole-set removal; successfully populate clipboard before rechecking source/version and removing all roots in one edit. |
+| Cut | Complete eligible selection; the explicit Cut action is the acknowledgement | Validate capture and whole-set removal; successfully populate clipboard before rechecking source/version and removing all roots in one edit. |
 | Paste | Current destination version; no user XML/manifest | Read token, resolve immutable capture, validate destination and insert complete selection in one edit. |
 | Duplicate | Complete eligible selection | Transient capture plus insertion planner; one edit, clipboard and retained capture unchanged. |
 
@@ -73,9 +73,11 @@ This project explicitly defines `{urn:rdlc-code:extension}Opaque` as an inert an
 | Same element with `target="Title"`, a nested element, a processing instruction or a different `keep` value | Unclassified semantics; refuse insertion. |
 | `Opaque` in another namespace, `x:Chart`, or `rd:DefaultName` | Not covered; refuse unless a separate reviewed classification/reference rule proves safety. |
 
+The classification is implemented only by `inertAnnotation` in `packages/validation/src/clipboard.ts`, with positive/negative regressions in `packages/validation/src/clipboard.test.ts` and refusal fixtures in `tests/fixtures/interactive/clipboard-opaque.rdlc`.
+
 Positive clipboard fixtures must isolate this classified annotation from other unclassified metadata. Existing fixtures remain preservation regressions; their presence alone does not establish insertion safety. Additional classifications require documented semantics and positive/negative regression fixtures before they can grant insertion capability.
 
-For Cut, extend existing removal guards to exclude the complete removal set, then check every removed nested identity against the remaining report. References between removed members are safe; known or opaque potential references from remaining content can block removal. Outside references to originals do not themselves block Copy when originals survive and copied dependencies are valid. Apply the existing contained-content acknowledgement once for the entire selection.
+For Cut, extend existing removal guards to exclude the complete removal set, then check every removed nested identity against the remaining report. References between removed members are safe; known references from remaining content block removal; opaque remaining content (unclassified extensions or incomplete expressions) blocks when its decoded or raw text spells a removed name. Outside references to originals do not themselves block Copy when originals survive and copied dependencies are valid. Decision 2026-10-18 (owner): Cut needs no separate checkbox; the explicit Cut command acknowledges removal of all contained XML, and one native Undo restores it. Existing authoring deletes keep their acknowledgement and fully conservative opaque guard.
 
 ## Required verification
 

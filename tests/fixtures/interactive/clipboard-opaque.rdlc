@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Synthetic clipboard refusal fixture; MIT; MS-RDL 2.16, 2.341.6, 1.7; every textbox except Plain carries an unclassified or unprovable dependency -->
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition" xmlns:rd="http://schemas.microsoft.com/SQLServer/reporting/reportdesigner" xmlns:x="urn:rdlc-code:extension">
+  <DataSets><DataSet Name="Orders"><Fields><Field Name="Label"><DataField>Label</DataField><rd:TypeName>System.String</rd:TypeName></Field><Field Name="Mystery"><DataField>Mystery</DataField></Field><Field Name="Computed"><Value>=Fields!Label.Value</Value><rd:TypeName>System.String</rd:TypeName></Field></Fields></DataSet></DataSets>
+  <ReportSections><ReportSection><Body><ReportItems>
+    <Textbox Name="Plain"><Top>12pt</Top><Left>12pt</Left><Height>24pt</Height><Width>1in</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>Plain</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="DesignerName" rd:DefaultName="DesignerName"><Top>12pt</Top><Left>96pt</Left><Height>24pt</Height><Width>1in</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>Unclassified attribute</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="Targeted"><Top>48pt</Top><Left>12pt</Left><Height>24pt</Height><Width>1in</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>Identity-bearing annotation</Value></TextRun></TextRuns></Paragraph></Paragraphs><x:Opaque keep="1" target="Plain">identity</x:Opaque></Textbox>
+    <Textbox Name="Instruction"><Top>48pt</Top><Left>96pt</Left><Height>24pt</Height><Width>1in</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>Processing instruction</Value></TextRun></TextRuns></Paragraph></Paragraphs><?designer anchor="Plain"?></Textbox>
+    <Textbox Name="Dynamic"><Top>84pt</Top><Left>12pt</Left><Height>24pt</Height><Width>1in</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>=ReportItems("Plain").Value</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="CustomCode"><Top>84pt</Top><Left>96pt</Left><Height>24pt</Height><Width>1in</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>=Code.Lookup(ReportItems!Plain.Value)</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="UnscopedField"><Top>120pt</Top><Left>12pt</Left><Height>24pt</Height><Width>1in</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>=Fields!Label.Value</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="UntypedField"><Top>120pt</Top><Left>96pt</Left><Height>24pt</Height><Width>1in</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>=Sum(Fields!Mystery.Value, "Orders")</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="CalculatedField"><Top>156pt</Top><Left>12pt</Left><Height>24pt</Height><Width>1in</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>=Sum(Fields!Computed.Value, "Orders")</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="ForeignScope"><Top>156pt</Top><Left>96pt</Left><Height>24pt</Height><Width>1in</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>=Sum(Fields!Label.Value, "Elsewhere")</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+  </ReportItems><Height>3in</Height></Body><Width>4in</Width><Page/></ReportSection></ReportSections>
+</Report>

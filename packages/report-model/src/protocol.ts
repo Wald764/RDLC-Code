@@ -9,7 +9,8 @@ import type { EditIntent, TargetMapping } from './editing.js';
 import type { Diagnostic } from './diagnostics.js';
 import type { DesignScene } from './scene.js';
 import type { ReportProjection } from './report.js';
-import { sizeUnits } from './geometry.js';
+import { sizeUnits, type SizeUnit } from './geometry.js';
+import { clipboardActions, type ClipboardAction } from './clipboard.js';
 
 export interface AuthoringState {
   readonly id: string;
@@ -50,7 +51,18 @@ export type ClientMessage =
       readonly kind: 'openSource';
       readonly version: number;
       readonly targetId?: string;
-    };
+    }
+  | ClipboardRequestMessage;
+/** Selection-bearing actions name body roots; Paste carries no XML or manifest. */
+export interface ClipboardRequestMessage {
+  readonly protocol: 1;
+  readonly kind: 'clipboard';
+  readonly requestId: string;
+  readonly baseVersion: number;
+  readonly action: ClipboardAction;
+  readonly targetIds?: readonly string[];
+  readonly unit?: SizeUnit;
+}
 export type HostMessage =
   | {
       readonly protocol: 1;
@@ -73,6 +85,22 @@ export type HostMessage =
       readonly requestId: string;
       readonly accepted: boolean;
       readonly reason: string;
+      readonly diagnostics: readonly Diagnostic[];
+    }
+  | {
+      readonly protocol: 1;
+      readonly kind: 'clipboardResult';
+      readonly requestId: string;
+      readonly action: ClipboardAction;
+      readonly version: number;
+      readonly baseVersion: number;
+      readonly accepted: boolean;
+      readonly changed: boolean;
+      readonly reason: string;
+      /** Result-version IDs of inserted roots (Paste/Duplicate). */
+      readonly inserted: readonly string[];
+      /** Base-version IDs of removed roots (Cut). */
+      readonly removed: readonly string[];
       readonly diagnostics: readonly Diagnostic[];
     }
   | {
@@ -515,6 +543,86 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
               (key) => string((value.payload as Record<string, unknown>)[key]),
             )));
       break;
+    case 'clipboard': {
+      const action = value.action as ClipboardAction;
+      const selection = action !== 'paste';
+      const ids = value.targetIds;
+      valid =
+        clipboardActions.includes(action) &&
+        keys(value, [
+          'protocol',
+          'kind',
+          'requestId',
+          'baseVersion',
+          'action',
+          ...(selection ? ['targetIds'] : []),
+          ...(action === 'paste' || action === 'duplicate' ? ['unit'] : []),
+        ]) &&
+        id(value.requestId) &&
+        version(value.baseVersion) &&
+        (!selection ||
+          (Array.isArray(ids) &&
+            ids.length >= 1 &&
+            ids.length <= 1000 &&
+            ids.every((target) =>
+              nodeId(target, value.baseVersion as number),
+            ) &&
+            new Set(ids).size === ids.length)) &&
+        ((action !== 'paste' && action !== 'duplicate') ||
+          sizeUnits.includes(value.unit as never));
+      break;
+    }
+    case 'clipboardResult': {
+      const action = value.action as ClipboardAction;
+      const list = (input: unknown, expected: number, allowed: boolean) =>
+        Array.isArray(input) &&
+        input.length <= 1000 &&
+        (allowed || input.length === 0) &&
+        input.every((entry) => nodeId(entry, expected)) &&
+        new Set(input).size === input.length;
+      valid =
+        clipboardActions.includes(action) &&
+        keys(value, [
+          'protocol',
+          'kind',
+          'requestId',
+          'action',
+          'version',
+          'baseVersion',
+          'accepted',
+          'changed',
+          'reason',
+          'inserted',
+          'removed',
+          'diagnostics',
+        ]) &&
+        id(value.requestId) &&
+        version(value.version) &&
+        version(value.baseVersion) &&
+        value.version >= value.baseVersion &&
+        typeof value.accepted === 'boolean' &&
+        typeof value.changed === 'boolean' &&
+        (!value.changed ||
+          (value.accepted && value.version > value.baseVersion)) &&
+        (!value.accepted ||
+          value.changed ||
+          value.version === value.baseVersion) &&
+        (action !== 'copy' || !value.changed) &&
+        list(
+          value.inserted,
+          value.version,
+          value.changed === true &&
+            (action === 'paste' || action === 'duplicate'),
+        ) &&
+        list(
+          value.removed,
+          value.baseVersion,
+          value.changed === true && action === 'cut',
+        ) &&
+        string(value.reason) &&
+        diagnostics(value.diagnostics);
+      break;
+    }
     case 'openSource':
       valid =
         keys(value, ['protocol', 'kind', 'version', 'targetId']) &&

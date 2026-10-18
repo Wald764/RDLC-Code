@@ -449,3 +449,132 @@ test('preservation-only source targets are navigable but never editable', () => 
     false,
   );
 });
+
+test('clipboard requests are closed per action and never carry XML', () => {
+  const base = {
+    protocol: 1,
+    kind: 'clipboard',
+    requestId: 'c1',
+    baseVersion: 2,
+  };
+  const valid = [
+    { ...base, action: 'copy', targetIds: ['2:3', '2:4'] },
+    { ...base, action: 'cut', targetIds: ['2:3'] },
+    { ...base, action: 'paste', unit: 'mm' },
+    { ...base, action: 'duplicate', targetIds: ['2:3'], unit: 'pt' },
+  ];
+  for (const message of valid)
+    assert.ok(validateMessage(message), message.action);
+  for (const message of [
+    { ...base, action: 'copy', targetIds: [] },
+    { ...base, action: 'copy', targetIds: ['2:3', '2:3'] },
+    { ...base, action: 'copy', targetIds: ['1:3'] },
+    { ...base, action: 'copy', targetIds: ['2:3'], unit: 'pt' },
+    { ...base, action: 'cut' },
+    { ...base, action: 'cut', targetIds: ['2:3'], confirm: 'yes' },
+    { ...base, action: 'paste' },
+    { ...base, action: 'paste', unit: 'px' },
+    { ...base, action: 'paste', unit: 'pt', xml: '<Textbox/>' },
+    { ...base, action: 'paste', unit: 'pt', targetIds: ['2:3'] },
+    { ...base, action: 'paste', unit: 'pt', capture: 'id' },
+    { ...base, action: 'move', targetIds: ['2:3'] },
+    {
+      ...base,
+      action: 'copy',
+      targetIds: Array.from({ length: 1001 }, (_, i) => `2:${i + 1}`),
+    },
+  ])
+    assert.equal(
+      validateMessage(message),
+      null,
+      JSON.stringify(message).slice(0, 80),
+    );
+});
+
+test('clipboard results correlate versions, mutation status and inserted/removed IDs', () => {
+  const result = {
+    protocol: 1,
+    kind: 'clipboardResult',
+    requestId: 'c1',
+    action: 'paste',
+    baseVersion: 2,
+    version: 3,
+    accepted: true,
+    changed: true,
+    reason: 'APPLIED',
+    inserted: ['3:40'],
+    removed: [],
+    diagnostics: [],
+  };
+  assert.ok(validateMessage(result));
+  assert.ok(
+    validateMessage({
+      ...result,
+      action: 'copy',
+      version: 2,
+      changed: false,
+      inserted: [],
+      reason: 'COPIED',
+    }),
+  );
+  assert.ok(
+    validateMessage({
+      ...result,
+      action: 'cut',
+      inserted: [],
+      removed: ['2:5'],
+    }),
+  );
+  for (const forged of [
+    { ...result, action: 'copy' },
+    { ...result, inserted: ['2:40'] },
+    { ...result, removed: ['2:5'] },
+    { ...result, action: 'cut', removed: ['3:5'], inserted: [] },
+    { ...result, changed: false },
+    { ...result, accepted: false },
+    { ...result, version: 1 },
+    { ...result, xml: '<Textbox/>' },
+  ])
+    assert.equal(validateMessage(forged), null);
+});
+
+test('host binding accepts clipboard requests only for current targets and capability', () => {
+  const binding = new DocumentBinding(
+    'file:///a.rdlc',
+    2,
+    ['2:3'],
+    ['clipboard'],
+  );
+  binding.receive({ protocol: 1, kind: 'ready' });
+  const copy = {
+    protocol: 1,
+    kind: 'clipboard',
+    requestId: 'k1',
+    baseVersion: 2,
+    action: 'copy',
+    targetIds: ['2:3'],
+  };
+  assert.ok(binding.receive(copy).ok);
+  assert.equal(binding.receive(copy).ok, false, 'duplicate request');
+  assert.equal(
+    binding.receive({ ...copy, requestId: 'k2', targetIds: ['2:9'] }).ok,
+    false,
+  );
+  assert.equal(
+    binding.receive({
+      ...copy,
+      requestId: 'k3',
+      baseVersion: 1,
+      targetIds: ['1:3'],
+    }).ok,
+    false,
+  );
+  const disabled = new DocumentBinding(
+    'file:///a.rdlc',
+    2,
+    ['2:3'],
+    ['layout'],
+  );
+  disabled.receive({ protocol: 1, kind: 'ready' });
+  assert.equal(disabled.receive(copy).ok, false);
+});

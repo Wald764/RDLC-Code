@@ -10,5 +10,8 @@
     <Textbox Name="OutsideConsumer"><Top>48pt</Top><Left>180pt</Left><Height>24pt</Height><Width>144pt</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>=ReportItems!Title.Value</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
     <Textbox Name="DatasetTotal"><Top>120pt</Top><Left>12pt</Left><Height>24pt</Height><Width>144pt</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>=Sum(Fields!Amount.Value, &quot;Orders&quot;)</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
     <Textbox Name="LiteralLookalike"><Top>156pt</Top><Left>12pt</Left><Height>24pt</Height><Width>144pt</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>="ReportItems!Title.Value"</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="Café"><Top>192pt</Top><Left>12pt</Left><Height>24pt</Height><Width>144pt</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>Unicode identity</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="Référence"><Top>228pt</Top><Left>12pt</Left><Height>24pt</Height><Width>144pt</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value><![CDATA[=ReportItems!Café.Value & "<cdata>"]]></Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+    <Textbox Name="EntityReference"><Top>192pt</Top><Left>180pt</Left><Height>24pt</Height><Width>144pt</Width><Visibility><Hidden>true</Hidden><ToggleItem>Title</ToggleItem></Visibility><Paragraphs><Paragraph><TextRuns><TextRun><Value>=ReportItems!&#84;itle.Value &amp; "!"</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
   </ReportItems><Height>4in</Height></Body><Width>6.5in</Width><Page/></ReportSection></ReportSections>
 </Report>

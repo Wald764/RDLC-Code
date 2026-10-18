@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { DocumentSnapshot } from '@rdlc/report-model/document';
 import type { ClientMessage, HostMessage } from '@rdlc/report-model/protocol';
+import type { PatchPlan } from '@rdlc/report-model/editing';
 import type { ReportProjection } from '@rdlc/report-model/report';
 import type { XmlNode } from '@rdlc/report-model/syntax';
 import { parse } from '@rdlc/xml-parser/parser';
@@ -8,6 +9,10 @@ import { projectReport } from '@rdlc/xml-parser/project-report';
 import { renderScene } from '@rdlc/renderer/render';
 import { DocumentBinding } from './protocol.js';
 import { planTextboxIntent, correlateTargets } from './edit-controller.js';
+import { PasteCounter, runClipboard, WindowClipboard } from './clipboard.js';
+
+/** One retained capture per extension host, i.e. per VS Code window. */
+export const windowClipboard = new WindowClipboard(vscode.env.clipboard);
 
 function nodes(node: XmlNode | null): XmlNode[] {
   return node ? [node, ...node.children.flatMap(nodes)] : [];
@@ -33,11 +38,14 @@ export class DocumentSession {
   private readonly binding: DocumentBinding;
   private readonly emitter = new vscode.EventEmitter<HostMessage>();
   private readonly subscriptions: vscode.Disposable[] = [];
+  /** Successful pastes in this destination view, per capture generation. */
+  private readonly pastes = new PasteCounter();
   readonly onMessage = this.emitter.event;
 
   constructor(
     private readonly document: vscode.TextDocument,
     private readonly applyWorkspaceEdit = vscode.workspace.applyEdit,
+    private readonly clipboard = windowClipboard,
   ) {
     const current = this.evaluate();
     this.binding = new DocumentBinding(
@@ -86,7 +94,7 @@ export class DocumentSession {
       sourceIds: nodes(syntax.root).map((node) => node.id),
       capabilities:
         projection.status === 'editable'
-          ? ['setProperty', 'author', 'layout']
+          ? ['setProperty', 'author', 'layout', 'clipboard']
           : [],
     };
   }
@@ -200,6 +208,10 @@ export class DocumentSession {
       await this.openSource(message);
       return;
     }
+    if (message.kind === 'clipboard') {
+      await this.runClipboard(message);
+      return;
+    }
     await this.applyEdit(message);
   }
 
@@ -283,7 +295,46 @@ export class DocumentSession {
       await this.publish();
       return;
     }
-    const edits = outcome.plan.patches.map((patch) =>
+    const result = await this.commit(
+      outcome.plan,
+      outcome.candidate,
+      message.baseVersion,
+    );
+    this.emitter.fire({
+      protocol: 1,
+      kind: 'editResult',
+      baseVersion: message.baseVersion,
+      changed: result.accepted,
+      mappings: result.accepted
+        ? correlateTargets(
+            current.syntax,
+            result.syntax,
+            outcome.plan,
+            message.operation === 'layout'
+              ? message.payload.targetIds
+              : [message.targetId],
+          )
+        : [],
+      version: result.version,
+      requestId: message.requestId,
+      accepted: result.accepted,
+      reason: result.accepted ? 'APPLIED' : result.reason,
+      diagnostics: [],
+    });
+  }
+
+  /** One native WorkspaceEdit for a verified candidate; publishes before reporting. */
+  private async commit(
+    plan: PatchPlan,
+    candidate: string,
+    baseVersion: number,
+  ): Promise<{
+    accepted: boolean;
+    reason: string;
+    version: number;
+    syntax: ReturnType<typeof parse>;
+  }> {
+    const edits = plan.patches.map((patch) =>
       vscode.TextEdit.replace(
         new vscode.Range(
           this.document.positionAt(patch.start),
@@ -294,21 +345,15 @@ export class DocumentSession {
     );
     const workspaceEdit = new vscode.WorkspaceEdit();
     workspaceEdit.set(this.document.uri, edits);
-    if (this.document.version !== message.baseVersion || this.disposed) {
-      this.emitter.fire({
-        protocol: 1,
-        kind: 'editResult',
-        baseVersion: message.baseVersion,
-        changed: false,
-        mappings: [],
-        version: this.document.version,
-        requestId: message.requestId,
+    if (this.document.version !== baseVersion || this.disposed) {
+      await this.publish();
+      const actual = this.evaluate();
+      return {
         accepted: false,
         reason: 'STALE_EDIT',
-        diagnostics: [],
-      });
-      await this.publish();
-      return;
+        version: actual.snapshot.version,
+        syntax: actual.syntax,
+      };
     }
     let applied = false;
     let reason = 'REJECTED_BY_HOST';
@@ -327,32 +372,56 @@ export class DocumentSession {
     const accepted =
       applied &&
       !this.document.isClosed &&
-      actual.snapshot.version === message.baseVersion + 1 &&
-      actual.snapshot.source === outcome.candidate;
+      actual.snapshot.version === baseVersion + 1 &&
+      actual.snapshot.source === candidate;
     if (applied && !accepted) reason = 'DOCUMENT_CHANGED_DURING_APPLY';
     // Bind the new version before reporting success so the next intent cannot race the change event.
     this.sync();
     await this.publish();
+    return {
+      accepted,
+      reason,
+      version: actual.snapshot.version,
+      syntax: actual.syntax,
+    };
+  }
+
+  private async runClipboard(
+    message: ClientMessage & { kind: 'clipboard' },
+  ): Promise<void> {
+    const result = await runClipboard(
+      this.clipboard,
+      {
+        version: () => this.document.version,
+        evaluate: () => this.evaluate(),
+        commit: async (plan, candidate, baseVersion, starts) => {
+          const committed = await this.commit(plan, candidate, baseVersion);
+          const inserted = nodes(committed.syntax.root)
+            .filter((node) => starts.includes(node.range.start))
+            .map((node) => node.id);
+          return { ...committed, inserted };
+        },
+      },
+      this.pastes,
+      message,
+    );
+    if (!result.changed) await this.publish();
     this.emitter.fire({
       protocol: 1,
-      kind: 'editResult',
-      baseVersion: message.baseVersion,
-      changed: accepted,
-      mappings: accepted
-        ? correlateTargets(
-            current.syntax,
-            actual.syntax,
-            outcome.plan,
-            message.operation === 'layout'
-              ? message.payload.targetIds
-              : [message.targetId],
-          )
-        : [],
-      version: actual.snapshot.version,
+      kind: 'clipboardResult',
       requestId: message.requestId,
-      accepted,
-      reason: accepted ? 'APPLIED' : reason,
-      diagnostics: [],
+      action: message.action,
+      baseVersion: message.baseVersion,
+      version:
+        result.accepted && !result.changed
+          ? message.baseVersion
+          : result.version,
+      accepted: result.accepted,
+      changed: result.changed,
+      reason: result.reason,
+      inserted: result.inserted,
+      removed: result.removed,
+      diagnostics: result.diagnostics,
     });
   }
 

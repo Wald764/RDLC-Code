@@ -2,6 +2,7 @@ import { DestroyRef, inject, Injectable, signal } from '@angular/core';
 import {
   validateMessage,
   type AuthoringState,
+  type ClipboardRequestMessage,
 } from '@rdlc/report-model/protocol';
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 import type { EditIntent, TargetMapping } from '@rdlc/report-model/editing';
@@ -25,7 +26,13 @@ export interface EditOutcome {
   readonly accepted: boolean;
   readonly reason: string;
   readonly diagnostics: readonly Diagnostic[];
+  /** Result-version IDs of roots inserted by Paste/Duplicate. */
+  readonly inserted?: readonly string[];
 }
+export type ClipboardRequest = Omit<
+  ClipboardRequestMessage,
+  'protocol' | 'kind'
+>;
 
 interface VsCodeApi {
   postMessage(message: unknown): void;
@@ -101,7 +108,10 @@ export class HostAdapter {
         `Blocked: ${message.reason}. Refreshing the document; the edit will not be retried.`,
       );
       this.post({ protocol: 1, kind: 'ready' });
-    } else if (message.kind === 'editResult') {
+    } else if (
+      message.kind === 'editResult' ||
+      message.kind === 'clipboardResult'
+    ) {
       const pending = this.pending();
       if (message.version < (this.snapshot()?.version ?? 0)) {
         if (pending?.requestId === message.requestId) {
@@ -113,15 +123,19 @@ export class HostAdapter {
         }
         return;
       }
+      const clipboard = message.kind === 'clipboardResult';
       const result: EditOutcome = {
         baseVersion: message.baseVersion,
         version: message.version,
         changed: message.changed,
-        mappings: message.mappings,
+        mappings: clipboard
+          ? message.removed.map((sourceId) => ({ sourceId, resultId: null }))
+          : message.mappings,
         requestId: message.requestId,
         accepted: message.accepted,
         reason: message.reason,
         diagnostics: message.diagnostics,
+        ...(clipboard ? { inserted: message.inserted } : {}),
       };
       if (pending && pending.requestId !== message.requestId) return;
       this.outcome.set(result);
@@ -129,6 +143,8 @@ export class HostAdapter {
         this.notice.set(
           `Not applied (${message.reason}); the current accepted document is shown and the request will not be retried.`,
         );
+      else if (pending && clipboard && message.action === 'copy')
+        this.notice.set('Copied to the clipboard; the document is unchanged.');
       if (pending) {
         this.pending.set({ ...pending, result });
         this.reconcile();
@@ -151,6 +167,25 @@ export class HostAdapter {
     });
     this.outcome.set(null);
     this.post({ protocol: 1, kind: 'edit', ...intent });
+    return true;
+  }
+
+  /** Clipboard actions share the edit guards; the host owns capture and native I/O. */
+  sendClipboard(request: ClipboardRequest): boolean {
+    const snapshot = this.snapshot();
+    if (
+      this.blocked ||
+      this.pending() !== null ||
+      snapshot?.status !== 'editable' ||
+      request.baseVersion !== snapshot.version
+    )
+      return false;
+    this.pending.set({
+      requestId: request.requestId,
+      baseVersion: request.baseVersion,
+    });
+    this.outcome.set(null);
+    this.post({ protocol: 1, kind: 'clipboard', ...request });
     return true;
   }
 

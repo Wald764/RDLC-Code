@@ -48,7 +48,10 @@ export class DocumentBinding {
       },
     });
     const message = validateMessage(input);
-    if (!message || !['ready', 'edit', 'openSource'].includes(message.kind))
+    if (
+      !message ||
+      !['ready', 'edit', 'openSource', 'clipboard'].includes(message.kind)
+    )
       return reject('Invalid client envelope or unsupported protocol');
     if (message.kind === 'ready') {
       this.ready = true;
@@ -64,17 +67,24 @@ export class DocumentBinding {
         return reject('Stale or foreign source target');
       return { ok: true, message };
     }
-    if (message.kind !== 'edit') return reject('Host-only message');
+    if (message.kind !== 'edit' && message.kind !== 'clipboard')
+      return reject('Host-only message');
     const targets =
-      message.operation === 'layout'
-        ? message.payload.targetIds
-        : [message.targetId];
+      message.kind === 'clipboard'
+        ? (message.targetIds ?? [])
+        : message.operation === 'layout'
+          ? message.payload.targetIds
+          : [message.targetId];
     if (
       message.baseVersion !== this.version ||
       targets.some((id) => !this.ids.has(id))
     )
       return reject('Stale edit or foreign target');
-    if (!this.capabilities.has(message.operation))
+    if (
+      !this.capabilities.has(
+        message.kind === 'clipboard' ? 'clipboard' : message.operation,
+      )
+    )
       return reject('Operation capability is disabled');
     // shortcut: retain at most 1,024 request IDs; upgrade replay protection before long editing sessions.
     if (this.requests.has(message.requestId) || this.requests.size >= 1024)

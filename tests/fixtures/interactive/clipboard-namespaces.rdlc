@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Synthetic clipboard namespace fixture; MIT; MS-RDL 2.16, 1.7; prefixed RDL, local default rebinding and a differently prefixed classified annotation -->
+<r:Report xmlns:r="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition">
+  <r:ReportSections><r:ReportSection><r:Body><r:ReportItems>
+    <r:Textbox Name="Prefixed"><r:Top>12pt</r:Top><r:Left>12pt</r:Left><r:Height>24pt</r:Height><r:Paragraphs><r:Paragraph><r:TextRuns><r:TextRun><r:Value>Prefixed &amp; derived width</r:Value></r:TextRun></r:TextRuns></r:Paragraph></r:Paragraphs><e:Opaque xmlns:e="urn:rdlc-code:extension" keep='1'>local <![CDATA[binding]]></e:Opaque></r:Textbox>
+    <Textbox xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition" Name="Rebound"><Top>48pt</Top><Left>12pt</Left><Height>24pt</Height><Width>2in</Width><Paragraphs><Paragraph><TextRuns><TextRun><Value>=ReportItems!Prefixed.Value</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox>
+  </r:ReportItems><r:Height>3in</r:Height></r:Body><r:Width>4in</r:Width><r:Page/></r:ReportSection></r:ReportSections>
+</r:Report>

@@ -185,6 +185,7 @@ export class EditorComponent {
   );
   /** A new action held back until the author applies, discards or cancels. */
   readonly conflict = signal<{ run: () => void } | null>(null);
+  private revealed: string | null = null;
   private readonly originals = new WeakMap<DraftControl, string>();
   private pointerGuard = false;
   private submitted: EventTarget | null = null;
@@ -199,6 +200,16 @@ export class EditorComponent {
       result.baseVersion === selection.version &&
       result.version === version
     ) {
+      // Pasted or duplicated copies replace the selection.
+      if (result.inserted?.length)
+        return {
+          selection: {
+            ...emptySelection(version),
+            bodyItemIds: result.inserted,
+            primaryId: result.inserted.at(-1)!,
+          },
+          lost: false,
+        };
       return {
         selection: mapSelection(selection, version!, result.mappings),
         lost: false,
@@ -326,6 +337,20 @@ export class EditorComponent {
         this.cancelGesture('The document changed; the marquee was cancelled.');
     });
     effect(() => {
+      // Reveal inserted copies once their accepted snapshot is shown.
+      const outcome = this.host.outcome();
+      if (
+        outcome?.inserted?.length &&
+        outcome.requestId !== this.revealed &&
+        this.host.snapshot()?.version === outcome.version
+      ) {
+        this.revealed = outcome.requestId;
+        afterNextRender(() => this.revealSelection(), {
+          injector: this.injector,
+        });
+      }
+    });
+    effect(() => {
       const accepted = this.acceptedSelection();
       const snapshot = this.host.snapshot();
       const selection = this.selection();
@@ -423,6 +448,51 @@ export class EditorComponent {
       operation: 'layout',
       payload,
     });
+  }
+
+  /** Host-authoritative Copy/Cut/Paste/Duplicate of complete body selections. */
+  clipboard(action: 'copy' | 'cut' | 'paste' | 'duplicate'): void {
+    const snapshot = this.host.snapshot();
+    if (
+      !snapshot ||
+      snapshot.status !== 'editable' ||
+      this.host.pending() ||
+      this.held(() => this.clipboard(action))
+    )
+      return;
+    this.cancelGesture();
+    const ids = this.selectedIds();
+    const common = {
+      requestId: crypto.randomUUID(),
+      baseVersion: snapshot.version,
+    };
+    if (action === 'paste') {
+      this.host.sendClipboard({ ...common, action, unit: this.view().unit });
+      return;
+    }
+    if (!ids.length) {
+      this.gestureNotice.set(
+        this.acceptedSelection().cellTargetId
+          ? 'Table cells cannot be copied separately; select the whole table.'
+          : 'Select one or more body items first.',
+      );
+      return;
+    }
+    const items = ids.map((id) => this.scene()?.items.find((i) => i.id === id));
+    const locked = items.findIndex((item) => !item || item.placeholder);
+    if (locked >= 0) {
+      this.gestureNotice.set(
+        `${items[locked]?.label ?? ids[locked]} is preservation-only and cannot be copied; inspect it in source.`,
+      );
+      return;
+    }
+    this.gestureNotice.set('');
+    // An explicit Cut is its own acknowledgement; one native Undo restores it.
+    this.host.sendClipboard(
+      action === 'copy' || action === 'cut'
+        ? { ...common, action, targetIds: ids }
+        : { ...common, action, targetIds: ids, unit: this.view().unit },
+    );
   }
 
   startMarquee(event: PointerEvent): void {
@@ -785,6 +855,17 @@ export class EditorComponent {
       this.nudgeBy(arrow[0], arrow[1], event.shiftKey ? 10 : 1);
       return;
     }
+    // Ctrl/Cmd+C/X/V arrive as clipboard events (see `clipboardEvent`).
+    if (
+      this.canvasShortcut(event.target) &&
+      (event.ctrlKey || event.metaKey) &&
+      !event.altKey &&
+      event.key.toLowerCase() === 'd'
+    ) {
+      event.preventDefault();
+      this.clipboard('duplicate');
+      return;
+    }
     if (
       !editable &&
       (event.ctrlKey || event.metaKey) &&
@@ -802,6 +883,36 @@ export class EditorComponent {
         ['z', 'y'].includes(event.key.toLowerCase()))
     )
       this.cancelGesture();
+  }
+
+  /**
+   * VS Code's Electron webview cancels Ctrl/Cmd+C/X/V keydown and replays them as
+   * execCommand, so the clipboard events are the only reliable signal.
+   */
+  @HostListener('document:copy', ['$event'])
+  @HostListener('document:cut', ['$event'])
+  @HostListener('document:paste', ['$event'])
+  clipboardEvent(event: Event): void {
+    if (!this.canvasShortcut(event.target)) return;
+    event.preventDefault();
+    this.clipboard(event.type as 'copy' | 'cut' | 'paste');
+  }
+
+  /** Canvas focus, or focus lost to the body after the scene was re-rendered; never form controls. */
+  private canvasShortcut(target: EventTarget | null): boolean {
+    if (!(target instanceof Node)) return false;
+    if (
+      target instanceof HTMLElement &&
+      target.closest('input, textarea, select, [contenteditable="true"]')
+    )
+      return false;
+    const document = target.ownerDocument ?? (target as Document);
+    return (
+      !!this.viewport()?.nativeElement.contains(target) ||
+      target === document.body ||
+      target === document.documentElement ||
+      target === document
+    );
   }
 
   @HostListener('window:keyup', ['$event'])

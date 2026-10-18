@@ -1261,7 +1261,7 @@ describe('navigation, placement and keyboard nudges', () => {
     );
     expect(m.component.nudge()).toBeNull();
     expect(
-      key(m.viewport, 'keydown', { key: 'c', ctrlKey: true }).defaultPrevented,
+      key(input, 'keydown', { key: 'c', ctrlKey: true }).defaultPrevented,
     ).toBe(false);
     expect(
       key(m.viewport, 'keydown', { key: 'ArrowRight', ctrlKey: true })
@@ -1459,4 +1459,232 @@ describe('real pointer event dispatch', () => {
       }),
     ]);
   });
+});
+
+describe('clipboard reuse', () => {
+  beforeEach(() => TestBed.resetTestingModule());
+  afterEach(() => vi.restoreAllMocks());
+
+  async function mounted(message: HostMessage = draftSnapshot()) {
+    const m = mount();
+    m.host.ingest(message);
+    await m.settle();
+    const component = m.fixture.componentInstance;
+    const viewport = m.element.querySelector<HTMLElement>('.viewport')!;
+    return { ...m, component, viewport };
+  }
+  const keydown = (target: EventTarget, init: KeyboardEventInit) => {
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    target.dispatchEvent(event);
+    return event;
+  };
+  /** Ctrl/Cmd+C/X/V reach the webview as clipboard events (VS Code replays them via execCommand). */
+  const clipboardKeys: Readonly<Record<string, string>> = {
+    c: 'copy',
+    x: 'cut',
+    v: 'paste',
+  };
+  const key = (target: EventTarget, init: KeyboardEventInit) => {
+    const type = clipboardKeys[init.key ?? ''];
+    if (!type) return keydown(target, init);
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    target.dispatchEvent(event);
+    return event;
+  };
+  const requests = (host: HostAdapter) =>
+    host.sent().filter((m) => (m as { kind: string }).kind === 'clipboard') as {
+      action: string;
+      targetIds?: string[];
+      unit?: string;
+      requestId: string;
+      baseVersion: number;
+    }[];
+  const result = (
+    request: { requestId: string; action: string },
+    patch: Record<string, unknown>,
+  ) => ({
+    protocol: 1,
+    kind: 'clipboardResult',
+    requestId: request.requestId,
+    action: request.action,
+    baseVersion: 2,
+    version: 3,
+    accepted: true,
+    changed: true,
+    reason: 'APPLIED',
+    inserted: [],
+    removed: [],
+    diagnostics: [],
+    ...patch,
+  });
+
+  it('canvas shortcuts send host requests; form shortcuts stay native', async () => {
+    const m = await mounted();
+    m.component.select(0);
+    await m.settle();
+    const input = m.element.querySelector<HTMLInputElement>(
+      '[data-property="name"]',
+    )!;
+    for (const k of ['c', 'x', 'v', 'd'])
+      expect(key(input, { key: k, ctrlKey: true }).defaultPrevented).toBe(
+        false,
+      );
+    expect(requests(m.host)).toHaveLength(0);
+    expect(key(m.viewport, { key: 'c', metaKey: true }).defaultPrevented).toBe(
+      true,
+    );
+    const [copy] = requests(m.host);
+    expect(copy).toMatchObject({
+      action: 'copy',
+      targetIds: ['2:3'],
+      baseVersion: 2,
+    });
+    expect(copy!.unit).toBeUndefined();
+    m.host.ingest(
+      result(copy!, { version: 2, changed: false, reason: 'COPIED' }),
+    );
+    await m.settle();
+    expect(m.host.pending()).toBeNull();
+    expect(m.host.notice()).toContain('Copied');
+    // A raw keydown alone never triggers twice; focus lost to the body still pastes.
+    keydown(m.viewport, { key: 'v', ctrlKey: true });
+    expect(requests(m.host)).toHaveLength(1);
+    key(document.body, { key: 'v' });
+    expect(requests(m.host)).toHaveLength(2);
+    m.host.ingest(
+      result(requests(m.host)[1]!, {
+        accepted: false,
+        changed: false,
+        version: 2,
+        reason: 'CLIPBOARD_UNAVAILABLE',
+      }),
+    );
+    await m.settle();
+    expect(m.component.selectedIds()).toEqual(['2:3']);
+    key(m.viewport, { key: 'v', ctrlKey: true });
+    const paste = requests(m.host).at(-1)!;
+    // The host owns offsets (10pt, 20pt, ...); paste carries only the display unit.
+    expect(paste).toEqual({
+      protocol: 1,
+      kind: 'clipboard',
+      requestId: paste.requestId,
+      baseVersion: 2,
+      action: 'paste',
+      unit: 'pt',
+    });
+  });
+
+  it('an explicit cut needs no extra acknowledgement', async () => {
+    const m = await mounted();
+    m.component.select(0);
+    await m.settle();
+    key(m.viewport, { key: 'x', ctrlKey: true });
+    const [cut] = requests(m.host);
+    expect(cut).toEqual({
+      protocol: 1,
+      kind: 'clipboard',
+      requestId: cut!.requestId,
+      baseVersion: 2,
+      action: 'cut',
+      targetIds: ['2:3'],
+    });
+    expect(m.element.querySelector('[data-cut-confirm]')).toBeNull();
+  });
+
+  it('refuses locked placeholders, pending and draft conflicts without requests', async () => {
+    const m = await mounted();
+    m.component.selectAll();
+    await m.settle();
+    m.component.clipboard('copy');
+    expect(m.component.gestureNotice()).toContain('preservation-only');
+    m.component.clearSelection();
+    m.component.clipboard('duplicate');
+    expect(m.component.gestureNotice()).toContain('Select one or more');
+    expect(requests(m.host)).toHaveLength(0);
+    m.component.select(0);
+    await m.settle();
+    m.component.clipboard('duplicate');
+    expect(requests(m.host)).toHaveLength(1);
+    m.component.clipboard('copy');
+    key(m.viewport, { key: 'v', ctrlKey: true });
+    expect(requests(m.host)).toHaveLength(1);
+    m.host.ingest(
+      result(requests(m.host)[0]!, {
+        accepted: false,
+        changed: false,
+        version: 2,
+        reason: 'PASTE_REFUSED',
+      }),
+    );
+    await m.settle();
+    expect(m.host.pending()).toBeNull();
+    const input = m.element.querySelector<HTMLInputElement>(
+      '[data-property="name"]',
+    )!;
+    input.value = 'Draft';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await m.settle();
+    key(m.viewport, { key: 'd', ctrlKey: true });
+    expect(requests(m.host)).toHaveLength(1);
+    expect(m.component.conflict()).not.toBeNull();
+  });
+
+  it('a table cell selection cannot be copied separately', async () => {
+    const message = draftSnapshot() as Extract<
+      HostMessage,
+      { kind: 'snapshot' }
+    >;
+    const items = message.scene!.items;
+    const table = {
+      ...items[0]!,
+      id: '2:7',
+      kind: 'table' as const,
+      name: 'T',
+      label: 'T',
+    };
+    const cell = {
+      ...items[0]!,
+      id: '2:8',
+      kind: 'cell' as const,
+      parentTableId: '2:7',
+      name: 'C',
+      label: 'C',
+      bounds: { left: 30, top: 30, width: 20, height: 10 },
+    };
+    const m = await mounted({
+      ...message,
+      scene: { ...message.scene!, items: [...items, table, cell] },
+    });
+    m.component.select(5);
+    await m.settle();
+    m.component.clipboard('copy');
+    expect(m.component.gestureNotice()).toContain('whole table');
+    expect(requests(m.host)).toHaveLength(0);
+  });
+
+  for (const snapshotFirst of [true, false])
+    it(`selects and reveals inserted copies (${snapshotFirst ? 'snapshot' : 'result'} first)`, async () => {
+      const m = await mounted();
+      m.component.select(0);
+      await m.settle();
+      const reveal = vi.spyOn(m.component, 'revealSelection');
+      m.component.clipboard('duplicate');
+      const [duplicate] = requests(m.host);
+      expect(duplicate).toMatchObject({ action: 'duplicate', unit: 'pt' });
+      const next = draftSnapshot(3);
+      const outcome = result(duplicate!, { inserted: ['3:4'] });
+      if (snapshotFirst) m.host.ingest(next);
+      m.host.ingest(outcome);
+      if (!snapshotFirst) m.host.ingest(next);
+      await m.settle();
+      await m.settle();
+      expect(m.component.selectedIds()).toEqual(['3:4']);
+      expect(m.component.primary()?.id).toBe('3:4');
+      expect(reveal).toHaveBeenCalledTimes(1);
+      expect(m.host.pending()).toBeNull();
+    });
 });

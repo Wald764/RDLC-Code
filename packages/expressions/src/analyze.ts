@@ -75,6 +75,7 @@ export function analyze(
         kind: is(i, 'Fields') ? 'field' : 'report-item',
         name: name.text,
         range: { start: tokens[i]!.start, end: tokens[i + 4]!.end },
+        nameRange: { start: name.start, end: name.end },
         confidence: 'static',
       });
   }
@@ -116,10 +117,15 @@ export function analyze(
       if (!expression(depth + 1) || !is(cursor, ',')) return false;
       const scope = tokens[++cursor];
       if (scope?.kind !== 'string' || !scope.text) return false;
+      // A doubled quote inside the literal has no single exact operand range.
+      const exact = text.slice(scope.start + 1, scope.end - 1) === scope.text;
       references.push({
         kind: groups.includes(scope.text) ? 'group' : 'dataset',
         name: scope.text,
         range: { start: scope.start, end: scope.end },
+        ...(exact
+          ? { nameRange: { start: scope.start + 1, end: scope.end - 1 } }
+          : {}),
         confidence: 'static',
       });
       cursor++;

@@ -73,6 +73,34 @@
       >
         Clear selection
       </button>
+      <button
+        type="button"
+        (click)="clipboard('copy')"
+        [disabled]="!!host.pending() || !selectedIds().length"
+      >
+        Copy
+      </button>
+      <button
+        type="button"
+        (click)="clipboard('cut')"
+        [disabled]="!!host.pending() || !selectedIds().length"
+      >
+        Cut
+      </button>
+      <button
+        type="button"
+        (click)="clipboard('paste')"
+        [disabled]="!!host.pending()"
+      >
+        Paste
+      </button>
+      <button
+        type="button"
+        (click)="clipboard('duplicate')"
+        [disabled]="!!host.pending() || !selectedIds().length"
+      >
+        Duplicate
+      </button>
       @if (selectedIds().length > 1) {
         @for (mode of alignModes; track mode) {
           <button
@@ -185,7 +213,7 @@
       #viewport
       tabindex="0"
       role="group"
-      aria-label="Authoring layout canvas — not runtime pagination or a data preview. Arrow keys nudge the selection 1pt, Shift+arrow 10pt."
+      aria-label="Authoring layout canvas — not runtime pagination or a data preview. Arrow keys nudge the selection 1pt, Shift+arrow 10pt. Ctrl or Cmd with C, X, V or D copies, cuts, pastes or duplicates."
       data-conflicts
       (scroll)="onScroll()"
       (wheel)="wheel($event)"

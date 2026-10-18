@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { RdlcEditorProvider } from './editor-provider.js';
+import { windowClipboard } from './document-session.js';
 import { newReport } from './commands/new-report.js';
 import {
   openActiveDesigner,
@@ -22,5 +23,7 @@ export function activate(context: vscode.ExtensionContext): void {
       'rdlcCode.openDesigner',
       openActiveDesigner,
     ),
+    // Captures never outlive the window session or reach disk.
+    { dispose: () => windowClipboard.dispose() },
   );
 }

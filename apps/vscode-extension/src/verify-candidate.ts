@@ -7,6 +7,10 @@ import { projectReport } from '@rdlc/xml-parser/project-report';
 import { acceptedGeometry, type LayoutChange } from '@rdlc/validation/layout';
 import { toPoints } from '@rdlc/report-model/geometry';
 import { RDL_2016 } from '@rdlc/report-model/report';
+import type { CaptureRoot } from '@rdlc/report-model/clipboard';
+import type { Bounds } from '@rdlc/report-model/scene';
+import { analyze } from '@rdlc/expressions/analyze';
+import { inertAnnotation } from '@rdlc/validation/clipboard';
 
 /** Independently prove geometry and byte-exact non-geometry content, even in edited parents. */
 export function verifyLayoutCandidate(
@@ -250,4 +254,201 @@ export function verifyCandidate(
       'Candidate does not satisfy intended change and authored validation',
     );
   return { source, syntax };
+}
+
+export interface InsertedExpectation {
+  readonly root: CaptureRoot;
+  /** Candidate offset of the inserted root. */
+  readonly start: number;
+  readonly fragment: string;
+  readonly bounds: Bounds;
+}
+
+/**
+ * Semantic proof for clipboard candidates: each inserted subtree equals its capture
+ * transformation in expanded names, namespace meaning, identities, references and
+ * geometry; removed roots are gone; names stay unique.
+ */
+export function verifyClipboardCandidate(
+  original: XmlSyntaxDocument,
+  candidate: XmlSyntaxDocument,
+  expected: {
+    readonly inserted: readonly InsertedExpectation[];
+    readonly names: ReadonlyMap<string, string>;
+    readonly removed: readonly XmlNode[];
+  },
+): boolean {
+  const before = projectReport(original),
+    after = projectReport(candidate);
+  if (after.status !== 'editable' || !after.section) return false;
+  const rename = (name: string) => expected.names.get(name) ?? name;
+  const byStart = new Map<number, XmlNode>();
+  const index = (node: XmlNode) => {
+    byStart.set(node.range.start, node);
+    node.children.forEach(index);
+  };
+  if (candidate.root) index(candidate.root);
+  const body = after.section.node.children.find(
+    (c) =>
+      c.expandedName.namespaceUri === RDL_2016 &&
+      c.expandedName.localName === 'Body',
+  );
+  const items = body?.children.find(
+    (c) =>
+      c.expandedName.namespaceUri === RDL_2016 &&
+      c.expandedName.localName === 'ReportItems',
+  );
+  const geometryNames = ['Left', 'Top', 'Width', 'Height'];
+  const same = (a: XmlNode['expandedName'], b: XmlNode['expandedName']) =>
+    a.namespaceUri === b.namespaceUri && a.localName === b.localName;
+  const attributes = (node: XmlNode) =>
+    node.attributes.filter(
+      (a) =>
+        a.qualifiedName !== 'xmlns' &&
+        a.expandedName.namespaceUri !== 'http://www.w3.org/2000/xmlns/',
+    );
+  const expectedText = (reference: XmlNode, source: string): string => {
+    const text = reference.text;
+    if (inertAnnotation(reference, source)) return text;
+    if (
+      reference.expandedName.namespaceUri === RDL_2016 &&
+      ['ToggleItem', 'RepeatWith', 'Scope'].includes(
+        reference.expandedName.localName,
+      )
+    )
+      return rename(text);
+    if (!text.trimStart().startsWith('=')) return text;
+    const lead = text.length - text.trimStart().length;
+    let result = text;
+    for (const r of [...analyze(text.trimStart()).references].reverse())
+      if (r.kind !== 'field' && r.nameRange && rename(r.name) !== r.name)
+        result =
+          result.slice(0, r.nameRange.start + lead) +
+          rename(r.name) +
+          result.slice(r.nameRange.end + lead);
+    return result;
+  };
+  const compare = (
+    reference: XmlNode,
+    node: XmlNode,
+    source: string,
+    root: boolean,
+  ): boolean => {
+    if (!same(reference.expandedName, node.expandedName)) return false;
+    const a = attributes(reference),
+      b = attributes(node);
+    if (
+      a.length !== b.length ||
+      a.some((attribute, i) => {
+        const other = b[i]!;
+        const name =
+          attribute.expandedName.namespaceUri === '' &&
+          attribute.expandedName.localName === 'Name';
+        return (
+          !same(attribute.expandedName, other.expandedName) ||
+          other.value !== (name ? rename(attribute.value) : attribute.value)
+        );
+      })
+    )
+      return false;
+    const geometry = (c: XmlNode) =>
+      root &&
+      c.expandedName.namespaceUri === RDL_2016 &&
+      geometryNames.includes(c.expandedName.localName);
+    const left = reference.children.filter((c) => !geometry(c)),
+      right = node.children.filter((c) => !geometry(c));
+    if (left.length !== right.length) return false;
+    if (!reference.children.length && !node.children.length)
+      return node.text === expectedText(reference, source);
+    return left.every((c, i) => compare(c, right[i]!, source, false));
+  };
+  const insertedIds = new Set<string>();
+  for (const entry of expected.inserted) {
+    const node = byStart.get(entry.start);
+    if (
+      !node ||
+      !items ||
+      node.parentId !== items.id ||
+      candidate.snapshot.source.slice(node.range.start, node.range.end) !==
+        entry.fragment
+    )
+      return false;
+    const declarations = Object.entries(entry.root.namespaces)
+      .filter(([prefix]) => prefix !== 'xml')
+      .map(
+        ([prefix, uri]) =>
+          ` ${prefix ? `xmlns:${prefix}` : 'xmlns'}="${uri.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')}"`,
+      )
+      .join('');
+    const wrapper = `<w${declarations}>${entry.root.xml}</w>`;
+    const parsed = parse({
+      uri: 'capture:',
+      version: 0,
+      source: wrapper,
+      eol: '\n',
+    });
+    const reference = parsed.root?.children[0];
+    if (
+      parsed.status !== 'valid' ||
+      !reference ||
+      !compare(reference, node, wrapper, true)
+    )
+      return false;
+    const item =
+      after.tables.find((t) => t.node.id === node.id) ??
+      after.textboxes.find(
+        (t) => t.node.id === node.id && t.context === 'body',
+      );
+    if (
+      !item ||
+      (entry.root.kind === 'table') !== after.tables.includes(item as never)
+    )
+      return false;
+    const geometry = acceptedGeometry(after, item, entry.root.kind === 'table');
+    for (const key of ['left', 'top', 'width', 'height'] as const) {
+      const actual = geometry[key].points;
+      if (actual === null || Math.abs(actual - entry.bounds[key]) > 0.01)
+        return false;
+    }
+    insertedIds.add(node.id);
+  }
+  // Allocated identities stay unique among report items, groups and datasets.
+  const names: string[] = [];
+  const collect = (node: XmlNode) => {
+    const name = node.attributes.find(
+      (a) =>
+        a.expandedName.namespaceUri === '' &&
+        a.expandedName.localName === 'Name',
+    );
+    if (
+      name &&
+      node.expandedName.namespaceUri === RDL_2016 &&
+      !['Field', 'DataSource', 'Parameter', 'ReportParameter'].includes(
+        node.expandedName.localName,
+      )
+    )
+      names.push(name.value);
+    node.children.forEach(collect);
+  };
+  if (candidate.root) collect(candidate.root);
+  if (new Set(names).size !== names.length) return false;
+  const count = (report: ReturnType<typeof projectReport>) => ({
+    textboxes: report.textboxes.filter((t) => t.context === 'body').length,
+    tables: report.tables.length,
+  });
+  const removedTables = expected.removed.filter(
+    (n) => n.expandedName.localName === 'Tablix',
+  ).length;
+  const insertedTables = expected.inserted.filter(
+    (e) => e.root.kind === 'table',
+  ).length;
+  const was = count(before),
+    now = count(after);
+  return (
+    now.tables === was.tables - removedTables + insertedTables &&
+    now.textboxes ===
+      was.textboxes -
+        (expected.removed.length - removedTables) +
+        (expected.inserted.length - insertedTables)
+  );
 }

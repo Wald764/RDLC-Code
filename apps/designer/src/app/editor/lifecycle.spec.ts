@@ -182,6 +182,50 @@ describe('document lifecycle transport', () => {
     expect(host.snapshot()?.version).toBe(3);
     expect(host.sent()).toHaveLength(1);
   });
+  it('serializes clipboard actions and discards a stale paste result without replay', () => {
+    const host = TestBed.inject(HostAdapter);
+    host.ingest(snapshot(1));
+    const paste = {
+      requestId: 'paste-1',
+      baseVersion: 1,
+      action: 'paste' as const,
+      unit: 'pt' as const,
+    };
+    expect(host.sendClipboard(paste)).toBe(true);
+    expect(host.sendClipboard({ ...paste, requestId: 'paste-2' })).toBe(false);
+    expect(
+      host.sendEdit({
+        operation: 'layout',
+        requestId: 'blocked',
+        baseVersion: 1,
+        payload: {
+          action: 'move',
+          targetIds: ['1:1'],
+          dxPt: 1,
+          dyPt: 0,
+          unit: 'pt',
+        },
+      }),
+    ).toBe(false);
+    host.ingest(snapshot(3));
+    host.ingest({
+      protocol: 1,
+      kind: 'clipboardResult',
+      requestId: 'paste-1',
+      action: 'paste',
+      baseVersion: 1,
+      version: 2,
+      accepted: true,
+      changed: true,
+      reason: 'APPLIED',
+      inserted: ['2:9'],
+      removed: [],
+      diagnostics: [],
+    });
+    expect(host.pending()).toBeNull();
+    expect(host.outcome()).toBeNull();
+    expect(host.sent()).toHaveLength(1);
+  });
   for (const snapshotFirst of [true, false]) {
     it(`serializes mutation and reconciles ${snapshotFirst ? 'snapshot' : 'result'} first`, () => {
       const host = TestBed.inject(HostAdapter);

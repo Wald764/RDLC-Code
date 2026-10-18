@@ -8,8 +8,11 @@ import { validateMessage } from '@rdlc/report-model/protocol';
 import { FailingFileSystem } from './failing-file-system.js';
 import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
+import { WindowClipboard } from '../../apps/vscode-extension/src/clipboard.js';
+import { memory, open, view } from './clipboard.test.js';
 
 export async function run(): Promise<void> {
+  await clipboardViewRace();
   await groupSynchronization();
   await ambiguousIndependentChange();
   await independentViewNudge();
@@ -628,4 +631,55 @@ async function ambiguousIndependentChange(): Promise<void> {
   } finally {
     view.dispose();
   }
+}
+
+/** Concurrent views share one document queue: one duplicate applies, the other is stale. */
+async function clipboardViewRace(): Promise<void> {
+  const io = memory();
+  const clipboard = new WindowClipboard(io);
+  const document = await open('clipboard-dependencies');
+  const original = document.getText();
+  await vscode.window.showTextDocument(document);
+  const a = view(document, clipboard);
+  const b = view(document, clipboard);
+  try {
+    const id = projectReport(
+      parse({ uri: 'x', version: 1, source: original, eol: '\n' }),
+    ).textboxes.find((t) => t.name === 'Outside')!.node.id;
+    const request = (requestId: string) => ({
+      protocol: 1,
+      kind: 'clipboard',
+      requestId,
+      baseVersion: document.version,
+      action: 'duplicate',
+      targetIds: [id],
+      unit: 'pt',
+    });
+    a.session.receive(request('race-dup-a'));
+    b.session.receive(request('race-dup-b'));
+    await until(
+      () =>
+        a.messages.some((m) => m.kind === 'clipboardResult') &&
+        b.messages.some(
+          (m) => m.kind === 'clipboardResult' || m.kind === 'protocolError',
+        ),
+      'Concurrent duplicates settle',
+    );
+    assert.ok(
+      a.messages.some((m) => m.kind === 'clipboardResult' && m.changed),
+    );
+    assert.ok(
+      !b.messages.some((m) => m.kind === 'clipboardResult' && m.accepted),
+      'the stale view is refused, never retried',
+    );
+    assert.equal(io.writes, 0, 'Duplicate never touches the clipboard');
+    await vscode.commands.executeCommand('undo');
+    assert.equal(document.getText(), original);
+  } finally {
+    a.dispose();
+    b.dispose();
+  }
+  await vscode.commands.executeCommand(
+    'workbench.action.revertAndCloseActiveEditor',
+  );
 }

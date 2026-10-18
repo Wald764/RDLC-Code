@@ -7,6 +7,7 @@ import {
   isFieldType,
   validateDatasetName,
   validateDataMutation,
+  validateRemoval,
 } from './datasets.js';
 
 test('dataset names, seven-type allowlist and conservative dependency locations', () => {
@@ -50,4 +51,98 @@ test('dataset names, seven-type allowlist and conservative dependency locations'
   );
   assert.equal(errors[0]!.code, 'REFERENCE_IN_USE');
   assert.ok(errors[0]!.range.start > dataset.node.range.end);
+});
+
+test('whole removal sets allow internal references and block outside or opaque ones', () => {
+  const source = readFileSync(
+    'tests/fixtures/interactive/clipboard-dependencies.rdlc',
+    'utf8',
+  );
+  const load = (text: string) => {
+    const syntax = parse({
+      uri: 'test:cut',
+      version: 1,
+      source: text,
+      eol: '\n',
+    });
+    const report = projectReport(syntax);
+    return {
+      root: syntax.root!,
+      node: (name: string) =>
+        report.textboxes.find((t) => t.name === name)!.node,
+    };
+  };
+  const item = (name: string) => ({
+    kind: 'report-item' as const,
+    element: 'Textbox',
+    name,
+  });
+  const doc = load(source);
+  const remove = (names: string[]) =>
+    validateRemoval(doc.root, names.map(doc.node), names.map(item), source);
+  // The classified annotation inside Title is inert; references inside the set are safe.
+  assert.deepEqual(remove(['InternalReference', 'ExternalReference']), []);
+  assert.equal(
+    remove(['Title', 'InternalReference'])[0]?.code,
+    'REFERENCE_IN_USE',
+    'OutsideConsumer still references Title',
+  );
+  assert.equal(
+    remove(['Title', 'InternalReference', 'OutsideConsumer'])[0]?.code,
+    'REFERENCE_IN_USE',
+    'EntityReference still toggles and references Title',
+  );
+  assert.deepEqual(
+    remove([
+      'Title',
+      'InternalReference',
+      'OutsideConsumer',
+      'EntityReference',
+    ]),
+    [],
+  );
+  // Opaque content blocks only when it spells a removed name (decoded or raw).
+  const cut = (extra: string, name = 'LiteralLookalike') => {
+    const text = source.replace('</ReportItems>', `${extra}</ReportItems>`);
+    const other = load(text);
+    return validateRemoval(
+      other.root,
+      [other.node(name)],
+      [item(name)],
+      text,
+    )[0]?.code;
+  };
+  assert.equal(cut('<x:Chart keep="opaque"/>'), undefined);
+  assert.equal(cut('<x:Chart ref="LiteralLookalike"/>'), 'REFERENCES_OPAQUE');
+  assert.equal(
+    cut('<x:Chart>Literal&#76;ookalike</x:Chart>'),
+    'REFERENCES_OPAQUE',
+  );
+  assert.equal(
+    cut('<Textbox Name="T" rd:DefaultName="LiteralLookalike"/>'),
+    'REFERENCES_OPAQUE',
+  );
+  assert.equal(
+    cut(
+      '<Textbox Name="Dyn"><Value>=Code.Get("LiteralLookalike")</Value></Textbox>',
+    ),
+    'REFERENCES_OPAQUE',
+  );
+  assert.equal(
+    cut('<Textbox Name="Dyn"><Value>=Code.Get("Other")</Value></Textbox>'),
+    undefined,
+  );
+  // Without raw source (existing authoring deletes) any opaque content still blocks.
+  const legacy = load(
+    source.replace('</ReportItems>', '<x:Chart/></ReportItems>'),
+  );
+  assert.equal(
+    validateDataMutation(
+      legacy.root,
+      legacy.node('LiteralLookalike'),
+      'report-item',
+      'LiteralLookalike',
+    )[0]?.code,
+    'REFERENCES_OPAQUE',
+  );
 });

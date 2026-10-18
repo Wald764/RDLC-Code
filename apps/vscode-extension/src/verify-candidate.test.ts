@@ -204,3 +204,129 @@ test('explicit subtree deletion verifies surviving sibling namespaces and untouc
     snapshot.source.replace('<p:b/>', ''),
   );
 });
+
+test('clipboard verification proves each inserted subtree, not only untouched source', async () => {
+  const { verifyClipboardCandidate } = await import('./verify-candidate.js');
+  const { allocateNames, nameIndex } = await import(
+    '@rdlc/validation/clipboard'
+  );
+  const { buildCapture, planPaste } = await import('./clipboard.js');
+  const run = (
+    sourceText: string,
+    destinationText: string,
+    names: string[],
+  ) => {
+    const load = (text: string) => {
+      const snapshot = {
+        uri: 'test:v',
+        version: 1,
+        source: text,
+        eol: '\n' as const,
+      };
+      const syntax = parse(snapshot);
+      return { snapshot, syntax, projection: projectReport(syntax) };
+    };
+    const from = load(sourceText);
+    const built = buildCapture(
+      from,
+      names.map(
+        (n) => from.projection.textboxes.find((t) => t.name === n)!.node.id,
+      ),
+    );
+    assert.ok(built.ok);
+    const to = load(destinationText);
+    const planned = planPaste(to, built.capture, 10, 'pt');
+    assert.ok(planned.ok);
+    const patch = planned.plan.patches[0]!;
+    const fragments = planned.starts.map((start, i) =>
+      planned.candidate.slice(
+        start,
+        planned.starts[i + 1] ?? patch.start + patch.replacement.length,
+      ),
+    );
+    const mapping = allocateNames(built.capture, nameIndex(to.syntax.root));
+    return (tamper: (fragment: string, index: number) => string) => {
+      const changed = fragments.map(tamper);
+      let start = patch.start;
+      const inserted = built.capture.roots.map((root, i) => {
+        const entry = {
+          root,
+          start,
+          fragment: changed[i]!,
+          bounds: {
+            ...root.bounds,
+            left: root.bounds.left + 10,
+            top: root.bounds.top + 10,
+          },
+        };
+        start += changed[i]!.length;
+        return entry;
+      });
+      const candidate =
+        destinationText.slice(0, patch.start) +
+        changed.join('') +
+        destinationText.slice(patch.end);
+      return verifyClipboardCandidate(
+        to.syntax,
+        parse({ ...to.snapshot, source: candidate }),
+        { inserted, names: mapping, removed: [] },
+      );
+    };
+  };
+  const dependencies = readFileSync(
+    'tests/fixtures/interactive/clipboard-dependencies.rdlc',
+    'utf8',
+  );
+  const verify = run(dependencies, dependencies, [
+    'Title',
+    'InternalReference',
+  ]);
+  assert.equal(
+    verify((f) => f),
+    true,
+  );
+  for (const [label, tamper] of [
+    [
+      'unmapped reference',
+      (f: string) => f.replace('ReportItems!Title1', 'ReportItems!Title'),
+    ],
+    [
+      'duplicate identity',
+      (f: string) =>
+        f.replace('Name="InternalReference1"', 'Name="InternalReference"'),
+    ],
+    [
+      'rewritten annotation',
+      (f: string) => f.replace('literal annotation', 'rewritten'),
+    ],
+    [
+      'wrong geometry',
+      (f: string) => f.replace('<Left>22pt</Left>', '<Left>23pt</Left>'),
+    ],
+    [
+      'dropped content',
+      (f: string) =>
+        f.replace('<Value>Orders &amp; totals</Value>', '<Value/>'),
+    ],
+  ] as const)
+    assert.equal(verify(tamper), false, label);
+  const namespaces = readFileSync(
+    'tests/fixtures/interactive/clipboard-namespaces.rdlc',
+    'utf8',
+  );
+  const crossed = run(namespaces, dependencies, ['Prefixed']);
+  assert.equal(
+    crossed((f) => f),
+    true,
+  );
+  assert.equal(
+    crossed((f) =>
+      f.replace(
+        'xmlns:r="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition"',
+        'xmlns:r="urn:other"',
+      ),
+    ),
+    false,
+    'namespace meaning changed',
+  );
+});

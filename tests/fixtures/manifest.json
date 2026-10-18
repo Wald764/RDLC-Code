@@ -234,12 +234,53 @@
         "vendor/02-structures/2.341.7-aggregate-functions.md",
         "vendor/01-introduction/1.7-vendor-extensible-fields.md"
       ],
-      "operation": "Acceptance input: select Title/InternalReference/ExternalReference for internal and external edges; OutsideConsumer blocks cutting Title; clipboard operations remain pending implementation",
+      "operation": "Acceptance input: select Title/InternalReference/ExternalReference for internal and external edges; OutsideConsumer and EntityReference (ToggleItem, entity-spelled ReportItems operand) block cutting Title; Café/Référence cover Unicode identities and CDATA operands; exercised by tests/roundtrip/clipboard.test.ts",
       "editFootprint": [
         "Complete selected-root insertion/removal with proven identity/reference remapping, offsets and necessary namespace closure only"
       ],
       "expectedDiagnostics": [],
       "preservation": "Classified text-only annotation contains a literal reference lookalike and no unclassified metadata; preserve CDATA/entities, typed Orders dependencies, surviving outside targets and unrelated consumers",
+      "consumerEvidence": null
+    },
+    {
+      "id": "interactive-clipboard-namespaces",
+      "path": "interactive/clipboard-namespaces.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors; project-owned annotation semantics defined in specs/002-interactive-visual-designer/contracts/clipboard.md",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.16.1-textbox.name.md",
+        "vendor/02-structures/2.341.7-aggregate-functions.md",
+        "vendor/01-introduction/1.7-vendor-extensible-fields.md"
+      ],
+      "operation": "Clipboard namespace closure: prefixed RDL source, local default-namespace rebinding, differently prefixed classified annotation and derived width materialization across bodies; exercised by tests/roundtrip/clipboard.test.ts",
+      "editFootprint": [
+        "Inserted roots gain only necessary root-local namespace declarations, identities, references and offsets"
+      ],
+      "expectedDiagnostics": [],
+      "preservation": "Prefixes, default rebinding, unprefixed attribute rules, CDATA/entities and destination bindings remain exact; expanded names and namespace meaning match the capture",
+      "consumerEvidence": null
+    },
+    {
+      "id": "interactive-clipboard-opaque",
+      "path": "interactive/clipboard-opaque.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.328-field.md",
+        "vendor/02-structures/2.341.6-global-collections.md",
+        "vendor/02-structures/2.341.7-aggregate-functions.md",
+        "vendor/01-introduction/1.7-vendor-extensible-fields.md"
+      ],
+      "operation": "Clipboard refusal classes: unclassified designer attribute, identity-bearing annotation, processing instruction, dynamic collection access, custom code, unscoped/untyped/calculated fields and out-of-selection scope; only Plain may be copied",
+      "editFootprint": ["No insertion or removal for refused selections"],
+      "expectedDiagnostics": [],
+      "preservation": "Refusals leave source untouched; unclassified metadata is never removed or rewritten",
       "consumerEvidence": null
     },
     {
