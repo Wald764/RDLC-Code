@@ -9,7 +9,7 @@ import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
 import { DocumentSession } from '../../apps/vscode-extension/src/document-session.js';
 import { WindowClipboard } from '../../apps/vscode-extension/src/clipboard.js';
-import { until } from './session-checks.js';
+import { history, until } from './session-checks.js';
 
 type Result = Extract<HostMessage, { kind: 'clipboardResult' }>;
 
@@ -39,13 +39,16 @@ export function memory() {
   return state;
 }
 
-export async function open(fixture: string): Promise<vscode.TextDocument> {
+export async function open(
+  fixture: string,
+  eol?: '\n' | '\r\n',
+): Promise<vscode.TextDocument> {
   const source = readFileSync(
     resolve(__dirname, `../../../tests/fixtures/interactive/${fixture}.rdlc`),
     'utf8',
   );
   const file = join(mkdtempSync(join(tmpdir(), 'rdlc-clip-')), 'report.rdlc');
-  writeFileSync(file, source);
+  writeFileSync(file, eol ? source.replace(/\r?\n/g, eol) : source);
   return vscode.workspace.openTextDocument(file);
 }
 
@@ -115,7 +118,8 @@ export function view(
 
 export async function run(): Promise<void> {
   await sameAndCrossDocument();
-  await cutAndRefusals();
+  await cutAndRefusals('\n');
+  await cutAndRefusals('\r\n');
   await realClipboard();
 }
 
@@ -140,15 +144,15 @@ async function sameAndCrossDocument(): Promise<void> {
     const duplicated = await a.send('duplicate', ['Outside']);
     assert.ok(duplicated.changed);
     const afterDuplicate = source.getText();
-    await vscode.commands.executeCommand('undo');
+    await history(source, 'undo', afterPaste);
     assert.equal(source.getText(), afterPaste, 'one Undo per duplicate');
-    await vscode.commands.executeCommand('undo');
+    await history(source, 'undo', original);
     assert.equal(source.getText(), original, 'one Undo per paste');
-    await vscode.commands.executeCommand('redo');
-    await vscode.commands.executeCommand('redo');
+    await history(source, 'redo', afterPaste);
+    await history(source, 'redo', afterDuplicate);
     assert.equal(source.getText(), afterDuplicate);
-    await vscode.commands.executeCommand('undo');
-    await vscode.commands.executeCommand('undo');
+    await history(source, 'undo', afterPaste);
+    await history(source, 'undo', original);
   } finally {
     a.dispose();
   }
@@ -171,7 +175,7 @@ async function sameAndCrossDocument(): Promise<void> {
         names.includes(name),
         `free name ${name} kept across documents`,
       );
-    await vscode.commands.executeCommand('undo');
+    await history(destination, 'undo', before);
     assert.equal(destination.getText(), before);
   } finally {
     b.dispose();
@@ -181,10 +185,14 @@ async function sameAndCrossDocument(): Promise<void> {
   );
 }
 
-async function cutAndRefusals(): Promise<void> {
+async function cutAndRefusals(eol: '\n' | '\r\n'): Promise<void> {
   const io = memory();
   const clipboard = new WindowClipboard(io);
-  const document = await open('clipboard-dependencies');
+  const document = await open('clipboard-dependencies', eol);
+  assert.equal(
+    document.eol,
+    eol === '\r\n' ? vscode.EndOfLine.CRLF : vscode.EndOfLine.LF,
+  );
   const original = document.getText();
   await vscode.window.showTextDocument(document);
   const v = view(document, clipboard);
@@ -195,7 +203,7 @@ async function cutAndRefusals(): Promise<void> {
     const cut = await v.send('cut', ['InternalReference', 'ExternalReference']);
     assert.ok(cut.changed, cut.reason);
     assert.equal(cut.removed.length, 2);
-    await vscode.commands.executeCommand('undo');
+    await history(document, 'undo', original);
     assert.equal(
       document.getText(),
       original,
@@ -243,8 +251,12 @@ async function cutAndRefusals(): Promise<void> {
     };
     const stale = await v.send('paste');
     assert.equal(stale.reason, 'STALE_EDIT');
-    assert.equal(document.getText(), original + '\n', 'no partial paste');
-    await vscode.commands.executeCommand('undo');
+    assert.equal(stale.accepted, false);
+    assert.equal(stale.changed, false);
+    assert.deepEqual(stale.inserted, []);
+    const newline = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
+    assert.equal(document.getText(), original + newline, 'no partial paste');
+    await history(document, 'undo', original);
     assert.equal(document.getText(), original);
   } finally {
     v.dispose();

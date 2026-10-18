@@ -15,6 +15,19 @@ export async function until(
   assert.ok(check(), label);
 }
 
+export async function history(
+  document: vscode.TextDocument,
+  command: 'undo' | 'redo',
+  expected: string,
+): Promise<void> {
+  await vscode.commands.executeCommand(command);
+  // Native commands can finish before the extension-host document receives the change.
+  await until(
+    () => document.getText() === expected,
+    `${command} document sync`,
+  );
+}
+
 export function observe(
   document: vscode.TextDocument,
   apply?: typeof vscode.workspace.applyEdit,

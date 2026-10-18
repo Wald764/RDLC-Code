@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { observe, replaceSource, until } from './session-checks.js';
+import { history, observe, replaceSource, until } from './session-checks.js';
 import { FailingFileSystem } from './failing-file-system.js';
 import {
   resizeHandles,
@@ -101,13 +101,13 @@ async function directManipulation(): Promise<void> {
         assert.equal(result.mappings[0]?.sourceId, item.node.id);
         const candidate = document.getText();
         assert.notEqual(candidate, snapshot.source);
-        await vscode.commands.executeCommand('undo');
+        await history(document, 'undo', snapshot.source);
         assert.equal(
           document.getText(),
           snapshot.source,
           `One-step Undo ${requestId}`,
         );
-        await vscode.commands.executeCommand('redo');
+        await history(document, 'redo', candidate);
         assert.equal(
           document.getText(),
           candidate,
@@ -373,12 +373,12 @@ async function mixedHistory(): Promise<void> {
         assert.ok(present.has(name), `${label}: ${name} selectable`);
     };
     for (let index = 19; index >= 0; index--) {
-      await vscode.commands.executeCommand('undo');
+      await history(document, 'undo', states[index]!.source);
       check(index, `Mixed undo ${index}`);
     }
     assert.equal(document.isDirty, false);
     for (let index = 1; index <= 20; index++) {
-      await vscode.commands.executeCommand('redo');
+      await history(document, 'redo', states[index]!.source);
       check(index, `Mixed redo ${index}`);
     }
     assert.equal(await document.save(), true);
@@ -424,12 +424,12 @@ export async function run(): Promise<void> {
     }
     assert.equal(document.isDirty, true);
     for (let index = 19; index >= 0; index--) {
-      await vscode.commands.executeCommand('undo');
+      await history(document, 'undo', states[index]!);
       assert.equal(document.getText(), states[index], `Undo ${index}`);
     }
     assert.equal(document.isDirty, false);
     for (let index = 1; index <= 20; index++) {
-      await vscode.commands.executeCommand('redo');
+      await history(document, 'redo', states[index]!);
       assert.equal(document.getText(), states[index], `Redo ${index}`);
     }
     assert.equal(await document.save(), true);
@@ -503,7 +503,7 @@ export async function run(): Promise<void> {
       structural.push(document.getText());
     }
     for (let index = actions.length - 1; index >= 0; index--) {
-      await vscode.commands.executeCommand('undo');
+      await history(document, 'undo', structural[index]!);
       assert.equal(
         document.getText(),
         structural[index],
@@ -511,7 +511,7 @@ export async function run(): Promise<void> {
       );
     }
     for (let index = 1; index <= actions.length; index++) {
-      await vscode.commands.executeCommand('redo');
+      await history(document, 'redo', structural[index]!);
       assert.equal(
         document.getText(),
         structural[index],
@@ -649,12 +649,12 @@ async function nudging(): Promise<void> {
       'selection survives the accepted nudge',
     );
     const twice = document.getText();
-    await vscode.commands.executeCommand('undo');
+    await history(document, 'undo', once);
     assert.equal(document.getText(), once, 'each press is one Undo step');
-    await vscode.commands.executeCommand('undo');
+    await history(document, 'undo', source);
     assert.equal(document.getText(), source, 'held repeat is one Undo step');
-    await vscode.commands.executeCommand('redo');
-    await vscode.commands.executeCommand('redo');
+    await history(document, 'redo', once);
+    await history(document, 'redo', twice);
     assert.equal(document.getText(), twice);
     // A nudge captured before native Undo/Redo is stale and never replays.
     const refusals = () =>
@@ -776,15 +776,15 @@ async function arrangement(): Promise<void> {
       );
       const candidate = document.getText();
       assert.notEqual(candidate, source);
-      await vscode.commands.executeCommand('undo');
+      await history(document, 'undo', source);
       assert.equal(document.getText(), source, `One-step group Undo ${action}`);
-      await vscode.commands.executeCommand('redo');
+      await history(document, 'redo', candidate);
       assert.equal(
         document.getText(),
         candidate,
         `One-step group Redo ${action}`,
       );
-      await vscode.commands.executeCommand('undo');
+      await history(document, 'undo', source);
       assert.equal(document.getText(), source);
     }
   } finally {
