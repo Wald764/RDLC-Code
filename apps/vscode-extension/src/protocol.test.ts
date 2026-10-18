@@ -418,3 +418,34 @@ test('full snapshots support 100 textboxes near 1 MiB without increasing client 
     null,
   );
 });
+
+test('preservation-only source targets are navigable but never editable', () => {
+  const binding = new DocumentBinding(
+    'file:source',
+    2,
+    ['2:1'],
+    ['setProperty'],
+    ['2:1', '2:9'],
+  );
+  assert.ok(binding.receive({ protocol: 1, kind: 'ready' }).ok);
+  assert.ok(
+    binding.receive({
+      protocol: 1,
+      kind: 'openSource',
+      version: 2,
+      targetId: '2:9',
+    }).ok,
+  );
+  assert.equal(
+    binding.receive({
+      protocol: 1,
+      kind: 'edit',
+      requestId: 'locked',
+      baseVersion: 2,
+      targetId: '2:9',
+      operation: 'setProperty',
+      payload: { property: 'text', value: 'x' },
+    }).ok,
+    false,
+  );
+});

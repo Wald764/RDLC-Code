@@ -2,11 +2,16 @@ import * as vscode from 'vscode';
 import type { DocumentSnapshot } from '@rdlc/report-model/document';
 import type { ClientMessage, HostMessage } from '@rdlc/report-model/protocol';
 import type { ReportProjection } from '@rdlc/report-model/report';
+import type { XmlNode } from '@rdlc/report-model/syntax';
 import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
 import { renderScene } from '@rdlc/renderer/render';
 import { DocumentBinding } from './protocol.js';
 import { planTextboxIntent, correlateTargets } from './edit-controller.js';
+
+function nodes(node: XmlNode | null): XmlNode[] {
+  return node ? [node, ...node.children.flatMap(nodes)] : [];
+}
 
 function snapshotOf(document: vscode.TextDocument): DocumentSnapshot {
   return {
@@ -40,6 +45,7 @@ export class DocumentSession {
       document.version,
       current.ids,
       current.capabilities,
+      current.sourceIds,
     );
     this.subscriptions.push(
       vscode.workspace.onDidChangeTextDocument((event) => {
@@ -55,6 +61,7 @@ export class DocumentSession {
     projection: ReportProjection;
     syntax: ReturnType<typeof parse>;
     ids: readonly string[];
+    sourceIds: readonly string[];
     capabilities: readonly string[];
   } {
     const snapshot = snapshotOf(this.document);
@@ -76,6 +83,7 @@ export class DocumentSession {
           ...table.groups.map((group) => group.node.id),
         ]),
       ],
+      sourceIds: nodes(syntax.root).map((node) => node.id),
       capabilities:
         projection.status === 'editable'
           ? ['setProperty', 'author', 'layout']
@@ -89,6 +97,7 @@ export class DocumentSession {
       current.snapshot.version,
       current.ids,
       current.capabilities,
+      current.sourceIds,
     );
   }
 
@@ -204,10 +213,11 @@ export class DocumentSession {
     );
     const target = message.targetId;
     if (!target) return;
-    const textbox = this.evaluate().projection.textboxes.find(
-      (candidate) => candidate.node.id === target,
+    // Any element, including preservation-only content without bounds, is navigable.
+    const node = nodes(this.evaluate().syntax.root).find(
+      (candidate) => candidate.id === target,
     );
-    if (!textbox) return;
+    if (!node) return;
     const editor = vscode.window.activeTextEditor;
     if (
       !editor ||
@@ -215,8 +225,8 @@ export class DocumentSession {
     )
       return;
     const range = new vscode.Range(
-      this.document.positionAt(textbox.node.range.start),
-      this.document.positionAt(textbox.node.range.end),
+      this.document.positionAt(node.range.start),
+      this.document.positionAt(node.range.end),
     );
     editor.selection = new vscode.Selection(range.start, range.end);
     editor.revealRange(range);

@@ -22,6 +22,7 @@ function snapshotMessage(options: {
   version?: number;
   id?: string;
   label?: string;
+  name?: string;
 }): HostMessage {
   const version = options.version ?? 2;
   return {
@@ -43,7 +44,7 @@ function snapshotMessage(options: {
           bounds: { left: 24, top: 24, width: 288, height: 48 },
           label: options.label ?? 'Title: Hello',
           placeholder: options.placeholder ?? false,
-          name: 'Title',
+          name: options.name ?? 'Title',
           text: 'Hello',
           geometry: {
             left: '0.25in',
@@ -565,9 +566,10 @@ describe('editor surface', () => {
       host.ingest(directSnapshot(3, '3:4'));
       await settle();
       expect(fixture.componentInstance.selected()?.id).toBe('3:4');
+      // An independent version reconciles by unique name/kind/parent, not by the old mapping.
       host.ingest(directSnapshot(4, '4:4'));
       await settle();
-      expect(fixture.componentInstance.selected()).toBeNull();
+      expect(fixture.componentInstance.selected()?.id).toBe('4:4');
     });
 
   it('renders accepted scene items at their authored geometry with labels', async () => {
@@ -634,6 +636,7 @@ describe('editor surface', () => {
         version: 3,
         id: '3:9',
         label: 'Heading: Updated',
+        name: 'Heading',
       }),
     );
     await settle();
@@ -647,8 +650,8 @@ describe('editor surface', () => {
     const name = element.querySelector<HTMLInputElement>(
       '[data-property="name"]',
     );
-    expect(name?.value).toBe('Title');
-    name!.value = 'Heading';
+    expect(name?.value).toBe('Heading');
+    name!.value = 'Heading 2';
     name!.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
     );
@@ -657,7 +660,7 @@ describe('editor surface', () => {
       kind: 'edit',
       baseVersion: 3,
       targetId: '3:9',
-      payload: { property: 'name', value: 'Heading' },
+      payload: { property: 'name', value: 'Heading 2' },
     });
   });
 
@@ -688,9 +691,8 @@ describe('editor surface', () => {
       },
     });
     await settle();
-    expect(fixture.componentInstance.selected()).toBeNull();
-    fixture.componentInstance.commit({ property: 'text', value: 'Wrong item' });
-    expect(host.sent().length).toBe(0);
+    // The logical B survives by unique identity; ordinal 1 (now A) is never retargeted.
+    expect(fixture.componentInstance.selected()?.id).toBe('3:3');
     (element.querySelectorAll('button.item')[1] as HTMLButtonElement).click();
     await settle();
     host.ingest({
@@ -733,5 +735,281 @@ describe('editor surface', () => {
       kind: 'openSource',
       version: 2,
     });
+  });
+});
+
+const eligible = Object.fromEntries(
+  ['moveX', 'moveY', 'resizeX', 'resizeY'].map((key) => [
+    key,
+    { eligible: true, reason: null },
+  ]),
+);
+const locked = Object.fromEntries(
+  ['moveX', 'moveY', 'resizeX', 'resizeY'].map((key) => [
+    key,
+    {
+      eligible: false,
+      reason: 'Unsupported construct; edit this item in source.',
+    },
+  ]),
+);
+
+function draftSnapshot(version = 2): HostMessage {
+  const message = snapshotMessage({ version, id: `${version}:3` });
+  if (message.kind !== 'snapshot' || !message.scene)
+    throw new Error('Expected scene');
+  const title = { ...message.scene.items[0]!, kind: 'textbox' as const };
+  const preserved = {
+    kind: 'preserved' as const,
+    operations: locked,
+    placeholder: true,
+    name: null,
+    text: null,
+    geometry: null,
+    style: null,
+    capabilities: [],
+  };
+  return {
+    ...message,
+    authoring: {
+      id: `${version}:0`,
+      page: { width: '8.5in', bodyWidth: '6in', bodyHeight: '2in' },
+      datasets: [],
+      tables: [],
+    },
+    scene: {
+      ...message.scene,
+      items: [
+        { ...title, operations: eligible },
+        {
+          ...title,
+          id: `${version}:4`,
+          name: 'Other',
+          label: 'Other: Second',
+          bounds: { left: 24, top: 96, width: 96, height: 24 },
+          operations: eligible,
+        },
+        {
+          ...preserved,
+          id: `${version}:5`,
+          bounds: { left: 360, top: 24, width: 96, height: 48 },
+          label: 'Rectangle (unsupported)',
+        },
+        {
+          ...preserved,
+          id: `${version}:6`,
+          bounds: null,
+          label: 'Chart (unsupported)',
+        },
+      ],
+    },
+  } as unknown as HostMessage;
+}
+
+describe('property drafts, limitations and focus', () => {
+  beforeEach(() => TestBed.resetTestingModule());
+  afterEach(() => vi.restoreAllMocks());
+
+  const button = (root: HTMLElement, text: string) =>
+    [...root.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes(text),
+    ) as HTMLButtonElement;
+  const listButton = (root: HTMLElement, text: string) =>
+    [
+      ...root.querySelectorAll<HTMLButtonElement>(
+        'ul[aria-label="Report items"] button',
+      ),
+    ].find((b) => b.textContent?.includes(text))!;
+
+  async function withDraft() {
+    const mounted = mount();
+    mounted.host.ingest(draftSnapshot());
+    await mounted.settle();
+    listButton(mounted.element, 'Title').click();
+    await mounted.settle();
+    const name = mounted.element.querySelector<HTMLInputElement>(
+      '[data-property="name"]',
+    )!;
+    name.focus();
+    name.value = 'Draft';
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    await mounted.settle();
+    return { ...mounted, name, component: mounted.fixture.componentInstance };
+  }
+
+  async function conflictBySelection(
+    mounted: Awaited<ReturnType<typeof withDraft>>,
+  ) {
+    const other = listButton(mounted.element, 'Other');
+    other.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    // Native blur/change happens between pointerdown and click.
+    mounted.name.dispatchEvent(new Event('change', { bubbles: true }));
+    other.click();
+    await mounted.settle();
+  }
+
+  it('tracks dirtiness before blur and asks before a selection change', async () => {
+    const mounted = await withDraft();
+    const { element, host, component } = mounted;
+    expect(component.draft()).not.toBeNull();
+    expect(element.textContent).toContain('Unapplied draft');
+    await conflictBySelection(mounted);
+    expect(host.sent()).toHaveLength(0);
+    expect(component.selected()?.name).toBe('Title');
+    expect(component.conflict()).not.toBeNull();
+    expect(document.activeElement?.textContent).toContain('Apply draft');
+  });
+
+  it('Cancel keeps the draft and the current action state', async () => {
+    const mounted = await withDraft();
+    await conflictBySelection(mounted);
+    button(mounted.element, 'Cancel new action').click();
+    await mounted.settle();
+    expect(mounted.component.conflict()).toBeNull();
+    expect(mounted.component.draft()).not.toBeNull();
+    expect(mounted.name.value).toBe('Draft');
+    expect(mounted.component.selected()?.name).toBe('Title');
+    expect(document.activeElement).toBe(mounted.name);
+    expect(mounted.host.sent()).toHaveLength(0);
+  });
+
+  it('Discard abandons the draft explicitly, then performs the action', async () => {
+    const mounted = await withDraft();
+    await conflictBySelection(mounted);
+    button(mounted.element, 'Discard draft').click();
+    await mounted.settle();
+    expect(mounted.component.draft()).toBeNull();
+    expect(mounted.component.selected()?.name).toBe('Other');
+    expect(mounted.host.sent()).toHaveLength(0);
+  });
+
+  it('Apply submits once and waits for the accepted snapshot', async () => {
+    const mounted = await withDraft();
+    await conflictBySelection(mounted);
+    const apply = button(mounted.element, 'Apply draft');
+    apply.click();
+    apply.click();
+    await mounted.settle();
+    expect(mounted.host.sent()).toHaveLength(1);
+    expect(mounted.host.sent()[0]).toMatchObject({
+      operation: 'setProperty',
+      targetId: '2:3',
+      payload: { property: 'name', value: 'Draft' },
+    });
+    expect(mounted.component.selected()?.name).toBe('Title');
+    expect(mounted.component.conflict()).toBeNull();
+    const requestId = (mounted.host.sent()[0] as { requestId: string })
+      .requestId;
+    mounted.host.ingest({
+      protocol: 1,
+      kind: 'editResult',
+      requestId,
+      baseVersion: 2,
+      version: 2,
+      accepted: false,
+      changed: false,
+      mappings: [],
+      reason: 'INVALID_NAME',
+      diagnostics: [],
+    });
+    await mounted.settle();
+    expect(mounted.host.pending()).toBeNull();
+    expect(mounted.element.contains(document.activeElement)).toBe(true);
+    expect(mounted.element.textContent).toContain('Blocked');
+  });
+
+  it('gestures and other forms conflict with a draft instead of overwriting it', async () => {
+    const mounted = await withDraft();
+    const item =
+      mounted.element.querySelectorAll<HTMLElement>('button.item')[1]!;
+    item.setPointerCapture = () => {};
+    item.hasPointerCapture = () => false;
+    mounted.component.startGesture(
+      {
+        button: 0,
+        pointerId: 1,
+        currentTarget: item,
+        clientX: 0,
+        clientY: 0,
+        preventDefault() {},
+        stopPropagation() {},
+      } as unknown as PointerEvent,
+      1,
+    );
+    expect(mounted.component.preview()).toBeNull();
+    expect(mounted.component.conflict()).not.toBeNull();
+    await mounted.settle();
+    button(mounted.element, 'Cancel new action').click();
+    await mounted.settle();
+    const create = mounted.element.querySelector<HTMLFormElement>(
+      '[aria-label="Create textbox"]',
+    )!;
+    create.querySelector('input')!.value = 'Heading';
+    create.dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true }),
+    );
+    await mounted.settle();
+    expect(mounted.host.sent()).toHaveLength(0);
+    button(mounted.element, 'Discard draft').click();
+    await mounted.settle();
+    expect(mounted.host.sent().at(-1)).toMatchObject({
+      operation: 'author',
+      payload: { action: 'createTextbox', name: 'Heading' },
+    });
+  });
+
+  it('an independent version invalidates the stale draft with notice', async () => {
+    const mounted = await withDraft();
+    mounted.host.ingest(draftSnapshot(3));
+    await mounted.settle();
+    expect(mounted.component.draft()).toBeNull();
+    expect(mounted.component.conflict()).toBeNull();
+    expect(mounted.element.textContent).toContain('draft was discarded');
+    expect(
+      mounted.element.querySelector<HTMLInputElement>('[data-property="name"]')
+        ?.value,
+    ).toBe('Title');
+    expect(mounted.host.sent()).toHaveLength(0);
+  });
+
+  it('explains limitations, offers item source access and suppresses handles', async () => {
+    const { host, element, settle } = mount();
+    host.ingest(draftSnapshot());
+    await settle();
+    expect(element.querySelectorAll('button.item')).toHaveLength(3);
+    expect(listButton(element, 'Chart').textContent).toContain(
+      'unknown bounds',
+    );
+    listButton(element, 'Rectangle').click();
+    await settle();
+    const limits = element.querySelector('[aria-label="Limitations"]')!;
+    expect(limits.textContent).toContain('Rectangle (unsupported)');
+    expect(limits.textContent).toContain('edit this item in source');
+    expect(element.querySelectorAll('[data-handle]')).toHaveLength(0);
+    button(element, 'Open Rectangle (unsupported) in source').click();
+    expect(host.sent().at(-1)).toMatchObject({
+      kind: 'openSource',
+      targetId: '2:5',
+    });
+    listButton(element, 'Chart').click();
+    await settle();
+    expect(
+      element.querySelector('[aria-label="Limitations"]')!.textContent,
+    ).toContain('unknown');
+    expect(element.querySelector('[aria-label="Delete textbox"]')).toBeNull();
+  });
+
+  it('announces selection and status through live regions', async () => {
+    const { host, element, settle, fixture } = mount();
+    host.ingest(draftSnapshot());
+    await settle();
+    const feedback = element.querySelector('.feedback')!;
+    expect(feedback.getAttribute('role')).toBe('status');
+    expect(feedback.getAttribute('aria-live')).toBe('polite');
+    fixture.componentInstance.selectAll();
+    await settle();
+    expect(element.querySelector('.status')!.textContent).toContain(
+      '4 selected',
+    );
   });
 });

@@ -33,9 +33,12 @@ import {
   selectAll,
   marqueeSelection,
   mapSelection,
+  reconcileSelection,
   hitTest,
   type Selection,
 } from './selection';
+
+type DraftControl = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
 @Component({
   selector: 'rdlc-editor',
@@ -86,20 +89,46 @@ export class EditorComponent {
     active: boolean;
     add: boolean;
   } | null>(null);
-  readonly acceptedSelection = computed(() => {
+  /** A form edit not yet submitted; tracked on input, before blur/change. */
+  readonly draft = signal<{ version: number; control: DraftControl } | null>(
+    null,
+  );
+  /** A new action held back until the author applies, discards or cancels. */
+  readonly conflict = signal<{ run: () => void } | null>(null);
+  private readonly originals = new WeakMap<DraftControl, string>();
+  private pointerGuard = false;
+  private submitted: EventTarget | null = null;
+  private readonly reconciled = computed(() => {
     const selection = this.selection();
-    const version = this.host.snapshot()?.version;
-    if (selection.version === version) return selection;
+    const snapshot = this.host.snapshot();
+    const version = snapshot?.version;
+    if (selection.version === version) return { selection, lost: false };
     const result = this.host.outcome();
     if (
       result?.accepted &&
       result.baseVersion === selection.version &&
       result.version === version
     ) {
-      return mapSelection(selection, version!, result.mappings);
+      return {
+        selection: mapSelection(selection, version!, result.mappings),
+        lost: false,
+      };
     }
-    return emptySelection(version ?? 0);
+    const empty = { selection: emptySelection(version ?? 0), lost: false };
+    const previous = this.host.previousScene();
+    // Own pending results resolve through their mapping; never guess by name meanwhile.
+    if (
+      this.host.pending() ||
+      !snapshot?.scene ||
+      previous?.version !== selection.version ||
+      (!selection.bodyItemIds.length && selection.cellTargetId === null)
+    )
+      return empty;
+    const next = reconcileSelection(selection, previous, snapshot.scene);
+    return next ? { selection: next, lost: false } : { ...empty, lost: true };
   });
+  readonly acceptedSelection = computed(() => this.reconciled().selection);
+  readonly selectionLost = computed(() => this.reconciled().lost);
   readonly selectedIds = computed(() => this.acceptedSelection().bodyItemIds);
   readonly primary = computed(
     () =>
@@ -123,6 +152,21 @@ export class EditorComponent {
     return index === null ? null : (this.scene()?.items[index] ?? null);
   });
   readonly status = computed(() => this.host.snapshot()?.status ?? 'waiting');
+  /** Why the selected item cannot be edited on the canvas, if it cannot. */
+  readonly limitations = computed(() => {
+    const item = this.selected();
+    if (!item) return null;
+    const reasons = new Set(
+      Object.values(item.operations ?? {})
+        .map((operation) => operation.reason)
+        .filter((reason): reason is string => !!reason),
+    );
+    if (item.placeholder)
+      reasons.add('Preservation-only: the designer offers no mutation.');
+    if (!item.bounds)
+      reasons.add('Bounds are unknown; no canvas area is shown.');
+    return reasons.size ? [...reasons] : null;
+  });
   readonly diagnostics = computed(() => [
     ...(this.host.snapshot()?.diagnostics ?? []),
     ...(this.host.outcome()?.diagnostics ?? []),
@@ -130,6 +174,35 @@ export class EditorComponent {
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.cancelGesture());
+    const root = this.element.nativeElement;
+    // Capture phase: runs before native blur/change and before inner submit handlers.
+    root.addEventListener(
+      'pointerdown',
+      (event) => {
+        if (
+          this.draft() &&
+          (event.target as Element | null)?.closest?.('[data-conflicts]')
+        )
+          this.pointerGuard = true;
+      },
+      true,
+    );
+    root.addEventListener(
+      'submit',
+      (event) => (this.submitted = event.target),
+      true,
+    );
+    effect(() => {
+      const version = this.host.snapshot()?.version;
+      const draft = this.draft();
+      if (draft && draft.version !== version) {
+        this.draft.set(null);
+        this.conflict.set(null);
+        this.gestureNotice.set(
+          'The document changed; your unapplied draft was discarded.',
+        );
+      }
+    });
     effect(() => {
       const preview = this.preview();
       if (preview && this.host.snapshot()?.version !== preview.version)
@@ -155,7 +228,8 @@ export class EditorComponent {
   }
 
   select(index: number, toggle = false): void {
-    if (this.host.pending()) return;
+    if (this.host.pending() || this.held(() => this.select(index, toggle)))
+      return;
     this.cancelGesture();
     const version = this.host.snapshot()?.version;
     const item = this.scene()?.items[index];
@@ -179,7 +253,7 @@ export class EditorComponent {
   }
 
   selectAll(): void {
-    if (this.host.pending()) return;
+    if (this.host.pending() || this.held(() => this.selectAll())) return;
     this.cancelGesture();
     this.selection.set(
       selectAll(this.host.snapshot()?.version ?? 0, this.scene()?.items ?? []),
@@ -187,7 +261,7 @@ export class EditorComponent {
   }
 
   clearSelection(): void {
-    if (this.host.pending()) return;
+    if (this.host.pending() || this.held(() => this.clearSelection())) return;
     this.cancelGesture();
     this.selection.set(emptySelection(this.host.snapshot()?.version ?? 0));
   }
@@ -216,7 +290,8 @@ export class EditorComponent {
       !snapshot ||
       this.host.pending() ||
       ids.length < (action === 'align' ? 2 : 3) ||
-      this.bulkReason(horizontal ? 'horizontal' : 'vertical')
+      this.bulkReason(horizontal ? 'horizontal' : 'vertical') ||
+      this.held(() => this.arrange(action, mode))
     )
       return;
     this.cancelGesture();
@@ -251,7 +326,11 @@ export class EditorComponent {
     const rect = element.getBoundingClientRect();
     const x = event.clientX - rect.left,
       y = event.clientY - rect.top;
-    if (hitTest(this.scene()!.items, x, y)) return;
+    if (
+      hitTest(this.scene()!.items, x, y) ||
+      this.held(() => this.clearSelection())
+    )
+      return;
     try {
       element.setPointerCapture(event.pointerId);
     } catch {
@@ -305,6 +384,7 @@ export class EditorComponent {
     if (!item) return;
     this.suppressClick = true;
     event.stopPropagation();
+    if (this.held(() => this.select(index))) return;
     if (event.shiftKey && handle === 'move') {
       this.select(index, true);
       return;
@@ -540,7 +620,8 @@ export class EditorComponent {
         'input, textarea, select, [contenteditable="true"]',
       );
     if (event.key === 'Escape') {
-      if (this.preview() || this.marquee()) this.cancelGesture();
+      if (this.conflict()) this.cancelConflict();
+      else if (this.preview() || this.marquee()) this.cancelGesture();
       else if (!editable) this.clearSelection();
       return;
     }
@@ -586,7 +667,91 @@ export class EditorComponent {
     this.host.openSource(this.selected()?.id);
   }
 
+  @HostListener('focusin', ['$event'])
+  rememberOriginal(event: FocusEvent): void {
+    const control = this.draftControl(event.target);
+    if (control && !this.originals.has(control))
+      this.originals.set(control, control.value);
+  }
+
+  @HostListener('input', ['$event'])
+  trackDraft(event: Event): void {
+    const control = this.draftControl(event.target);
+    const version = this.host.snapshot()?.version;
+    if (control && version !== undefined) this.draft.set({ version, control });
+  }
+
+  @HostListener('window:pointerup')
+  @HostListener('window:pointercancel')
+  releaseGuard(): void {
+    // Release after the click that follows pointerup has been dispatched.
+    setTimeout(() => (this.pointerGuard = false));
+  }
+
+  private draftControl(target: EventTarget | null): DraftControl | null {
+    return (target instanceof HTMLInputElement ||
+      target instanceof HTMLSelectElement ||
+      target instanceof HTMLTextAreaElement) &&
+      target.form &&
+      !target.disabled
+      ? target
+      : null;
+  }
+
+  /** Holds `run` behind an explicit draft decision; returns true when held. */
+  private held(run: () => void, form: EventTarget | null = null): boolean {
+    const draft = this.draft();
+    if (!draft || (form !== null && draft.control.form === form)) return false;
+    this.cancelGesture();
+    this.conflict.set({ run });
+    this.element.nativeElement
+      .querySelector<HTMLElement>('[data-draft-apply]')
+      ?.focus();
+    return true;
+  }
+
+  applyDraft(): void {
+    const draft = this.draft();
+    if (!draft || this.host.pending()) return;
+    this.conflict.set(null);
+    const property = draft.control.dataset['property'];
+    if (property)
+      this.sendCommit({
+        property: property as TextboxCommit['property'],
+        value: draft.control.value,
+      });
+    else draft.control.form?.requestSubmit();
+    this.element.nativeElement.querySelector<HTMLElement>('.feedback')?.focus();
+  }
+
+  discardDraft(): void {
+    const draft = this.draft();
+    if (!draft) return;
+    draft.control.value =
+      this.originals.get(draft.control) ??
+      (draft.control as HTMLInputElement).defaultValue ??
+      '';
+    this.originals.delete(draft.control);
+    this.draft.set(null);
+    const conflict = this.conflict();
+    this.conflict.set(null);
+    this.element.nativeElement.querySelector<HTMLElement>('.feedback')?.focus();
+    conflict?.run();
+  }
+
+  cancelConflict(): void {
+    this.conflict.set(null);
+    this.draft()?.control.focus();
+  }
+
   author(request: AuthoringRequest): void {
+    const form = this.submitted;
+    this.submitted = null;
+    if (this.held(() => this.sendAuthor(request), form)) return;
+    this.sendAuthor(request);
+  }
+
+  private sendAuthor(request: AuthoringRequest): void {
     this.cancelGesture();
     const snapshot = this.host.snapshot();
     if (!snapshot || snapshot.status !== 'editable') return;
@@ -596,14 +761,25 @@ export class EditorComponent {
       operation: 'author',
       ...request,
     });
+    this.draft.set(null);
   }
 
   bindField(name: string): void {
-    this.commit({ property: 'text', value: `=Fields!${name}.Value` });
+    const form = this.submitted;
+    this.submitted = null;
+    const edit = { property: 'text' as const, value: `=Fields!${name}.Value` };
+    if (this.held(() => this.sendCommit(edit), form)) return;
+    this.sendCommit(edit);
+  }
+
+  /** Property-field commit (Enter/change); never while a draft decision or pointer action is pending. */
+  commit(edit: TextboxCommit): void {
+    if (this.conflict() || this.pointerGuard) return;
+    this.sendCommit(edit);
   }
 
   /** Typed intent only; the host validates, patches, reparses and applies. */
-  commit(edit: TextboxCommit): void {
+  private sendCommit(edit: TextboxCommit): void {
     this.cancelGesture();
     const snapshot = this.host.snapshot();
     const item = this.selected();
@@ -615,6 +791,6 @@ export class EditorComponent {
       operation: 'setProperty',
       payload: { property: edit.property, value: edit.value },
     };
-    this.host.sendEdit(intent);
+    if (this.host.sendEdit(intent)) this.draft.set(null);
   }
 }

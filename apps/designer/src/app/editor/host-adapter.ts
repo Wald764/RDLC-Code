@@ -38,6 +38,8 @@ interface VsCodeApi {
 export class HostAdapter {
   readonly snapshot = signal<EditorSnapshot | null>(null);
   readonly outcome = signal<EditOutcome | null>(null);
+  /** The scene replaced by the latest snapshot, for structural selection reconciliation only. */
+  readonly previousScene = signal<DesignScene | null>(null);
   readonly sent = signal<readonly unknown[]>([]);
   readonly notice = signal('');
   readonly pending = signal<{
@@ -74,6 +76,7 @@ export class HostAdapter {
         );
         this.outcome.set(null);
       }
+      this.previousScene.set(previous?.scene ?? null);
       this.snapshot.set({
         version: message.version,
         status: message.projection.status,
@@ -114,6 +117,10 @@ export class HostAdapter {
       };
       if (pending && pending.requestId !== message.requestId) return;
       this.outcome.set(result);
+      if (pending && !message.accepted)
+        this.notice.set(
+          `Not applied (${message.reason}); the current accepted document is shown and the request will not be retried.`,
+        );
       if (pending) {
         this.pending.set({ ...pending, result });
         this.reconcile();

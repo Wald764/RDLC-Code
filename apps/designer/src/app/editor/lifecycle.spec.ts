@@ -255,4 +255,76 @@ describe('document lifecycle transport', () => {
       version: 3,
     });
   });
+
+  it('reconciles independent versions only through unambiguous structural identity', async () => {
+    const fixture = TestBed.createComponent(EditorComponent);
+    const host = TestBed.inject(HostAdapter);
+    const item = (id: string, name: string | null, extra = {}) => ({
+      id,
+      name,
+      kind: 'textbox',
+      label: name ?? 'Line (unsupported)',
+      placeholder: name === null,
+      bounds: { left: 0, top: 0, width: 10, height: 10 },
+      ...extra,
+    });
+    const accept = (version: number, items: unknown[]) =>
+      host.ingest({
+        ...snapshot(version),
+        scene: {
+          version,
+          page: { left: 0, top: 0, width: 800, height: 1000 },
+          body: { left: 0, top: 0, width: 600, height: 200 },
+          items,
+        },
+      });
+    const settle = async () => {
+      fixture.detectChanges();
+      await fixture.whenStable();
+    };
+    const component = fixture.componentInstance;
+    accept(1, [
+      item('1:1', 'A'),
+      item('1:2', 'Orders', { kind: 'table' }),
+      item('1:3', 'Cell', { kind: 'cell', parentTableId: '1:2' }),
+    ]);
+    await settle();
+    component.select(0);
+    component.select(1, true);
+    await settle();
+    accept(2, [
+      item('2:9', 'Inserted'),
+      item('2:1', 'A'),
+      item('2:2', 'Orders', { kind: 'table' }),
+    ]);
+    await settle();
+    expect(component.selectedIds()).toEqual(['2:1', '2:2']);
+    expect(component.primary()?.id).toBe('2:2');
+    accept(3, [item('3:1', 'A'), item('3:2', 'A'), item('3:3', 'Orders')]);
+    await settle();
+    expect(component.selectedIds()).toEqual([]);
+    expect(fixture.nativeElement.textContent).toContain(
+      'could not be identified unambiguously',
+    );
+    accept(4, [
+      item('4:2', 'Orders', { kind: 'table' }),
+      item('4:3', 'Cell', { kind: 'cell', parentTableId: '4:2' }),
+      item('4:4', null),
+    ]);
+    await settle();
+    component.select(1);
+    await settle();
+    accept(5, [
+      item('5:2', 'Orders', { kind: 'table' }),
+      item('5:3', 'Cell', { kind: 'cell', parentTableId: '5:2' }),
+      item('5:4', null),
+    ]);
+    await settle();
+    expect(component.selected()?.id).toBe('5:3');
+    component.select(2);
+    await settle();
+    accept(6, [item('6:4', null)]);
+    await settle();
+    expect(component.selected()).toBeNull();
+  });
 });

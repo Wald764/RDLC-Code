@@ -1,5 +1,9 @@
 import type { TargetMapping } from '@rdlc/report-model/editing';
-import type { Bounds, DesignSceneItem } from '@rdlc/report-model/scene';
+import type {
+  Bounds,
+  DesignScene,
+  DesignSceneItem,
+} from '@rdlc/report-model/scene';
 
 export interface Selection {
   readonly version: number;
@@ -115,4 +119,50 @@ export function hitTest(
           y <= i.bounds.top + i.bounds.height,
       ) ?? null
   );
+}
+
+/** Structural identity for independent versions: name, kind and parent; never an ordinal or ID. */
+function identity(item: DesignSceneItem, scene: DesignScene): string | null {
+  if (!item.name) return null;
+  const parent = item.parentTableId
+    ? scene.items.find((i) => i.id === item.parentTableId)?.name
+    : '';
+  if (parent === undefined || parent === null) return null;
+  return `${item.kind ?? ''}\u0000${parent}\u0000${item.name}`;
+}
+
+/** Returns null when any selected member lacks a unique identity in either version. */
+export function reconcileSelection(
+  selection: Selection,
+  from: DesignScene,
+  to: DesignScene,
+): Selection | null {
+  const unique = (scene: DesignScene) => {
+    const map = new Map<string, string | null>();
+    for (const item of scene.items) {
+      const key = identity(item, scene);
+      if (key !== null) map.set(key, map.has(key) ? null : item.id);
+    }
+    return map;
+  };
+  const before = unique(from),
+    after = unique(to);
+  const mapped = (id: string | null): string | null | undefined => {
+    if (id === null) return null;
+    const item = from.items.find((i) => i.id === id);
+    const key = item ? identity(item, from) : null;
+    if (key === null || !before.get(key)) return undefined;
+    return after.get(key) ?? undefined;
+  };
+  const ids = selection.bodyItemIds.map(mapped);
+  const primary = mapped(selection.primaryId),
+    cell = mapped(selection.cellTargetId);
+  if (ids.includes(undefined) || primary === undefined || cell === undefined)
+    return null;
+  return {
+    version: to.version,
+    bodyItemIds: ids as string[],
+    primaryId: primary,
+    cellTargetId: cell,
+  };
 }

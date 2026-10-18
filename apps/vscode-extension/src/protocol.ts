@@ -10,25 +10,31 @@ export class DocumentBinding {
   private ready = false;
   private readonly requests = new Set<string>();
   private ids: ReadonlySet<string>;
+  private sourceIds: ReadonlySet<string>;
   private capabilities: ReadonlySet<string>;
+  /** `sourceIds` may name any element, including preservation-only ones; it never authorizes edits. */
   constructor(
     readonly uri: string,
     private version: number,
     ids: readonly string[],
     capabilities: readonly string[],
+    sourceIds: readonly string[] = ids,
   ) {
     this.ids = new Set(ids);
+    this.sourceIds = new Set(sourceIds);
     this.capabilities = new Set(capabilities);
   }
   update(
     version: number,
     ids: readonly string[],
     capabilities: readonly string[],
+    sourceIds: readonly string[] = ids,
   ): void {
     if (!Number.isSafeInteger(version) || version < this.version)
       throw new Error('Invalid document version');
     this.version = version;
     this.ids = new Set(ids);
+    this.sourceIds = new Set(sourceIds);
     this.capabilities = new Set(capabilities);
   }
   receive(input: unknown): Result {
@@ -52,7 +58,8 @@ export class DocumentBinding {
     if (message.kind === 'openSource') {
       if (
         message.version !== this.version ||
-        (message.targetId !== undefined && !this.ids.has(message.targetId))
+        (message.targetId !== undefined &&
+          !this.sourceIds.has(message.targetId))
       )
         return reject('Stale or foreign source target');
       return { ok: true, message };

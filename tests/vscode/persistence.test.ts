@@ -3,9 +3,13 @@ import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { replaceSource, until } from './session-checks.js';
+import { observe, replaceSource, until } from './session-checks.js';
+import { FailingFileSystem } from './failing-file-system.js';
+import { parse } from '@rdlc/xml-parser/parser';
+import { projectReport } from '@rdlc/xml-parser/project-report';
 
 export async function run(): Promise<void> {
+  await interactiveFailures();
   const source = readFileSync(
     resolve(__dirname, '../../../tests/fixtures/textboxes/supported.rdlc'),
     'utf8',
@@ -63,4 +67,139 @@ export async function run(): Promise<void> {
   await vscode.commands.executeCommand('workbench.action.files.revert');
   assert.equal(document.getText(), source);
   watcher.dispose();
+}
+
+const mixed = readFileSync(
+  resolve(__dirname, '../../../tests/fixtures/interactive/mixed.rdlc'),
+  'utf8',
+);
+
+function move(document: vscode.TextDocument, requestId: string, dxPt = 5) {
+  const report = projectReport(
+    parse({
+      uri: document.uri.toString(),
+      version: document.version,
+      source: document.getText(),
+      eol: '\n',
+    }),
+  );
+  return {
+    protocol: 1,
+    kind: 'edit',
+    requestId,
+    baseVersion: document.version,
+    operation: 'layout',
+    payload: {
+      action: 'move',
+      targetIds: [report.textboxes.find((t) => t.name === 'Front')!.node.id],
+      dxPt,
+      dyPt: 0,
+      unit: 'pt',
+    },
+  };
+}
+
+/** Interactive edits keep native encoding/EOL, failed saves, uncertain applies and closes safe. */
+async function interactiveFailures(): Promise<void> {
+  const directory = mkdtempSync(join(tmpdir(), 'rdlc-interactive-persist-'));
+  const file = join(directory, 'bom-crlf.rdlc');
+  const crlf = mixed.replace(/\r?\n/g, '\r\n');
+  writeFileSync(
+    file,
+    Buffer.concat([Buffer.from([239, 187, 191]), Buffer.from(crlf)]),
+  );
+  const document = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(document);
+  const view = observe(document);
+  try {
+    view.session.receive(move(document, 'encoded-move'));
+    await until(
+      () => view.messages.some((m) => m.kind === 'editResult' && m.accepted),
+      'Encoded layout move',
+    );
+    const accepted = document.getText();
+    assert.notEqual(accepted, crlf);
+    // Uncertain native apply: the host claims success but the document never changes.
+    const uncertain = observe(document, async () => true);
+    try {
+      uncertain.session.receive(move(document, 'uncertain-move', 7));
+      await until(
+        () => uncertain.messages.some((m) => m.kind === 'editResult'),
+        'Uncertain apply settles',
+      );
+      assert.ok(
+        uncertain.messages.some(
+          (m) =>
+            m.kind === 'editResult' &&
+            !m.accepted &&
+            m.reason === 'DOCUMENT_CHANGED_DURING_APPLY',
+        ),
+      );
+      assert.ok(
+        uncertain.messages.some(
+          (m) => m.kind === 'snapshot' && m.version === document.version,
+        ),
+        'Actual accepted state is published',
+      );
+      assert.equal(document.getText(), accepted, 'Accepted unsaved work kept');
+      assert.equal(document.isDirty, true);
+    } finally {
+      uncertain.dispose();
+    }
+    assert.equal(await document.save(), true);
+    const bytes = readFileSync(file);
+    assert.deepEqual([...bytes.subarray(0, 3)], [239, 187, 191], 'BOM kept');
+    const saved = bytes.subarray(3).toString();
+    assert.equal(saved, accepted);
+    assert.ok(!/[^\r]\n/.test(saved), 'CRLF kept for every line');
+  } finally {
+    view.dispose();
+  }
+
+  const volume = new FailingFileSystem(Buffer.from(mixed));
+  const registration = vscode.workspace.registerFileSystemProvider(
+    'rdlc-interactive-failure',
+    volume,
+  );
+  const failing = await vscode.workspace.openTextDocument(
+    vscode.Uri.parse('rdlc-interactive-failure:/report.rdlc'),
+  );
+  const failingView = observe(failing);
+  try {
+    failingView.session.receive(move(failing, 'before-failed-save'));
+    await until(
+      () =>
+        failingView.messages.some((m) => m.kind === 'editResult' && m.accepted),
+      'Layout before failed save',
+    );
+    const pending = failing.getText();
+    volume.failWrites = true;
+    assert.equal(await failing.save(), false);
+    assert.equal(failing.isDirty, true);
+    assert.equal(failing.getText(), pending);
+    assert.equal(Buffer.from(volume.bytes).toString(), mixed);
+    // Closing a view while its apply is pending neither reports nor replays the edit.
+    let release: (applied: boolean) => void = () => {};
+    let applies = 0;
+    const closing = observe(failing, () => {
+      applies++;
+      return new Promise<boolean>((resolve) => (release = resolve));
+    });
+    closing.session.receive(move(failing, 'closed-during-apply', 9));
+    await until(() => applies === 1, 'Apply started');
+    const before = closing.messages.length;
+    closing.dispose();
+    release(false);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(closing.messages.length, before);
+    assert.equal(applies, 1, 'No retry after close');
+    assert.equal(failing.getText(), pending);
+    volume.failWrites = false;
+    assert.equal(await failing.save(), true);
+    assert.equal(Buffer.from(volume.bytes).toString(), pending);
+  } finally {
+    failingView.dispose();
+    registration.dispose();
+    volume.dispose();
+  }
 }

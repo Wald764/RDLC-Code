@@ -18,7 +18,7 @@
       <input #name required pattern="[A-Za-z_][A-Za-z0-9_]*" /></label
     ><button type="submit">Create textbox</button>
   </form>
-  @if (selected(); as item) {
+  @if (deletable(); as item) {
     <form
       aria-label="Delete textbox"
       (submit)="

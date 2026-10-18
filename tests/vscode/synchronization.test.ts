@@ -11,6 +11,7 @@ import { projectReport } from '@rdlc/xml-parser/project-report';
 
 export async function run(): Promise<void> {
   await groupSynchronization();
+  await ambiguousIndependentChange();
   const source = readFileSync(
     resolve(__dirname, '../../../tests/fixtures/textboxes/supported.rdlc'),
     'utf8',
@@ -477,5 +478,88 @@ async function groupSynchronization(): Promise<void> {
   } finally {
     a.dispose();
     b.dispose();
+  }
+}
+
+/** An independent edit that makes identity ambiguous never lets a stale target replay. */
+async function ambiguousIndependentChange(): Promise<void> {
+  const source = readFileSync(
+    resolve(__dirname, '../../../tests/fixtures/interactive/mixed.rdlc'),
+    'utf8',
+  );
+  const file = join(
+    mkdtempSync(join(tmpdir(), 'rdlc-ambiguous-')),
+    'report.rdlc',
+  );
+  writeFileSync(file, source);
+  const document = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(document);
+  const view = observe(document);
+  try {
+    await until(
+      () => view.messages.some((m) => m.kind === 'snapshot'),
+      'Initial snapshot',
+    );
+    const front = projectReport(
+      parse({
+        uri: document.uri.toString(),
+        version: document.version,
+        source,
+        eol: '\n',
+      }),
+    ).textboxes.find((t) => t.name === 'Front')!.node.id;
+    const stale = {
+      protocol: 1,
+      kind: 'edit',
+      requestId: 'stale-ambiguous',
+      baseVersion: document.version,
+      operation: 'layout',
+      payload: {
+        action: 'move',
+        targetIds: [front],
+        dxPt: 4,
+        dyPt: 0,
+        unit: 'pt',
+      },
+    };
+    // Independent edit: an earlier sibling now shares the same name.
+    const independent = source.replace(
+      '<Textbox Name="Behind">',
+      '<Textbox Name="Front">',
+    );
+    assert.notEqual(independent, source);
+    await replaceSource(document, independent);
+    await until(
+      () =>
+        view.messages.some(
+          (m) => m.kind === 'snapshot' && m.version === document.version,
+        ),
+      'Independent snapshot published',
+    );
+    const errors = view.messages.filter(
+      (m) => m.kind === 'protocolError',
+    ).length;
+    view.session.receive(stale);
+    await until(
+      () =>
+        view.messages.filter((m) => m.kind === 'protocolError').length >
+          errors ||
+        view.messages.some(
+          (m) => m.kind === 'editResult' && m.requestId === stale.requestId,
+        ),
+      'Stale target settles',
+    );
+    await new Promise((r) => setTimeout(r, 100));
+    assert.ok(
+      !view.messages.some(
+        (m) =>
+          m.kind === 'editResult' &&
+          m.requestId === stale.requestId &&
+          m.accepted,
+      ),
+    );
+    assert.equal(document.getText(), independent, 'No replay or compensation');
+  } finally {
+    view.dispose();
   }
 }

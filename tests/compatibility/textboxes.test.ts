@@ -93,3 +93,51 @@ test('multiple paragraphs or TextRuns containers remain preservation-only placeh
     assert.equal(renderScene(projection).items[0]!.placeholder, true);
   }
 });
+
+const scene = (path: string) => {
+  const source = readFileSync(`tests/fixtures/interactive/${path}`, 'utf8');
+  const projection = projectReport(
+    parse({ uri: `fixture:${path}`, version: 1, source, eol: '\n' }),
+  );
+  return { projection, scene: renderScene(projection) };
+};
+
+test('unsupported neighbors leave safe geometry editable and never gain rights', () => {
+  const { projection, scene: design } = scene('mixed.rdlc');
+  assert.equal(projection.status, 'editable');
+  const front = design.items.find((i) => i.name === 'Front')!;
+  for (const operation of Object.values(front.operations!))
+    assert.equal(operation.eligible, true);
+  const preserved = design.items.filter((i) => i.kind === 'preserved');
+  assert.ok(preserved.length >= 2);
+  assert.ok(
+    preserved.some((i) => i.bounds === null),
+    'unknown bounds listed',
+  );
+  for (const item of preserved) {
+    assert.equal(item.placeholder, true);
+    assert.deepEqual(item.capabilities, []);
+    for (const operation of Object.values(item.operations!)) {
+      assert.equal(operation.eligible, false);
+      assert.ok(operation.reason, 'locked operations explain why');
+    }
+  }
+  // Baseline textbox authoring remains within the existing profile.
+  assert.ok(front.capabilities?.includes('text'));
+  assert.ok(front.capabilities?.includes('style'));
+});
+
+test('expression-valued geometry stays unevaluated and locks only dependent axes', () => {
+  const { scene: design } = scene('optional-geometry.rdlc');
+  const width = design.items.find((i) => i.name === 'ExpressionWidth')!;
+  assert.equal(width.geometry?.width, '=Fields!Width.Value');
+  assert.equal(width.operations!.resizeX.eligible, false);
+  assert.equal(width.operations!.moveY.eligible, true);
+  assert.equal(width.operations!.resizeY.eligible, true);
+  const height = design.items.find((i) => i.name === 'ExpressionHeight')!;
+  assert.equal(height.operations!.resizeY.eligible, false);
+  assert.equal(height.operations!.resizeX.eligible, true);
+  const position = design.items.find((i) => i.name === 'ExpressionPosition')!;
+  assert.equal(position.operations!.moveX.eligible, false);
+  assert.equal(position.operations!.moveY.eligible, true);
+});

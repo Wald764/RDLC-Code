@@ -154,4 +154,27 @@ describe('authoring forms', () => {
       ).not.toBeNull();
     expect(element.querySelectorAll('fieldset[disabled]').length).toBe(1);
   });
+
+  for (const kind of ['cell', 'table', 'preserved'] as const)
+    it(`grants no textbox deletion to a selected ${kind}`, () => {
+      const fixture = TestBed.createComponent(AuthoringComponent);
+      fixture.componentRef.setInput('state', {
+        id: 'root-1',
+        page: {},
+        datasets: [],
+        tables: [],
+      });
+      fixture.componentRef.setInput('selected', {
+        id: 'x-1',
+        kind,
+        name: 'X',
+        bounds: null,
+        label: 'X',
+        placeholder: kind === 'preserved',
+      });
+      fixture.detectChanges();
+      expect(
+        fixture.nativeElement.querySelector('[aria-label="Delete textbox"]'),
+      ).toBeNull();
+    });
 });

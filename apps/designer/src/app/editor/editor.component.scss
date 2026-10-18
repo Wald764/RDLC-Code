@@ -108,6 +108,8 @@
   cursor: move;
 }
 button:focus-visible,
+input:focus-visible,
+select:focus-visible,
 .feedback:focus-visible {
   outline: 2px solid var(--vscode-focusBorder, #000);
   outline-offset: 2px;
@@ -119,4 +121,13 @@ button:focus-visible,
 .item.placeholder {
   border-style: dashed;
   color: #555;
+}
+.draft,
+.limitations {
+  border: 1px solid var(--vscode-focusBorder, #3366cc);
+  padding: 0.5rem;
+}
+.draft p,
+.limitations p {
+  margin: 0 0 0.5rem;
 }

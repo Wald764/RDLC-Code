@@ -1,5 +1,17 @@
 <section class="editor" aria-label="Report design surface">
-  <div class="feedback" role="status" aria-label="Editor messages" tabindex="0">
+  <div
+    class="feedback"
+    role="status"
+    aria-live="polite"
+    aria-label="Editor messages"
+    tabindex="0"
+  >
+    @if (selectionLost()) {
+      <p>
+        Selection cleared: the selected items could not be identified
+        unambiguously in the changed document.
+      </p>
+    }
     @if (host.notice()) {
       <p>{{ host.notice() }}</p>
     }
@@ -16,6 +28,31 @@
       </p>
     }
   </div>
+  @if (draft(); as current) {
+    <div class="draft" role="group" aria-label="Unapplied draft" data-conflicts>
+      <p role="status">
+        Unapplied draft in
+        {{ current.control.labels?.[0]?.textContent?.trim() || 'a form' }}.
+        @if (conflict()) {
+          Apply or discard it before the new action, or cancel the new action.
+        }
+      </p>
+      <button
+        type="button"
+        data-draft-apply
+        [disabled]="!!host.pending()"
+        (click)="applyDraft()"
+      >
+        Apply draft
+      </button>
+      <button type="button" (click)="discardDraft()">Discard draft</button>
+      @if (conflict()) {
+        <button type="button" (click)="cancelConflict()">
+          Cancel new action
+        </button>
+      }
+    </div>
+  }
   @if (scene(); as design) {
     <p class="status" role="status">
       Design surface — {{ status() }} · {{ design.items.length }} item(s) ·
@@ -24,7 +61,7 @@
         · Primary: {{ item.label }}
       }
     </p>
-    <div role="group" aria-label="Selection and arrangement">
+    <div role="group" aria-label="Selection and arrangement" data-conflicts>
       <button type="button" (click)="selectAll()" [disabled]="!!host.pending()">
         Select All body items
       </button>
@@ -82,6 +119,7 @@
       class="page"
       role="group"
       aria-label="Page"
+      data-conflicts
       [style.width.px]="design.page.width"
       [style.height.px]="design.page.height"
     >
@@ -182,7 +220,7 @@
       </div>
     </div>
     @if (design.items.length) {
-      <ul aria-label="Report items">
+      <ul aria-label="Report items" data-conflicts>
         @for (item of design.items; track $index) {
           <li>
             <button
@@ -217,9 +255,27 @@
           {{ toPt(bounds.height) }}.
         </p>
       }
-      <fieldset [disabled]="!!host.pending()">
-        <rdlc-textbox-properties [item]="item" (commit)="commit($event)" />
-      </fieldset>
+      @if (limitations(); as reasons) {
+        <section class="limitations" role="group" aria-label="Limitations">
+          <p role="status">
+            {{ item.label }} — {{ item.kind ?? 'item' }} limitations:
+          </p>
+          <ul>
+            @for (reason of reasons; track reason) {
+              <li>{{ reason }}</li>
+            }
+          </ul>
+          <button type="button" (click)="openSource()">
+            Open {{ item.label }} in source
+          </button>
+        </section>
+      }
+      <!-- Keyed by version: an accepted or independent snapshot recreates fields, so no stale draft survives. -->
+      @for (version of [host.snapshot()?.version]; track version) {
+        <fieldset [disabled]="!!host.pending()">
+          <rdlc-textbox-properties [item]="item" (commit)="commit($event)" />
+        </fieldset>
+      }
       @for (
         dataset of host.snapshot()?.authoring?.datasets ?? [];
         track dataset.id

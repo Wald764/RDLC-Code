@@ -3,6 +3,7 @@ import {
   Component,
   input,
   output,
+  computed,
   inject,
   ElementRef,
   type AfterViewInit,
@@ -37,6 +38,13 @@ export class AuthoringComponent implements AfterViewInit {
     'bodyWidth',
     'bodyHeight',
   ];
+  /** Only a supported body textbox offers textbox deletion; cells, tables and placeholders never do. */
+  readonly deletable = computed(() => {
+    const item = this.selected();
+    return item && !item.placeholder && (item.kind ?? 'textbox') === 'textbox'
+      ? item
+      : null;
+  });
   ngAfterViewInit(): void {
     // A new accepted version discards drafts and gives keyboard users a stable restart point.
     this.element.nativeElement.focus({ preventScroll: true });
