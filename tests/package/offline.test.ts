@@ -47,6 +47,34 @@ test('packaged webview has nonce-bound local assets and denies network and execu
   }
 });
 
+test('packaged interactive workflows have no network, storage or code-execution channel', async () => {
+  const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+  const entries = await readVsix(`dist/rdlc-code-${version}.vsix`);
+  const manifest = JSON.parse(
+    entries.get('extension/package.json')!.toString(),
+  );
+  // Untrusted local workspaces stay supported; virtual/remote ones are not claimed.
+  assert.deepEqual(manifest.capabilities, {
+    untrustedWorkspaces: { supported: true },
+    virtualWorkspaces: false,
+  });
+  const host = entries.get('extension/build/extension.cjs')!.toString();
+  assert.deepEqual(
+    [
+      ...new Set([...host.matchAll(/require\("([^"]+)"\)/g)].map((m) => m[1])),
+    ].sort(),
+    ['node:crypto', 'node:fs', 'vscode'],
+  );
+  for (const [path, bytes] of entries) {
+    if (!/\.(?:js|cjs)$/.test(path)) continue;
+    assert.doesNotMatch(
+      bytes.toString(),
+      /\bfetch\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon|importScripts|\beval\(|new Function\b|window\.open|navigator\.clipboard|localStorage|indexedDB/,
+      path,
+    );
+  }
+});
+
 test('malicious local and remote entity declarations are rejected without source loss', () => {
   for (const file of ['external-local.rdlc', 'external-remote.rdlc']) {
     const source = readFileSync(`tests/fixtures/security/${file}`, 'utf8');

@@ -24,6 +24,30 @@ uses bundled assets and needs no server, .NET runtime or data connection.
   redo operate on the same text document as source edits.
 - Use **RDLC Code: Open Source** for XML, unsupported content or diagnostics.
 
+### Interactive canvas
+
+Each accepted gesture or command is one host-validated edit and one native Undo
+step; cancelled, refused and no-op actions leave the document and history unchanged.
+
+| Action                         | Pointer / keyboard                                                                 |
+| ------------------------------ | ---------------------------------------------------------------------------------- |
+| Select, add/remove             | Click; Shift+click; marquee on blank canvas; item list; Ctrl/Cmd+A selects all     |
+| Move / resize                  | Drag an item; drag one of eight handles (textboxes and whole tables)               |
+| Align / distribute             | Toolbar: six alignments to the primary item; horizontal/vertical distribution (≥3) |
+| Nudge                          | Arrow keys 1pt, Shift+arrow 10pt (canvas focus; snapping ignored)                  |
+| Snap bypass                    | Hold Alt while dragging; grid and guide visibility/snapping toggle independently   |
+| Zoom / pan                     | Zoom controls 25–400%, Fit Page/Body, Reveal Selection, Ctrl/Cmd+wheel, Space+drag |
+| Copy / Cut / Paste / Duplicate | Ctrl/Cmd+C/X/V and Ctrl/Cmd+D on the canvas, or the labeled buttons                |
+| Cancel                         | Escape cancels a preview, marquee or nudge; otherwise clears the selection         |
+
+Shortcuts apply only on the canvas; form fields keep their normal typing,
+clipboard and arrow behavior. Numerical property forms remain available for
+precise sizing. Zoom, scroll, unit, grid and guide preferences are per view and
+never written to the report. Paste offsets 10pt, then 20pt, per successful paste;
+Duplicate offsets 10pt and does not touch the clipboard. Clipboard reuse works
+within one VS Code window and refuses selections whose dependencies, scopes,
+names or foreign metadata cannot be proven safe; Copy then explains why.
+
 ## Supported authoring profile
 
 - RDL namespace `http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition`,
@@ -54,12 +78,15 @@ they do not truncate source or restrict native source editing.
 External RDLC designer/runtime acceptance is separate from XML authoring support;
 no universal consumer-compatibility claim is made. Browser-hosted and remote
 workspaces are not supported targets. Native dialog, installed isolation,
-performance/usability and multi-OS evidence still have outstanding obligations.
+performance/usability and multi-OS evidence still have outstanding obligations;
+interactive-designer keyboard-only, cross-platform and timed-workflow acceptance
+is pending (see [the interactive validation record](docs/validation/interactive-designer.md)).
 See [validation records](docs/validation/) and [release requirements](docs/releases.md).
 
 ## Development
 
 Use [CONTRIBUTING.md](CONTRIBUTING.md). Architecture and acceptance scenarios are
-in [the feature specification](specs/001-rdlc-vscode-editor/spec.md).
+in [the feature specification](specs/001-rdlc-vscode-editor/spec.md) and the
+[interactive designer specification](specs/002-interactive-visual-designer/spec.md).
 Microsoft reference material in `vendor/` is read-only and retains its own
 notices; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

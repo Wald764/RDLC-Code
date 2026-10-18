@@ -2,7 +2,7 @@
 
 ## Current status
 
-Phase 1 setup (T001–T003), Phase 2 foundation (T004–T013), US1 direct manipulation (T014–T026), US2 selection/arrangement (T027–T035), US5 limits/drafts (T036–T045) US3 navigation/precision (T046–T059) and US4 clipboard reuse (T060–T079) reached their automated implementation checkpoints on 2026-10-18. Final acceptance (T080–T086) and full-feature installed/manual/timed acceptance remain pending; these automated results do not establish installed clipboard evidence (E07) or latency targets.
+Phase 1 setup (T001–T003), Phase 2 foundation (T004–T013), US1 direct manipulation (T014–T026), US2 selection/arrangement (T027–T035), US5 limits/drafts (T036–T045) US3 navigation/precision (T046–T059) and US4 clipboard reuse (T060–T079) reached their automated implementation checkpoints on 2026-10-18. Final acceptance automation (T080–T081, T085–T086) is complete: the full gate sequence passes, including the newly built VSIX installed in VS Code 1.142.0 on Windows. SC-005 latency measurement (T082) was removed by owner decision on 2026-10-18. **Full feature acceptance is not established**: T083 (installed keyboard-only/offline runs on Windows, macOS and Linux) and T084 (SC-001 timed workflow) require operator runs and remain pending. See [final acceptance evidence](#final-acceptance-evidence-t080t086).
 
 The [implementation ledger](../../specs/002-interactive-visual-designer/checklists/implementation.md) records baseline details, fixture provenance and all FR/SC task/test mappings. Procedures and the presentation-timing collection protocol are in the [validation guide](../../specs/002-interactive-visual-designer/quickstart.md).
 
@@ -213,6 +213,58 @@ Limits: Cut removes root elements only; surrounding indentation stays. Only the 
 
 `pnpm package`/`test:package` were not run for this phase; E07 stays pending until the installed clipboard scenario runs.
 
+## Final acceptance evidence (T080–T086)
+
+Checkout: `14093cbbc19c8ce6a3c274fef754a7d297e76f2e` plus the Phase 8 changes committed with this record. Environment: Windows NT 10.0.26300.0, isolated Node 24.22.0 / pnpm 11.28.2, VS Code 1.142.0 (development and installed-VSIX runs). VSIX `dist/rdlc-code-0.1.0.vsix` SHA-256 `23686cbb6a48205947ce14e8677c382678184219b41e3c79e0642a031c92b613` (local build; not a release artifact). Logs: `%TEMP%\interactive-phase8\`.
+
+| Task | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T080 | `tests/vscode/lifecycle.test.ts` `mixedHistory`: twenty accepted operations on `mixed.rdlc` through one session (two distributions, four moves including group and 1pt/10pt nudges, four resizes including whole-table `se`/`e`, four alignments, two Duplicates, two Pastes, one Cut, a final group move), then twenty native Undos and twenty Redos comparing the complete source and the selected items' structural identity at every step, then Save. Every five steps a no-op move, locked-member alignment, stale-version move and Copy are sent; each leaves text unchanged, and the exact Undo/Redo sequence proves they added no history step. Save/close/read-only/encoding/EOL/multi-view checks in `persistence`/`synchronization` are retained unchanged and pass. |
+| T081 | `tests/package/offline.test.ts`: the built VSIX declares untrusted-workspace support and no virtual-workspace claim; the host bundle requires only `node:crypto`, `node:fs` and `vscode`; no packaged script contains fetch/XHR/WebSocket/EventSource/beacon/importScripts/eval/`new Function`/`window.open`/webview clipboard/storage APIs. Existing CSP, nonce, local-asset and entity-refusal checks pass. The packaged native suites ran against the installed VSIX with workspace trust disabled; trusted versus untrusted installed runs stay in T083/E06.                                                                                                                                                                                                                |
+| T082 | **Removed by owner decision (2026-10-18).** The SC-005 latency collector, performance fixture and validator extension were withdrawn; no latency evidence is required or claimed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| T083 | **Pending.** Installed keyboard-only and offline trusted/untrusted runs need an operator on Windows, macOS and Linux. Not performed; no pass is claimed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| T084 | **Pending.** The SC-001 ≤3-minute timed workflow needs an operator run. No measurement exists; no pass is claimed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| T085 | All gates in validation-guide order passed; see the table below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| T086 | README documents interactive controls, shortcuts and boundaries. Requirement reconciliation below. No `vendor/`, dependency, lockfile or authoring-profile change; no second saved state; no runtime/release claim.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+
+| Check                                | Result                                                                  |
+| ------------------------------------ | ----------------------------------------------------------------------- |
+| `pnpm lint`                          | PASS                                                                    |
+| `pnpm typecheck`                     | PASS; root TypeScript and Angular                                       |
+| `pnpm test:unit`                     | PASS; 97 Node and 115 Angular tests                                     |
+| `pnpm test:roundtrip`                | PASS; 57 tests                                                          |
+| `pnpm test:compatibility`            | PASS; 13 tests                                                          |
+| `pnpm build`                         | PASS                                                                    |
+| `pnpm test:acceptance`               | PASS; 1 test (SC-004 validator)                                         |
+| `pnpm test:vscode` (VS Code 1.142.0) | PASS; all seven native development suites, including the T080 history   |
+| `pnpm package`                       | PASS; `dist/rdlc-code-0.1.0.vsix`                                       |
+| `pnpm test:package`                  | PASS; 5 package tests and all seven native suites on the installed VSIX |
+| `pnpm format:check`                  | PASS                                                                    |
+
+### Requirement reconciliation
+
+The [implementation ledger](../../specs/002-interactive-visual-designer/checklists/implementation.md) remains the unmodified planning map (checklist files are read-only during implementation). Its rows reconcile as follows; "automated" means the mapped tests exist and pass, never that the installed/timed gate passed.
+
+| Requirements                                                               | Automated coverage (all passing)                      | Installed / timed gate | Status                            |
+| -------------------------------------------------------------------------- | ----------------------------------------------------- | ---------------------- | --------------------------------- |
+| FR-001–FR-004 selection, identity, order, continuity                       | designer, scene, host, native                         | E02, E04, E05          | Automated pass; installed pending |
+| FR-005–FR-010 move, handles, tables, atomicity, cancellation, units        | host, designer, layout, roundtrip, native (T080)      | E01, E03, E04, E08     | Automated pass; installed pending |
+| FR-011–FR-016 zoom, transforms, preferences, snapping, arrangement, nudges | designer, roundtrip/precision, native                 | E02, E03, E05          | Automated pass; installed pending |
+| FR-017–FR-021 clipboard reuse, identities, Cut                             | clipboard, roundtrip, host, native                    | E05, E07, E08          | Automated pass; installed pending |
+| FR-022–FR-024 forms/drafts, lifecycle, lexical preservation                | designer, compatibility, roundtrip, native            | E04, E07, E08          | Automated pass; installed pending |
+| FR-025 unsupported/security/offline boundary                               | host, compatibility, clipboard, packaged (T081)       | E04, E06, E07          | Automated pass; installed pending |
+| FR-026 keyboard/focus/announcements                                        | designer                                              | E05                    | Automated pass; installed pending |
+| FR-027 complete acceptance matrix                                          | all suites                                            | E01–E08                | **Open**: T083/T084 outstanding   |
+| SC-001 three-minute workflow                                               | supporting checks only                                | E01                    | **Pending** (T084)                |
+| SC-002 exact changes/restoration, SC-003 twenty-step history               | layout, roundtrip, host, native (T080)                | E08                    | Automated pass; installed pending |
+| SC-004 zoom/unit/nudge precision                                           | geometry, designer, roundtrip/precision               | E03                    | Automated pass; installed pending |
+| SC-005 presented-feedback latency                                          | none                                                  | none                   | Removed by owner decision         |
+| SC-006 keyboard-only workflow                                              | designer                                              | E05                    | **Pending** (T083)                |
+| SC-007 clipboard preservation/refusal                                      | clipboard, roundtrip, host, native                    | E07                    | Automated pass; installed pending |
+| SC-008 installed offline inert workflows                                   | packaged checks and installed native suites (Windows) | E06                    | **Pending** (T083)                |
+
+Apart from SC-005, removed explicitly by the owner, no obligation is waived: E01–E08 below stay Pending until operator runs are recorded.
+
 ## Pending installed and timed evidence
 
 Full-feature entries remain **Pending**, not passed or waived. US1's automated portion is recorded above; it does not complete the combined timed E01 workflow. Record actual candidate commit/VSIX SHA-256, fixture, OS/VS Code version, procedure and result per run. Keep failed/unavailable evidence explicit. E01–E08 are stable ledger references, not additional acceptance requirements.
@@ -221,31 +273,16 @@ Full-feature entries remain **Pending**, not passed or waived. US1's automated p
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- | ----------------------------------------- |
 | E01 | All eight textbox/table handles, fixed edges, proportional totals, mixed/implicit sizes, overflow, cancellation/no-op/refusal and native Undo. Timed selection → diagonal drag → corner resize → alignment → duplicate → save/reopen in ≤3 minutes without source edits/typed coordinates.       | T026, T084; FR-005–FR-010; SC-001                     | Pending                                   |
 | E02 | Click/Shift/marquee/list selection, primary, obscured/unknown items, mixed moves, six alignments/two distributions, locked/invalid/negative-gap refusal and selection survival.                                                                                                                  | T035; FR-001–FR-004, FR-015                           | Pending                                   |
-| E03 | Equivalent geometry at 25/50/100/200/400%, scroll/nondefault display scaling, snapping/Alt, independent view preferences, 100 forward/backward nudges. Separate real presented-frame latency series at 100/200%, including 20-item moves.                                                        | T059, T082, T084; SC-004–SC-005                       | Pending                                   |
+| E03 | Equivalent geometry at 25/50/100/200/400%, scroll/nondefault display scaling, snapping/Alt, independent view preferences, 100 forward/backward nudges.                                                                                                                                           | T059; SC-004                                          | Pending                                   |
 | E04 | Draft Apply/Discard/Cancel, limitation/source access and baseline forms; independent changes during preview/pending; uncertain/read-only apply, failed Save/Save As and close cancellation preserve accepted unsaved content.                                                                    | T045; FR-009, FR-022–FR-025                           | Pending                                   |
 | E05 | Installed keyboard-only selection, all alignments/distributions, nudge, numerical sizing, clipboard, zoom, Reveal Selection, Undo/Redo and Save; labels/live feedback/visible usable focus; ordinary input shortcuts.                                                                            | T083; FR-026; SC-006                                  | Pending separately on Windows/macOS/Linux |
 | E06 | Newly built installed VSIX, offline trusted/untrusted local workspaces, every new workflow; no report-triggered network/resource/data/code/expression activity; unsupported-source access.                                                                                                       | T081, T083; FR-025; SC-008                            | Pending separately on Windows/macOS/Linux |
 | E07 | Positive same/cross-document subtree reuse plus every refusal: grouped/mixed content, unique nested names/references, namespace/metadata proof, omitted sizes across destination bodies, offsets/reveal, clipboard failures/races, unchanged Duplicate clipboard and exact one-step restoration. | T079; FR-017–FR-021, FR-024; SC-007                   | Pending                                   |
 | E08 | Twenty mixed accepted operations, twenty native Undos/Redos, exact whole-source/selection each step; zero extra steps for stale/refused/no-op/cancelled cases; split views, persistence, encoding/EOL and lexical footprints.                                                                    | T080, T085–T086; FR-008, FR-023–FR-024; SC-002–SC-003 | Pending                                   |
 
-### Performance run record (E03 / SC-005)
-
-| Field                                                             | Value                       |
-| ----------------------------------------------------------------- | --------------------------- |
-| Candidate commit / VSIX SHA-256                                   | Pending                     |
-| CPU / RAM / OS / display scaling / VS Code                        | Pending                     |
-| Fixture identity, ≤1 MiB and 100 selectable body items            | Pending T082 fixture        |
-| Installed-driver invocation / raw collector exports               | Pending T082 implementation |
-| Monotonic clock alignment / trace and presented-frame references  | Pending                     |
-| 100% feedback series, ≥95/100 ≤50ms per applicable series         | Pending                     |
-| 200% feedback series, ≥95/100 ≤50ms per applicable series         | Pending                     |
-| 100% accepted-edit series including 20-item moves, ≥95/100 ≤200ms | Pending                     |
-| 200% accepted-edit series including 20-item moves, ≥95/100 ≤200ms | Pending                     |
-| Slow, failed and unresolved sample exports                        | Pending; retain these runs  |
-
-DOM mutation, host completion and animation callbacks alone are not painted-result evidence. Synthetic records test only the collector/validator, never satisfy acceptance.
-
 ## Final automated gates
+
+Phase 8: T080–T081 and T085–T086 are complete, with evidence above; T082 was removed by owner decision; T083 and T084 stay unchecked because they need installed operator runs. `pnpm format:check` and `git diff --check` pass. The extension hooks file contains `hooks: {}`.
 
 Phase 7: T060–T079 are complete, with automated evidence above; E07 installed evidence is explicitly pending. `git diff --check` and `pnpm format:check` pass. The extension hooks file contains `hooks: {}`.
 
@@ -258,8 +295,6 @@ Phase 3 final checks passed: `pnpm format:check` and `git diff --check`; all thi
 Phase 2 final checks passed: `pnpm format:check` and `git diff --check`; T004–T013 are marked complete. The post-implementation hooks check found no `.specify/extensions.yml`. No vendor, dependency or lockfile changes were introduced.
 
 Phase 1 final checks passed: `pnpm format:check`, `git diff --check`, complete 27-FR/8-SC ledger coverage and T001–T003 completion markers. No vendor files changed; no extension hooks file was present.
-
-T085 will record lint, typecheck, unit, roundtrip, compatibility, build, acceptance, native, package and installed-package results in validation-guide order, followed by format checking. Setup ran only the baseline subset and fixture checks above; full-feature/packaged acceptance is pending.
 
 ## Boundaries
 

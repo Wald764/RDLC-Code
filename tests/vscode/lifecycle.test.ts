@@ -14,6 +14,8 @@ import {
 import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
 import { toPoints } from '@rdlc/report-model/geometry';
+import { WindowClipboard } from '../../apps/vscode-extension/src/clipboard.js';
+import { memory, view } from './clipboard.test.js';
 
 async function directManipulation(): Promise<void> {
   const source = readFileSync(
@@ -126,7 +128,269 @@ async function directManipulation(): Promise<void> {
   }
 }
 
+/** T080: twenty mixed accepted operations, then twenty native Undos and Redos. */
+async function mixedHistory(): Promise<void> {
+  const source = readFileSync(
+    resolve(__dirname, '../../../tests/fixtures/interactive/mixed.rdlc'),
+    'utf8',
+  )
+    .replace(
+      '<Top>18pt</Top><Left>12pt</Left><Height>36pt</Height><Width>144pt</Width>',
+      '<Top>160pt</Top><Left>240pt</Left><Height>36pt</Height><Width>144pt</Width>',
+    )
+    .replace('<Top>1in</Top><Left>12pt', '<Top>320pt</Top><Left>480pt');
+  const file = join(mkdtempSync(join(tmpdir(), 'rdlc-mixed-')), 'report.rdlc');
+  writeFileSync(file, source);
+  const document = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(document);
+  const v = view(document, new WindowClipboard(memory()));
+  const project = () =>
+    projectReport(
+      parse({
+        uri: document.uri.toString(),
+        version: document.version,
+        source: document.getText(),
+        eol: '\n',
+      }),
+    );
+  const item = (name: string) => {
+    const report = project();
+    return (report.tables.find((t) => t.name === name) ??
+      report.textboxes.find((t) => t.name === name))!;
+  };
+  const ids = (...names: string[]) => names.map((name) => item(name).node.id);
+  const corner = (name: string) => {
+    const bounds = item(name).bounds;
+    return {
+      x: (toPoints(bounds.left) ?? 0) + (toPoints(bounds.width) ?? 0),
+      y: (toPoints(bounds.top) ?? 0) + (toPoints(bounds.height) ?? 0),
+    };
+  };
+  let count = 0;
+  const layout = async (
+    payload: LayoutIntent['payload'],
+    base = document.version,
+    refusal = false,
+  ) => {
+    const requestId = `mixed-${++count}`;
+    const errors = v.messages.filter((m) => m.kind === 'protocolError').length;
+    v.session.receive({
+      protocol: 1,
+      kind: 'edit',
+      requestId,
+      baseVersion: base,
+      operation: 'layout',
+      payload,
+    });
+    await until(
+      () =>
+        v.messages.some(
+          (m) => m.kind === 'editResult' && m.requestId === requestId,
+        ) ||
+        (refusal &&
+          v.messages.filter((m) => m.kind === 'protocolError').length > errors),
+      requestId,
+    );
+    const result = v.messages.find(
+      (m) => m.kind === 'editResult' && m.requestId === requestId,
+    );
+    return result?.kind === 'editResult' ? result : undefined;
+  };
+  const text = { unit: 'pt' as const };
+  /** Each accepted step yields its source and the names its result selects. */
+  const steps: (() => Promise<string[]>)[] = [
+    ...(['horizontal', 'vertical'] as const).map((axis) => async () => {
+      const r = await layout({
+        ...text,
+        action: 'distribute',
+        axis,
+        targetIds: ids('Front', 'LaterTie', 'OrdersTable'),
+      });
+      assert.ok(r?.accepted && r.changed, JSON.stringify(r));
+      return ['Front', 'LaterTie', 'OrdersTable'];
+    }),
+    ...(
+      [
+        [['Front', 'LaterTie', 'OrdersTable'], 9, 7],
+        [['Front'], 3, 4],
+        [['Behind'], 1, 0],
+        [['Behind'], 0, 10],
+      ] as const
+    ).map(([names, dxPt, dyPt]) => async () => {
+      const r = await layout({
+        ...text,
+        action: 'move',
+        targetIds: ids(...names),
+        dxPt,
+        dyPt,
+      });
+      assert.ok(r?.accepted && r.changed, JSON.stringify(r));
+      return [...names];
+    }),
+    ...(
+      [
+        ['Front', 'se', 6],
+        ['Front', 'nw', -2],
+        ['OrdersTable', 'se', 12],
+        ['OrdersTable', 'e', -6],
+      ] as const
+    ).map(([name, handle, delta]) => async () => {
+      const { x, y } = corner(name);
+      const bounds = item(name).bounds;
+      const r = await layout({
+        ...text,
+        action: 'resize',
+        targetIds: ids(name),
+        handle,
+        xPt: handle === 'nw' ? (toPoints(bounds.left) ?? 0) - delta : x + delta,
+        ...(handle === 'e'
+          ? {}
+          : {
+              yPt:
+                handle === 'nw'
+                  ? (toPoints(bounds.top) ?? 0) - delta
+                  : y + delta,
+            }),
+      });
+      assert.ok(r?.accepted && r.changed, JSON.stringify(r));
+      return [name];
+    }),
+    ...(['top', 'center', 'right', 'bottom'] as const).map(
+      (mode) => async () => {
+        const targetIds = ids('Front', 'LaterTie', 'OrdersTable');
+        const r = await layout({
+          ...text,
+          action: 'align',
+          mode,
+          targetIds,
+          primaryId: targetIds[1]!,
+        });
+        assert.ok(r?.accepted && r.changed, JSON.stringify(r));
+        return ['Front', 'LaterTie', 'OrdersTable'];
+      },
+    ),
+    ...['Front', 'Behind'].map((name) => async () => {
+      const r = await v.send('duplicate', [name]);
+      assert.ok(r.changed, r.reason);
+      return [];
+    }),
+    async () => {
+      assert.ok((await v.send('copy', ['Behind'])).accepted);
+      const r = await v.send('paste');
+      assert.ok(r.changed, r.reason);
+      return [];
+    },
+    async () => {
+      const r = await v.send('paste');
+      assert.ok(r.changed, r.reason);
+      return [];
+    },
+    async () => {
+      const r = await v.send('cut', ['LaterTie']);
+      assert.ok(r.changed, r.reason);
+      assert.equal(r.removed.length, 1);
+      return ['Front'];
+    },
+    async () => {
+      const r = await layout({
+        ...text,
+        action: 'move',
+        targetIds: ids('Front', 'OrdersTable'),
+        dxPt: -4,
+        dyPt: 2,
+      });
+      assert.ok(r?.accepted && r.changed, JSON.stringify(r));
+      return ['Front', 'OrdersTable'];
+    },
+  ];
+  assert.equal(steps.length, 20);
+  /** Rejected, stale, cancelled and no-op requests: zero text/history change. */
+  const inert = async () => {
+    const before = document.getText();
+    const noop = await layout({
+      ...text,
+      action: 'move',
+      targetIds: ids('Front'),
+      dxPt: 0,
+      dyPt: 0,
+    });
+    assert.ok(noop?.accepted && !noop.changed, JSON.stringify(noop));
+    const scene = v.messages.findLast(
+      (m) => m.kind === 'snapshot' && m.version === document.version,
+    );
+    assert.ok(scene?.kind === 'snapshot');
+    const preserved = scene.scene!.items.find((i) => i.kind === 'preserved')!;
+    const locked = await layout(
+      {
+        ...text,
+        action: 'align',
+        mode: 'left',
+        targetIds: [...ids('Front'), preserved.id],
+        primaryId: ids('Front')[0]!,
+      },
+      document.version,
+      true,
+    );
+    assert.equal(locked?.accepted ?? false, false, 'locked member refuses');
+    const errors = v.messages.length;
+    await layout(
+      { ...text, action: 'move', targetIds: ids('Front'), dxPt: 1, dyPt: 1 },
+      document.version - 1,
+      true,
+    );
+    assert.ok(v.messages.length > errors, 'stale request settles');
+    assert.equal((await v.send('copy', ['Front'])).changed, false);
+    assert.equal(document.getText(), before);
+  };
+  const states = [{ source, selected: [] as string[] }];
+  try {
+    for (const [index, step] of steps.entries()) {
+      const selected = await step();
+      states.push({ source: document.getText(), selected });
+      assert.notEqual(
+        states[index]!.source,
+        document.getText(),
+        `Step ${index}`,
+      );
+      if (index % 5 === 4) await inert();
+    }
+    const names = (s: string) =>
+      new Set(
+        [
+          ...projectReport(
+            parse({ uri: 'x', version: 1, source: s, eol: '\n' }),
+          ).textboxes,
+          ...projectReport(
+            parse({ uri: 'x', version: 1, source: s, eol: '\n' }),
+          ).tables,
+        ].map((i) => i.name),
+      );
+    // Selection survives by unambiguous structural name at each restored state.
+    const check = (index: number, label: string) => {
+      assert.equal(document.getText(), states[index]!.source, label);
+      const present = names(states[index]!.source);
+      for (const name of states[index]!.selected)
+        assert.ok(present.has(name), `${label}: ${name} selectable`);
+    };
+    for (let index = 19; index >= 0; index--) {
+      await vscode.commands.executeCommand('undo');
+      check(index, `Mixed undo ${index}`);
+    }
+    assert.equal(document.isDirty, false);
+    for (let index = 1; index <= 20; index++) {
+      await vscode.commands.executeCommand('redo');
+      check(index, `Mixed redo ${index}`);
+    }
+    assert.equal(await document.save(), true);
+    assert.equal(readFileSync(file, 'utf8'), states[20]!.source);
+  } finally {
+    v.dispose();
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+  }
+}
+
 export async function run(): Promise<void> {
+  await mixedHistory();
   await directManipulation();
   await arrangement();
   await nudging();
