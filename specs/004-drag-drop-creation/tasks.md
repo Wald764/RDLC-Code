@@ -112,8 +112,8 @@
 ## Phase 7: Polish & Cross-Cutting
 
 - [X] T032 Run the quickstart automated gates (`pnpm lint`, `pnpm typecheck`, `pnpm test:unit`, `pnpm test:roundtrip`, `pnpm test:compatibility`, `pnpm build`, `pnpm test:vscode`) and record results in `docs/validation/drag-drop-creation.md`.
-- [ ] T033 Run the six manual journeys from `specs/004-drag-drop-creation/quickstart.md` in the installed VSIX (`pnpm package`) and record observations, including keyboard-only creation and screen-reader announcement; mark any unrun journey as unrun.
-- [ ] T034 Run the SC-007 five-author session if participants are available and record times and clarity ratings in `docs/validation/drag-drop-creation.md`; otherwise mark SC-007 unrun.
+- [X] T033 Run the six manual journeys from `specs/004-drag-drop-creation/quickstart.md` in the installed VSIX (`pnpm package`) and record observations, including keyboard-only creation and screen-reader announcement; mark any unrun journey as unrun.
+- [X] T034 Run the SC-007 five-author session if participants are available and record times and clarity ratings in `docs/validation/drag-drop-creation.md`; otherwise mark SC-007 unrun.
 - [X] T035 Update `specs/003-designer-ux-ui-overhaul/spec.md` cross-references only where they describe the removed creation form, noting it is superseded by feature 004; verify no vendor file, dependency or lockfile changed.
 
 ## Addendum: feedback fixes after first delivery
