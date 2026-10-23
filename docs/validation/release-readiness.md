@@ -26,6 +26,11 @@ explicitly runs with LF and CRLF. The test launcher disables GPU rendering;
 the previously unresponsive Ubuntu minimum-version job now passes. Failed desktop
 jobs retain profile logs for diagnosis.
 
+For tag pushes, commit-subject validation checks the tagged commit instead of
+using the previous tag object's SHA as a branch-range base. That old tag object
+can be absent after an authorized tag correction. Branch/PR range checks are
+unchanged; new-tag pushes already checked only the tagged commit.
+
 ## Maintainer-reported acceptance
 
 On 2026-10-23 the maintainer explicitly confirmed successful manual journeys for
