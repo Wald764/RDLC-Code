@@ -1,13 +1,13 @@
 # Release readiness: 0.2.0
 
 Date: 2026-10-23. Status: **accepted within the evidence boundaries below**.
-Tested candidate: `88a01358bbcaac21d6628713c4a7baf57ef0a817`.
+Tested candidate: `0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5`.
 Root and extension versions are both `0.2.0`; private packages retain their own
 versions. Only this readiness record may change between candidate and release.
 
 ## Candidate checks
 
-Hosted [CI run 40028926039](https://github.com/Wald764/RDLC-Code/actions/runs/40028926039)
+Hosted [CI run 40030382260](https://github.com/Wald764/RDLC-Code/actions/runs/40030382260)
 passed on this exact candidate: quality, all six desktop jobs and Required checks.
 The matrix covers Windows 2022, Ubuntu 24.04 and macOS 14, each on VS Code 1.142.0
 and stable. Every desktop job builds and packages the extension, then runs both
@@ -116,7 +116,7 @@ turn unclaimed results into successful experiments.
 
 ```json
 {
-  "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817",
+  "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5",
   "version": "0.2.0",
   "tools": {
     "node": "24.22.0",
@@ -131,107 +131,107 @@ turn unclaimed results into successful experiments.
     "preservation": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "compatibility": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "lifecycle": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "isolation": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "keyboard": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "licenses": {
       "status": "passed",
       "path": "docs/validation/licenses.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "cross-os": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "v1": {
       "status": "passed",
       "path": "docs/validation/toolchain.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "v2": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "v3": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "v4": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "v5": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "v6": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "v7": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "v8": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "github-auth": {
       "status": "passed",
       "path": "docs/validation/publishing-auth.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "marketplace-auth": {
       "status": "passed",
       "path": "docs/validation/publishing-auth.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "recovery": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "github-actions": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "openvsx-pat-auth": {
       "status": "passed",
       "path": "docs/validation/publishing-auth.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     },
     "openvsx-recovery": {
       "status": "passed",
       "path": "docs/validation/release-readiness.md",
-      "candidate": "88a01358bbcaac21d6628713c4a7baf57ef0a817"
+      "candidate": "0ef58d2a55f17301dd4800cb7f95c3b0174cb1b5"
     }
   }
 }
