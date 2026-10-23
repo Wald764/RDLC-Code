@@ -90,6 +90,25 @@ A published version MUST never be silently overwritten. A conflicting existing v
 release artifact MUST cause an explicit failure rather than replacement. These rules keep
 published packages traceable to reviewed source and consistent across distribution channels.
 
+### VII. Automated Verification First
+
+Every feature MUST define automatically verifiable acceptance criteria before implementation.
+Unit, integration, and end-to-end (E2E) tests MUST cover the affected behaviors at their
+respective levels. All tests MUST run without human intervention. Automated visual tests
+MUST cover features that significantly change the graphical user interface.
+
+Agents MUST prioritize real, deterministic tests over excessive mocking. Mocks MUST NOT
+replace verification of the actual integrations or user workflows required by acceptance
+criteria. Manual validation MUST NOT be a mandatory condition of delivery.
+
+Any behavior that cannot be verified automatically MUST be explicitly reported as a
+limitation and MUST remain unvalidated. All relevant tests MUST be integrated into GitHub
+Actions and run as part of the applicable quality gates. Agents MUST NOT declare a feature
+fully validated when any required test has not been executed or has failed.
+
+These rules make delivery evidence reproducible and prevent unverified behavior from being
+presented as validated.
+
 ## Project Constraints
 
 - Feature specifications MUST define supported RDLC/RDL versions, supported constructs,
@@ -145,4 +164,4 @@ or redefinitions; MINOR for new principles or materially expanded obligations; P
 clarifications that do not change obligations. The ratification date remains the date of
 initial adoption. The initial version is 1.0.0 because the prior file was an unratified scaffold.
 
-**Version**: 1.1.0 | **Ratified**: 2026-10-15 | **Last Amended**: 2026-10-15
+**Version**: 1.2.0 | **Ratified**: 2026-10-15 | **Last Amended**: 2026-10-24
