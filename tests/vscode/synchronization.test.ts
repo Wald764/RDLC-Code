@@ -110,6 +110,58 @@ export async function run(): Promise<void> {
             m.reason === 'DOCUMENT_READ_ONLY',
         ),
       );
+      // Contextual creation and native history get the same read-only refusal.
+      readonlyView.session.receive({
+        protocol: 1,
+        kind: 'edit',
+        requestId: 'readonly-create',
+        baseVersion: readonlyDocument.version,
+        operation: 'author',
+        targetId: parse({
+          uri: readonlyDocument.uri.toString(),
+          version: readonlyDocument.version,
+          source,
+          eol: '\n',
+        }).root!.id,
+        payload: { action: 'createTextbox', left: '1in', top: '1in' },
+      });
+      // History issued while another operation is queued is refused as busy; wait first.
+      await until(
+        () =>
+          readonlyView.messages.some(
+            (m) => m.kind === 'editResult' && m.requestId === 'readonly-create',
+          ),
+        'Read-only creation refusal',
+      );
+      readonlyView.session.receive({
+        protocol: 1,
+        kind: 'history',
+        requestId: 'readonly-undo',
+        baseVersion: readonlyDocument.version,
+        action: 'undo',
+      });
+      await until(
+        () => readonlyView.messages.some((m) => m.kind === 'historyResult'),
+        'Read-only history refusal',
+      );
+      assert.ok(
+        readonlyView.messages.some(
+          (m) =>
+            m.kind === 'editResult' &&
+            m.requestId === 'readonly-create' &&
+            !m.accepted &&
+            m.reason === 'DOCUMENT_READ_ONLY',
+        ),
+      );
+      assert.ok(
+        readonlyView.messages.some(
+          (m) =>
+            m.kind === 'historyResult' &&
+            !m.accepted &&
+            !m.changed &&
+            /read-only/.test(m.reason ?? ''),
+        ),
+      );
       assert.equal(readonlyApplies, 0);
       assert.equal(readonlyDocument.getText(), source);
       assert.equal(readonlyDocument.isDirty, false);

@@ -158,6 +158,12 @@
       role="toolbar"
       aria-label="Report commands"
       data-conflicts
+      (focusin)="
+        $any($event.target).scrollIntoView?.({
+          block: 'nearest',
+          inline: 'nearest',
+        })
+      "
     >
       <div role="group" aria-label="Panels">
         <button

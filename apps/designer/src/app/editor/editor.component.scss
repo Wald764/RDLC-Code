@@ -245,6 +245,8 @@
 .compact-right .inspector {
   display: none;
   position: absolute;
+  // A grid area would be the containing block (a 0px column): float over the editor instead.
+  grid-area: auto;
   top: 40px;
   bottom: 28px;
   z-index: 20;
@@ -474,14 +476,15 @@
   transform-origin: 0 0;
   color: #000;
   background: #fff;
+  // Page and body outlines keep >=3:1 against the canvas and the white page in every theme.
   box-shadow:
-    0 0 0 1px #00000014,
+    0 0 0 1px var(--vscode-contrastBorder, #767676),
     0 2px 10px #0000001f;
 }
 .body {
   touch-action: none;
   position: absolute;
-  outline: 1px dashed #005fb84d;
+  outline: 1px dashed #005fb8b3;
   background-color: transparent;
 }
 .body.grid {

@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateMeasurements } from '../../scripts/validate-acceptance.js';
+import { parse } from '@rdlc/xml-parser/parser';
+import { projectReport } from '@rdlc/xml-parser/project-report';
+import { renderScene } from '@rdlc/renderer/render';
+import { projectStructure } from '@rdlc/renderer/structure';
+import { validateMessage } from '@rdlc/report-model/protocol';
+import { referenceReport } from './reference-report.js';
 
 test('SC-004 requires all samples, exact paint boundaries and both percentile counts', () => {
   const record = {
@@ -32,4 +38,41 @@ test('SC-004 requires all samples, exact paint boundaries and both percentile co
     { hardware: '' },
   ])
     assert.throws(() => validateMeasurements({ ...record, ...change }));
+});
+
+test('the 1 MiB / 100-item reference report fits the bounded hierarchy and snapshot budgets', () => {
+  const source = referenceReport();
+  assert.equal(Buffer.byteLength(source), 1048576);
+  const syntax = parse({
+    uri: 'test:reference',
+    version: 1,
+    source,
+    eol: '\n',
+  });
+  const projection = projectReport(syntax);
+  assert.equal(projection.status, 'editable');
+  const scene = renderScene(projection);
+  const structure = projectStructure(syntax, projection);
+  assert.equal(scene?.items.length, 100);
+  assert.equal(structure.truncated, false);
+  assert.equal(
+    structure.nodes.filter((node) => node.kind === 'textbox').length,
+    100,
+  );
+  assert.ok(
+    validateMessage({
+      protocol: 1,
+      kind: 'snapshot',
+      version: 1,
+      sourceLength: source.length,
+      structure,
+      projection: {
+        status: projection.status,
+        capabilities: projection.capabilities,
+        diagnostics: projection.diagnostics,
+      },
+      scene,
+      authoring: null,
+    }),
+  );
 });
