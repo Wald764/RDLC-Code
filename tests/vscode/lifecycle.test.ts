@@ -393,7 +393,8 @@ async function mixedHistory(): Promise<void> {
 
 export async function run(): Promise<void> {
   await mvpTextboxJourney();
-  await guardedHistoryTargets();
+  await guardedHistoryTargets('\n');
+  await guardedHistoryTargets('\r\n');
   await mixedHistory();
   await directManipulation();
   await arrangement();
@@ -689,17 +690,21 @@ async function mvpTextboxJourney(): Promise<void> {
   }
 }
 
-async function guardedHistoryTargets(): Promise<void> {
+async function guardedHistoryTargets(eol: '\n' | '\r\n'): Promise<void> {
   const source = readFileSync(
     resolve(__dirname, '../../../tests/fixtures/textboxes/supported.rdlc'),
     'utf8',
-  );
+  ).replace(/\r?\n/g, eol);
   const file = join(
     mkdtempSync(join(tmpdir(), 'rdlc-history-guards-')),
     'report.rdlc',
   );
   writeFileSync(file, source);
   const document = await vscode.workspace.openTextDocument(file);
+  const independentChange =
+    source +
+    (document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n') +
+    '<!-- Independent source change -->';
   for (const mode of ['unverifiable', 'activation-race'] as const) {
     const messages: HostMessage[] = [];
     const session = new DocumentSession(
@@ -708,10 +713,7 @@ async function guardedHistoryTargets(): Promise<void> {
       undefined,
       mode === 'activation-race'
         ? async () => {
-            await replaceSource(
-              document,
-              source + '\n<!-- Independent source change -->',
-            );
+            await replaceSource(document, independentChange);
             return true;
           }
         : undefined,
@@ -736,9 +738,7 @@ async function guardedHistoryTargets(): Promise<void> {
     assert.equal(result.changed, mode === 'activation-race');
     assert.equal(
       document.getText(),
-      mode === 'activation-race'
-        ? source + '\n<!-- Independent source change -->'
-        : source,
+      mode === 'activation-race' ? independentChange : source,
     );
     const count = messages.length;
     session.dispose();

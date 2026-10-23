@@ -49,6 +49,7 @@ await runTests({
     '--skip-welcome',
     '--skip-release-notes',
     '--disable-workspace-trust',
+    '--disable-gpu',
     '--no-sandbox',
   ],
 });

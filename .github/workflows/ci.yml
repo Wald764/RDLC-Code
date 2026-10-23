@@ -78,6 +78,14 @@ jobs:
         run: xvfb-run -a pnpm test:package
       - if: runner.os != 'Linux'
         run: pnpm test:package
+      - name: Upload VS Code logs on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vscode-logs-${{ matrix.os }}-${{ matrix.vscode }}
+          path: .vscode-test/profile-*/logs/**
+          if-no-files-found: ignore
+          retention-days: 7
 
   required:
     name: Required checks
