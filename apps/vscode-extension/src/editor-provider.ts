@@ -40,6 +40,18 @@ export class RdlcEditorProvider implements vscode.CustomTextEditorProvider {
     document: vscode.TextDocument,
     panel: vscode.WebviewPanel,
   ): void {
+    panel.iconPath = {
+      light: vscode.Uri.joinPath(
+        this.extensionUri,
+        'media',
+        'rdlc-file-light.svg',
+      ),
+      dark: vscode.Uri.joinPath(
+        this.extensionUri,
+        'media',
+        'rdlc-file-dark.svg',
+      ),
+    };
     const assets = vscode.Uri.joinPath(this.extensionUri, 'build', 'designer');
     panel.webview.options = {
       enableScripts: true,

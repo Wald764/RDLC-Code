@@ -1,0 +1,18 @@
+{
+  "icon": "media/rdlc-logo.png",
+  "galleryBanner": {
+    "color": "#17365A",
+    "theme": "dark"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "rdlcCode",
+          "title": "RDLC Code",
+          "icon": "media/rdlc-activity.svg"
+        }
+      ]
+    }
+  }
+}

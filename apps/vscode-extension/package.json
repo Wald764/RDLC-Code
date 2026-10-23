@@ -7,6 +7,11 @@
   "private": true,
   "type": "module",
   "license": "MIT",
+  "icon": "media/rdlc-logo.png",
+  "galleryBanner": {
+    "color": "#17365A",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.142.0"
   },

@@ -4,3 +4,5 @@
 !THIRD_PARTY_NOTICES.md
 !README.md
 !build/**
+!media/*.png
+!media/*.svg

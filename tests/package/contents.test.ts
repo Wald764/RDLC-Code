@@ -16,9 +16,18 @@ test('the actual VSIX contains exactly the reviewed production assets and identi
       verifyVsix(new Map([...entries, [path, Buffer.from('secret')]])),
     );
   }
-  const missing = new Map(entries);
-  missing.delete('extension/build/designer/3rdpartylicenses.txt');
-  assert.throws(() => verifyVsix(missing));
+  for (const path of [
+    'extension/build/designer/3rdpartylicenses.txt',
+    'extension/media/rdlc-logo.png',
+    'extension/media/rdlc-activity.svg',
+  ]) {
+    const missing = new Map(entries);
+    missing.delete(path);
+    assert.throws(() => verifyVsix(missing));
+  }
+  const altered = new Map(entries);
+  altered.set('extension/media/rdlc-logo.png', Buffer.from('wrong logo'));
+  assert.throws(() => verifyVsix(altered));
   const wrong = new Map(entries);
   const metadata = JSON.parse(wrong.get('extension/package.json')!.toString());
   wrong.set(

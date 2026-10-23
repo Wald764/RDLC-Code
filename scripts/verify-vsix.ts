@@ -50,7 +50,7 @@ export function verifyVsix(entries: ReadonlyMap<string, Buffer>): void {
       if (entry.isDirectory()) add(path, name);
       else {
         assert.ok(
-          /\.(?:cjs|js|css|html|txt)$/.test(name),
+          /\.(?:cjs|js|css|html|txt|png|svg)$/.test(name),
           `Unexpected production asset: ${name}`,
         );
         allowed.set(name.toLowerCase(), readFileSync(path));
@@ -58,6 +58,7 @@ export function verifyVsix(entries: ReadonlyMap<string, Buffer>): void {
     }
   };
   add('apps/vscode-extension/build', 'extension/build');
+  add('apps/vscode-extension/media', 'extension/media');
   allowed.set('extension/license.txt', readFileSync('LICENSE'));
   allowed.set(
     'extension/third_party_notices.md',
@@ -71,6 +72,7 @@ export function verifyVsix(entries: ReadonlyMap<string, Buffer>): void {
       readFileSync('apps/vscode-extension/README.md'),
     );
   for (const required of [
+    `extension/${expected.icon}`,
     'extension/build/extension.cjs',
     'extension/build/designer/index.html',
     'extension/build/designer/3rdpartylicenses.txt',
