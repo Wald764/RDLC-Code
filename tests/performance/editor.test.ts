@@ -61,7 +61,7 @@ test('the 1 MiB / 100-item reference report fits the bounded hierarchy and snaps
   );
   assert.ok(
     validateMessage({
-      protocol: 1,
+      protocol: 2,
       kind: 'snapshot',
       version: 1,
       sourceLength: source.length,

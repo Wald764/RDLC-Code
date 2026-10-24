@@ -815,7 +815,7 @@ try {
               'left',
             );
             await page.evaluate(
-              "window.postMessage({ protocol: 1, kind: 'protocolError', supportedVersion: 1, reason: 'Feedback during an active gesture '.repeat(20) }, '*')",
+              "window.postMessage({ protocol: 2, kind: 'protocolError', supportedVersion: 2, reason: 'Feedback during an active gesture '.repeat(20) }, '*')",
             );
             await page.mouse('mouseMoved', from.x + dx, from.y + dy, 1, 'left');
             await page.settle();

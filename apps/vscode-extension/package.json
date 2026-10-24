@@ -29,6 +29,104 @@
     "virtualWorkspaces": false
   },
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "rdlcCode",
+          "title": "RDLC Code",
+          "icon": "media/rdlc-activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "rdlcCode": [
+        {
+          "id": "rdlcCode.structure",
+          "name": "Report Structure"
+        },
+        {
+          "id": "rdlcCode.data",
+          "name": "Report Data"
+        },
+        {
+          "id": "rdlcCode.components",
+          "name": "Components"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "rdlcCode.structure",
+        "contents": "Open a report to inspect its structure.\n[New Report](command:rdlcCode.newReport)\n[Open Report](command:rdlcCode.sidebar.openReport)",
+        "when": "!rdlcCode.hasReport"
+      },
+      {
+        "view": "rdlcCode.data",
+        "contents": "Open a report to inspect its local data definitions.\n[Open Report](command:rdlcCode.sidebar.openReport)",
+        "when": "!rdlcCode.hasReport"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "rdlcCode.openSource",
+          "when": "(view == rdlcCode.structure || view == rdlcCode.data) && rdlcCode.hasReport",
+          "group": "navigation"
+        },
+        {
+          "command": "rdlcCode.sidebar.filter",
+          "when": "view == rdlcCode.components",
+          "group": "navigation"
+        },
+        {
+          "command": "rdlcCode.sidebar.clearFilter",
+          "when": "view == rdlcCode.components && rdlcCode.componentsFiltered",
+          "group": "navigation"
+        },
+        {
+          "command": "rdlcCode.newReport",
+          "when": "view == rdlcCode.structure",
+          "group": "navigation"
+        },
+        {
+          "command": "rdlcCode.sidebar.openReport",
+          "when": "view == rdlcCode.structure",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "rdlcCode.sidebar.properties",
+          "when": "viewItem =~ /^rdlcCode\\.(body|editable)$/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "rdlcCode.sidebar.properties",
+          "when": "viewItem =~ /^rdlcCode\\.(body|editable)$/",
+          "group": "inline"
+        },
+        {
+          "command": "rdlcCode.sidebar.source",
+          "when": "viewItem =~ /^rdlcCode\\.(body|editable|source)$/",
+          "group": "navigation"
+        },
+        {
+          "command": "rdlcCode.sidebar.copy",
+          "when": "viewItem == rdlcCode.body",
+          "group": "clipboard@1"
+        },
+        {
+          "command": "rdlcCode.sidebar.cut",
+          "when": "viewItem == rdlcCode.body",
+          "group": "clipboard@2"
+        },
+        {
+          "command": "rdlcCode.sidebar.duplicate",
+          "when": "viewItem == rdlcCode.body",
+          "group": "clipboard@3"
+        }
+      ]
+    },
     "customEditors": [
       {
         "viewType": "rdlcCode.designer",
@@ -42,6 +140,47 @@
       }
     ],
     "commands": [
+      {
+        "command": "rdlcCode.sidebar.copy",
+        "title": "RDLC Code: Copy"
+      },
+      {
+        "command": "rdlcCode.sidebar.cut",
+        "title": "RDLC Code: Cut"
+      },
+      {
+        "command": "rdlcCode.sidebar.duplicate",
+        "title": "RDLC Code: Duplicate"
+      },
+      {
+        "command": "rdlcCode.sidebar.openReport",
+        "title": "RDLC Code: Open Report",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "rdlcCode.sidebar.activate",
+        "title": "RDLC Code: Activate Report Item"
+      },
+      {
+        "command": "rdlcCode.sidebar.properties",
+        "title": "RDLC Code: Properties",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "rdlcCode.sidebar.source",
+        "title": "RDLC Code: Code XML",
+        "icon": "$(code)"
+      },
+      {
+        "command": "rdlcCode.sidebar.filter",
+        "title": "RDLC Code: Filter Components",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "rdlcCode.sidebar.clearFilter",
+        "title": "RDLC Code: Clear Filter",
+        "icon": "$(clear-all)"
+      },
       {
         "command": "rdlcCode.newReport",
         "title": "RDLC Code: New Report"

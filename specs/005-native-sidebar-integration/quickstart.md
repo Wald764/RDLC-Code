@@ -1,6 +1,6 @@
 # Quickstart: Native Sidebar Validation
 
-This is a validation/run guide for implementation. Feature 005 and the new Desktop commands are not implemented at planning time. Use the contracts for [native UI](contracts/native-workspace.md), [bridge](contracts/sidebar-bridge.md), [Desktop evidence](contracts/desktop-validation.md) and [data model](data-model.md); do not treat this guide as executed acceptance evidence.
+This is a validation/run guide for implementation. The initial Desktop runner now exists; feature 005 is incomplete. Use the contracts for [native UI](contracts/native-workspace.md), [bridge](contracts/sidebar-bridge.md), [Desktop evidence](contracts/desktop-validation.md) and [data model](data-model.md); do not treat this guide as executed acceptance evidence.
 
 ## Prerequisites and existing baseline commands
 
@@ -33,9 +33,9 @@ pnpm test:package
 
 On Linux, prefix each Desktop invocation with `VSCODE_VERSION=1.142.0 xvfb-run -a` (then repeat with stable). Existing integration/package runs do not alone establish Desktop UI acceptance or restricted-workspace behavior.
 
-## Desktop commands to add during implementation
+## Desktop foundation commands
 
-After full build/package, run these **proposed, currently unavailable** commands; their implementation must conform to [desktop-validation.md](contracts/desktop-validation.md):
+After full build/package, these commands invoke the initial runner. They currently fail closed on missing mandatory suites or reference images; they do not certify the native sidebar. Their implementation must conform to [desktop-validation.md](contracts/desktop-validation.md):
 
 ```powershell
 $env:VSCODE_VERSION = '1.142.0'
@@ -49,6 +49,13 @@ pnpm test:e2e -- --packaged
 ```
 
 Repeat functional/package runs on each supported OS; fixed-reference visual comparison runs only in its reference environment. A missing command, binary, observer, required assertion or baseline is a failure, not a skip/pass. Provision first, then block runtime networking. Separate real trusted/restricted profiles must verify actual host trust state.
+
+Each invocation retains its own directory under `.vscode-test/desktop-artifacts/run-*/`,
+including the Playwright JSON report and per-capability bootstrap results. The
+root `runner-status.json` points to the most recent invocation; it is diagnostic
+output, not candidate acceptance evidence. Reference creation is disabled during
+validation. Missing security observation, native-drag probe or visual references
+must be resolved before the mandatory bootstrap can pass.
 
 ## End-to-end validation scenarios and expected results
 
@@ -72,4 +79,10 @@ Timing requires 100 real input-to-visible selection samples, ≥95 within 200ms,
 
 Root/CI checks must produce same-candidate assertion/evidence records, actual/expected/diff PNGs, traces/accessibility/focus records, timing/frame samples, current-range/race/history checks and sanitized network-attempt logs. Reference images are committed and never auto-accepted in CI. Missing/failed required evidence blocks validation.
 
-CI includes functional/installed journeys on the minimum/stable OS matrix and a fixed visual job in the required aggregate. Release quality reuse retains every gate; applicable installed checks additionally certify the canonical rebuilt VSIX digest before publication. See the Desktop contract for record fields and tolerances.
+Current CI schedules the installed bootstrap on the existing minimum/stable OS
+matrix and uploads probe artifacts. These working-tree changes have not run in
+GitHub Actions. The final CI contract additionally requires every implemented
+functional/installed journey and a fixed visual job in the required aggregate;
+that integration remains incomplete. Release checks must also certify the
+canonical rebuilt VSIX digest before publication. See the Desktop contract for
+record fields and tolerances.

@@ -18,27 +18,79 @@
 
 **Purpose**: Establish traceability and a real Desktop runner without changing product behavior.
 
-- [ ] T001 Create `tests/desktop/coverage.json` mapping every US acceptance scenario, FR-001–034, all eleven spec edge cases, SC-001–010 and inherited regression rows to AT-01–09, fixture IDs, independent oracles and planned test IDs; define evidence records in `tests/desktop/evidence.ts` with provenance commit, versioned candidate input manifest/fingerprint/scoped patch digest, separate VSIX SHA-256, fixture hashes, environment/display/theme identity, outcomes and artifact links/digests under `contracts/desktop-validation.md`, enforcing “absent/unrun/failed mandatory assertions remain unvalidated.”
-- [ ] T002 Add exact root devDependency `playwright@1.64.1` in `package.json`, resolve `pnpm-lock.yaml` with pnpm 11.28.2/Node 24.22.0, and record Apache-2.0 test-only necessity in `specs/005-native-sidebar-integration/research.md`; use `playwright/test` assertions, retain existing provisioning, and keep the driver out of extension dependencies and production bundles.
-- [ ] T003 Implement `tests/desktop/driver.ts` and `tests/desktop/playwright.config.ts` to launch the actual `@vscode/test-electron`-provisioned binary in disposable development/installed-VSIX profiles, operate native workbench and real Angular webview by keyboard/pointer, observe accepted host XML independently, capture accessibility/focus/screenshots/traces, and clean up with bounded timeouts; record executable build/hash and never alter binary fuses or replace the designer with a stub.
-- [ ] T004 Add `tests/desktop/run-tests.ts` and root `package.json` commands `test:e2e` / `test:visual` implementing `--probe`, `--packaged`, `VSCODE_VERSION` and nonzero missing-evidence failures per `contracts/desktop-validation.md`; integrate with `scripts/compile.ts` / `scripts/build.ts` only as needed and preserve full build/package prerequisites and serial output-tree ownership.
+- [X] T001 Create `tests/desktop/coverage.json` mapping every US acceptance scenario, FR-001–034, all eleven spec edge cases, SC-001–010 and inherited regression rows to AT-01–09, fixture IDs, independent oracles and planned test IDs; define evidence records in `tests/desktop/evidence.ts` with provenance commit, versioned candidate input manifest/fingerprint/scoped patch digest, separate VSIX SHA-256, fixture hashes, environment/display/theme identity, outcomes and artifact links/digests under `contracts/desktop-validation.md`, enforcing “absent/unrun/failed mandatory assertions remain unvalidated.”
+- [X] T002 Add exact root devDependency `playwright@1.64.1` in `package.json`, resolve `pnpm-lock.yaml` with pnpm 11.28.2/Node 24.22.0, and record Apache-2.0 test-only necessity in `specs/005-native-sidebar-integration/research.md`; use `playwright/test` assertions, retain existing provisioning, and keep the driver out of extension dependencies and production bundles.
+- [X] T003 Implement `tests/desktop/driver.ts` and `tests/desktop/playwright.config.ts` to launch the actual `@vscode/test-electron`-provisioned binary in disposable development/installed-VSIX profiles, operate native workbench and real Angular webview by keyboard/pointer, observe accepted host XML independently, capture accessibility/focus/screenshots/traces, and clean up with bounded timeouts; record executable build/hash and never alter binary fuses or replace the designer with a stub.
+- [X] T004 Add `tests/desktop/run-tests.ts` and root `package.json` commands `test:e2e` / `test:visual` implementing `--probe`, `--packaged`, `VSCODE_VERSION` and nonzero missing-evidence failures per `contracts/desktop-validation.md`; integrate with `scripts/compile.ts` / `scripts/build.ts` only as needed and preserve full build/package prerequisites and serial output-tree ownership.
 
 **Checkpoint**: Commands launch the actual candidate; launch failure is recorded and investigated, never treated as a skipped success.
+
+**Execution status — 2026-10-24**: T001–T004 implement the initial tooling, not
+passing feature acceptance. The latest full unit run passes 166 Node assertions
+and 204 Angular assertions; these include foundation regressions, not Desktop acceptance.
+Real Windows minimum development/installed and stable installed probes reach native input,
+Angular insertion, independent exact saved XML, native Undo, accessibility
+capture and verified cleanup. The complete probe remains failed: required PNG
+references are absent and mandatory security proof is incomplete. The native-drag
+probe executes and records unavailable delivery on Windows; it does not validate
+activation or compact-fallback acceptance. T005–T075 remain open;
+no User Story or cross-platform bootstrap is validated. See `research.md` and
+`evidence/driver-probe.json` for executed observations and limitations. The CDP
+fallback is implemented but has not been exercised on a target requiring it.
+Minimum 1.142.0 and stable 1.143.1 development extension-host suites pass; the
+stable installed-VSIX host suite also passes. The latest minimum Desktop probe
+fails bootstrap pixels and security and passes only conditional drag feasibility.
+Independent targeted rereview was retried and failed on the configured model's
+usage limit. Current diagnostic records remain historical, not same-candidate
+acceptance evidence. Protocol migration, complete host dispatch wiring, lifecycle
+coverage and all six story phases remain unfinished.
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
 **Purpose**: Shared accepted-state routing, closed contracts and proven automation primitives. Complete this phase before story implementation; story-specific inventories/actions remain in their phases.
 
-- [ ] T005 Add shared contract regression tests in `apps/vscode-extension/src/protocol.test.ts` and `apps/designer/src/app/editor/host-adapter.spec.ts` for closed native-action/accepted-selection/outcome families, wrong-session routing, malformed/extra fields, mixed modes, duplicate IDs, old sequences, correlated versions, both result/snapshot orders and rejected delivery; retain snapshot ≤8 MiB/131,072 JSON values, other messages ≤64 KiB/8,192 values, JSON depth ≤20 and 1,024 requests per session.
-- [ ] T006 Extend `packages/report-model/src/protocol.ts` and add `packages/report-model/src/navigation.ts` with accepted navigation/action/selection types, strict validators and matched protocol version updates; enforce “version-local XML target ID, optional parent ID, source ordinal/range, expanded XML name, declared name when present, kind, display label, opaque/incomplete reason, and command-specific capabilities/reasons,” flat parent-before-child nodes, optional bounds, and closed finite actions from `contracts/sidebar-bridge.md`; preserve existing exports/builders and make T005 pass as consumers are updated.
-- [ ] T007 Extract reusable accepted report evaluation into `apps/vscode-extension/src/report-evaluation.ts` from `apps/vscode-extension/src/document-session.ts`, preserving parser/profile/capability/source-ID facts, shared document queue and transport fallback; expose accepted change notifications for native consumers and source-only evaluation without opening a hidden designer or creating independent mutable report content; cover extraction equivalence in `apps/vscode-extension/src/report-evaluation.test.ts`.
-- [ ] T008 Implement `apps/vscode-extension/src/sidebar/context.ts` and its tests in `apps/vscode-extension/src/sidebar-context.test.ts`, wiring `editor-provider.ts` / `extension.ts` panel/tab/text/document events to document lifetime IDs, opaque view IDs, URI/version and context generation; enforce “no-report → loading → editable/source-only/invalid-source,” “Sidebar focus changes no context,” same-document optional associated view and immutable action capture; non-report activation clears context, and disposal terminates pending captures.
-- [ ] T009 Add bound host dispatch/outcome coordination in `apps/vscode-extension/src/document-session.ts` / `protocol.ts` and Angular ingestion in `apps/designer/src/app/editor/host-adapter.ts`, matching T005/T006; recheck original document/URI/version/view/generation/capability after awaits and failed `postMessage`, keep draft waiting outside the mutation queue, and carry native correlation through existing edit requests without auto-retry or a new mutation engine.
+- [X] T005 Add shared contract regression tests in `apps/vscode-extension/src/protocol.test.ts` and `apps/designer/src/app/editor/host-adapter.spec.ts` for closed native-action/accepted-selection/outcome families, wrong-session routing, malformed/extra fields, mixed modes, duplicate IDs, old sequences, correlated versions, both result/snapshot orders and rejected delivery; retain snapshot ≤8 MiB/131,072 JSON values, other messages ≤64 KiB/8,192 values, JSON depth ≤20 and 1,024 requests per session.
+- [X] T006 Extend `packages/report-model/src/protocol.ts` and add `packages/report-model/src/navigation.ts` with accepted navigation/action/selection types, strict validators and matched protocol version updates; enforce “version-local XML target ID, optional parent ID, source ordinal/range, expanded XML name, declared name when present, kind, display label, opaque/incomplete reason, and command-specific capabilities/reasons,” flat parent-before-child nodes, optional bounds, and closed finite actions from `contracts/sidebar-bridge.md`; preserve existing exports/builders and make T005 pass as consumers are updated.
+- [X] T007 Extract reusable accepted report evaluation into `apps/vscode-extension/src/report-evaluation.ts` from `apps/vscode-extension/src/document-session.ts`, preserving parser/profile/capability/source-ID facts, shared document queue and transport fallback; expose accepted change notifications for native consumers and source-only evaluation without opening a hidden designer or creating independent mutable report content; cover extraction equivalence in `apps/vscode-extension/src/report-evaluation.test.ts`.
+- [X] T008 Implement `apps/vscode-extension/src/sidebar/context.ts` and its tests in `apps/vscode-extension/src/sidebar-context.test.ts`, wiring `editor-provider.ts` / `extension.ts` panel/tab/text/document events to document lifetime IDs, opaque view IDs, URI/version and context generation; enforce “no-report → loading → editable/source-only/invalid-source,” “Sidebar focus changes no context,” same-document optional associated view and immutable action capture; non-report activation clears context, and disposal terminates pending captures.
+- [X] T009 Add bound host dispatch/outcome coordination in `apps/vscode-extension/src/document-session.ts` / `protocol.ts` and Angular ingestion in `apps/designer/src/app/editor/host-adapter.ts`, matching T005/T006; recheck original document/URI/version/view/generation/capability after awaits and failed `postMessage`, keep draft waiting outside the mutation queue, and carry native correlation through existing edit requests without auto-retry or a new mutation engine.
 - [ ] T010 [P] Implement `tests/desktop/security-observer.ts` and `tests/desktop/security-observer.spec.ts` with separate trusted/restricted profiles, asserted host trust state, blocked outbound traffic plus host-process-tree/webview attempted-access observation and positive controls outside report journeys; observe local execution/resource/query/entity accesses too, sanitize logs, and fail unsupported mandatory platform capture rather than treating browser routing or static scans as sufficient.
 - [ ] T011 Implement and execute `tests/desktop/bootstrap.spec.ts` against the existing 004 designer: real native-row input, Angular control insertion, independent exact XML and native Undo oracle, actual screenshot comparison, accessibility/announcement capture and observer positive controls; generate reproducible bootstrap references/metadata in `tests/desktop/baselines/bootstrap/` against explicit geometry/contrast oracles, fail missing comparisons, adapt a failing driver with recorded operation/version/error rather than changing product binaries, and record local passed/failed/blocked outcomes in `specs/005-native-sidebar-integration/evidence/driver-probe.json`.
 - [ ] T012 Add bootstrap runs/artifacts to `.github/workflows/ci.yml` on Ubuntu 24.04 / Windows 2022 / macOS 14 × minimum 1.142.0 / stable, using Xvfb on Linux and frozen installs; execute the T011 probe on each available target, retain failures/unavailable CI execution explicitly in `specs/005-native-sidebar-integration/evidence/driver-probe.json`, and require all target capability evidence before claiming cross-platform automation validation.
 
 **Checkpoint**: Shared types/routing are bounded and tested; real input, webview/capture/accessibility and security observation work in the reference environment. Missing mandatory automation remains blocking; conditional native drag is probed separately in US4.
+
+**Execution status — 2026-10-24 (resume run)**: T005–T009 are complete at unit/host level:
+the protocol budget edges, the 1,024-request cap, closed families/duplicates,
+rejected delivery and delivery outside the mutation queue are covered. Independent
+review FAIL findings were fixed red→green:
+- generation no longer advances on the action's own content edit;
+- every designer refusal settles once;
+- stale selections/outcomes are ignored without blocking, while refusals always settle;
+- native authorization is single-use.
+
+The full local regression passes: Node 200, Vitest 223, compatibility 15,
+roundtrip 61, acceptance 2, release 8, and the development and installed-VSIX host
+suites 8/8 each.
+
+T010–T012 remain open:
+- Pixel comparison is scoped to the pinned Ubuntu 1.142.0 reference and recorded
+  `unrun` elsewhere. No reference PNG exists yet; it must be generated with
+  `--update-baselines` on that environment.
+- The security observer is Linux-only (strace + iptables owner-uid blocking,
+  allowlist/denylist, canary, both profiles) and is unexecuted. Windows/macOS fail
+  closed, with no host observer implemented, which keeps those CI entries red by
+  design.
+- Windows 1.142.0 development and installed probes pass launch, native input,
+  Angular insertion, source, Undo, accessibility and cleanup. Native drag is
+  unavailable-with-evidence.
+- Workspace Trust uses an isolated `--shared-data-dir`. Previously, test profiles
+  inherited the developer's real trusted folders. Trust state is now read through
+  `workspace.isTrusted`. Restricted and trusted profiles resolve correctly on
+  Windows, and functional specs grant trust through the real Workspace Trust
+  editor.
+- Open, outside the foundation: `structure.spec.ts` measured 212–299 ms against the
+  200 ms selection bound (T023/T032).
 
 ## Phase 3: User Story 1 — Open the Native Report Workspace (Priority: P1, MVP)
 

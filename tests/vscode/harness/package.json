@@ -3,7 +3,27 @@
   "publisher": "rdlc-tests",
   "version": "0.0.0",
   "private": true,
+  "main": "./drag-probe.cjs",
   "contributes": {
+    "commands": [
+      {
+        "command": "rdlcTests.reportWorkspaceTrust",
+        "title": "RDLC Test: Report Workspace Trust"
+      },
+      {
+        "command": "rdlcTests.showNativeDrag",
+        "title": "RDLC Test: Show Native Drag Probe"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "rdlcTests.nativeDrag",
+          "name": "RDLC Native Drag Probe",
+          "when": "rdlcTests.nativeDragEnabled"
+        }
+      ]
+    },
     "customEditors": [
       {
         "viewType": "rdlcCode.historyProof",
@@ -16,6 +36,11 @@
         "priority": "option"
       }
     ]
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
   },
   "engines": {
     "vscode": "^1.142.0"

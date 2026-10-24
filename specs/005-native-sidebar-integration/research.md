@@ -78,4 +78,128 @@ Allocate a shared maximum of 2,000 authored navigation entries across Structure 
 
 ## Resolution
 
+### Implementation dependency verification — 2026-10-24
+
+Installed exact root development dependency `playwright@1.64.1` using Node
+24.22.0 and pnpm 11.28.2; the committed lockfile pins its matching
+`playwright-core@1.64.1`. Installed package metadata confirms Apache-2.0 and
+Node >=20. This test-only dependency is necessary for real Electron keyboard,
+pointer, accessibility and screenshot assertions that the existing host and
+jsdom suites cannot provide. It is not an extension runtime dependency. Its
+installation does not establish Desktop driver capability or acceptance proof;
+the mandatory bootstrap must still execute against the unmodified binary.
+
 All technical design unknowns are resolved into bounded choices and explicit implementation probes. Runtime driver compatibility, native drag availability, accessibility capture and network-observer completeness remain unvalidated evidence obligations, not claimed working capabilities. No unresolved requirement interpretation or constitutional exception is carried forward.
+
+### Executed Windows foundation probes — 2026-10-24
+
+The actual VS Code 1.142.0 executable (build
+`6d62b1d5dace93a33b3a6d3eca1317bd5e15bcb1`, executable SHA-256
+`5ca701a1facb91fec1ac6bbae11fc837821a1da34ddebb91a0bad7e87ab88144`)
+launches through Playwright's **Electron** transport in this environment. The
+anticipated fuse/loader problem did not occur here; the CDP fallback has not been
+validated on a target that needs it.
+
+Development and installed-VSIX probes reached real native rows and the actual
+Angular designer, clicked Textbox, compared the complete saved report against an
+independent literal XML oracle, invoked native Undo and recovered the complete
+prior source. Accessibility-tree and screenshot/trace capture executed. These
+capability observations are not full accessibility, security or visual proof.
+Both initial probes failed at the required missing screenshot reference; at that
+execution the security observation and native-drag suites were absent. No baseline
+was auto-created and no native-drag capability was inferred from those probes.
+
+The available Windows token is not elevated (`WindowsPrincipal.IsInRole` returned
+false); WSL is not installed and Docker is unavailable. Pinned Ubuntu reference
+visuals therefore cannot be generated or compared in the available environment.
+No GitHub Actions run of this working-tree candidate has executed.
+
+At the initial probe, T010 was unimplemented in addition to its platform capture limitation.
+User-mode JavaScript/CDP interception and process snapshots could provide partial
+observation, but cannot establish failed/short-lived/native attempted accesses
+across the complete host process tree. The contract explicitly requires missing
+mandatory platform coverage to fail. No elevated/system-wide trace, firewall
+change or installation was attempted, and no partial observer is represented as
+a passing security control. Native trust was left enabled; separate
+trusted/restricted-profile proof remains unrun.
+
+### Continued foundation implementation — 2026-10-24
+
+The accepted report evaluator is now shared with source-editor context evaluation.
+The window registry is connected to real document, panel and tab events without
+opening a hidden designer. Pure regression checks cover document lifetimes,
+source-only states, stale captures, one-time binding, disposal and request replay.
+The real stable extension-host suite passed with a source-editor-only untitled
+report, invalid-source transition and accepted-evaluation notifications. This does
+not establish the later multi-view/draft/sidebar acceptance journeys.
+
+The public-API native drag probe now uses a development-only TreeView contribution
+in the existing test harness. On Windows with VS Code 1.142.0, real pointer input
+invoked `handleDrag` for both cancellation and attempted delivery, but the custom
+MIME did not reach an Angular drop. Cancellation delivered no drop, and saving
+retained the exact fixture text. This local feasibility result is **unavailable**,
+not a passing native insertion test or evidence for another platform. Production
+has no native drag controller; activation/fallback acceptance remains unbuilt.
+
+Desktop shutdown now checks the owned process exit status, records the shutdown
+identity and propagates close/trace/cleanup failures. Real-process regressions
+cover clean exit, abnormal exit and forced CDP termination. A new actual minimum
+Desktop bootstrap reached XML/Undo/accessibility and clean shutdown, then failed
+on the absent PNG reference as required.
+
+CI now schedules the installed bootstrap on all six existing OS/version matrix
+entries and uploads Desktop artifacts. No GitHub Actions execution of these
+working-tree changes has occurred; this wiring is not cross-platform proof.
+
+### Review corrections and executed revalidation — 2026-10-24
+
+The evidence manifest now hashes normative status-marker contents, normalizes
+checkbox state only in task/checklist documents, retains executable source inside
+output directories, and rejects candidate symlinks. Malformed evidence/coverage
+fails validation. Regression checks execute these invalidation cases. Executable
+oracle binding, execution-time freezing and complete same-candidate aggregation
+remain unfinished; historical manifests are stale after the current source edits.
+
+Context authorization now distinguishes authored targets from preservation-only
+source targets. Queued native edits retain and recheck their captured authority,
+match the captured operation, and refuse selection/properties correlations as
+mutation authority. Angular regressions cover exactly-once native selection,
+properties and draft cancellation. An additional failing-then-passing protocol
+regression covers selection at a native mutation's new version in both
+selection/outcome orders. Native bridge and host wiring remain partial. The
+matched protocol version migration required by T006 is complete: protocol
+version 2 covers every message family, and version 1 messages are rejected by
+tests.
+
+`pnpm test:unit` passes **166 Node + 204 Angular** tests. An earlier full Angular
+run hit two 5-second timeouts under load; the affected 107 tests and then the full
+204 passed without changing assertions or timeouts. The real development host
+suites pass on minimum **1.142.0** and stable **1.143.1**; the stable installed-VSIX
+host suite also passes. Build/package, typecheck, lint and formatting checks passed
+during this continuation. These checks do not complete any User Story.
+
+The minimum `pnpm test:e2e -- --probe` run writes artifacts under
+`.vscode-test/desktop-artifacts/run-b7c3e443-6560-4051-a0b8-aaa9518d726a/`.
+Bootstrap fails on the missing reference PNG; native drag feasibility executes
+and records **unavailable**; security fails. The observer implementation now
+contains sanitized syscall/browser-attempt parsing and fail-closed unsupported
+platform tests, but complete Windows host-tree observation, host-level outbound
+blocking, real Angular-webview positive controls and query/entity/resource
+attribution are missing. The attempted restricted/trusted profiles did not prove
+their host trust states. Those gaps explicitly keep the security result
+unvalidated, including on platforms where syscall capture might work. The owned
+Desktop process ID is used rather than profile-name process discovery.
+
+The requested independent targeted rereview was retried and again returned the
+configured free model's usage-limit error. Earlier independent findings informed
+these corrections; there is no successful independent rereview of the latest
+candidate. No push, publication, deployment or GitHub Actions execution occurred.
+
+The root `pnpm test:e2e` command also exits nonzero: bootstrap lacks its PNG
+reference and nine required story/accessibility/layout/offline/coverage suites
+are absent. Its artifacts are in
+`.vscode-test/desktop-artifacts/run-0dc8f6b4-44b0-4d4b-ab04-01cab7ce9a3d/`.
+`pnpm test:visual` exits nonzero before execution because `visual.spec.ts` and
+`layout.spec.ts` are missing. Rebuilt and repackaged stable installed-VSIX checks
+pass after the correlation correction. None of these diagnostics closes the
+blocking foundation checkpoint or authorizes a feature acceptance claim.

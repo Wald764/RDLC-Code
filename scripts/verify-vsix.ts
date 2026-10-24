@@ -73,6 +73,7 @@ export function verifyVsix(entries: ReadonlyMap<string, Buffer>): void {
     );
   for (const required of [
     `extension/${expected.icon}`,
+    'extension/media/rdlc-activity.svg',
     'extension/build/extension.cjs',
     'extension/build/designer/index.html',
     'extension/build/designer/3rdpartylicenses.txt',

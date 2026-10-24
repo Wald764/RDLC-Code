@@ -5,7 +5,7 @@ import { EditorComponent } from './editor.component';
 
 function snapshot(version: number, status = 'editable') {
   return {
-    protocol: 1,
+    protocol: 2,
     kind: 'snapshot',
     version,
     sourceLength: 0,
@@ -32,7 +32,7 @@ describe('native history settlement', () => {
     });
     host.sendHistory('failed-history', 'undo');
     host.ingest({
-      protocol: 1,
+      protocol: 2,
       kind: 'historyResult',
       requestId: 'failed-history',
       baseVersion: 2,
@@ -58,7 +58,7 @@ describe('native history settlement', () => {
       expect(host.sendHistory('history-1', 'undo')).toBe(true);
       expect(host.sendHistory('history-2', 'redo')).toBe(false);
       const result = {
-        protocol: 1,
+        protocol: 2,
         kind: 'historyResult',
         requestId: 'history-1',
         baseVersion: 2,
@@ -84,7 +84,7 @@ describe('native history settlement', () => {
       host.ingest(snapshot(2));
       host.sendHistory('history-1', 'redo');
       host.ingest({
-        protocol: 1,
+        protocol: 2,
         kind: 'historyResult',
         requestId: 'history-1',
         baseVersion: 2,
@@ -155,7 +155,7 @@ describe('nudge continuity', () => {
         payload: { targetIds: [`${base}:1`], dxPt: 1 },
       });
       host.ingest({
-        protocol: 1,
+        protocol: 2,
         kind: 'editResult',
         requestId: edit.requestId,
         baseVersion: base,
@@ -195,7 +195,7 @@ describe('nudge continuity', () => {
     expect(host.sent()[0]).toMatchObject({ kind: 'history', action: 'undo' });
     const request = host.sent()[0] as { requestId: string };
     host.ingest({
-      protocol: 1,
+      protocol: 2,
       kind: 'historyResult',
       requestId: request.requestId,
       baseVersion: 2,
@@ -232,7 +232,7 @@ describe('document lifecycle transport', () => {
         },
       });
       host.ingest({
-        protocol: 1,
+        protocol: 2,
         kind: 'editResult',
         requestId: 'unchanged',
         baseVersion: 1,
@@ -264,7 +264,7 @@ describe('document lifecycle transport', () => {
     });
     host.ingest(snapshot(3));
     host.ingest({
-      protocol: 1,
+      protocol: 2,
       kind: 'editResult',
       requestId: 'delayed-own',
       baseVersion: 1,
@@ -307,7 +307,7 @@ describe('document lifecycle transport', () => {
     ).toBe(false);
     host.ingest(snapshot(3));
     host.ingest({
-      protocol: 1,
+      protocol: 2,
       kind: 'clipboardResult',
       requestId: 'paste-1',
       action: 'paste',
@@ -345,7 +345,7 @@ describe('document lifecycle transport', () => {
       expect(host.sent()).toHaveLength(1);
       expect(host.pending()).not.toBeNull();
       const result = {
-        protocol: 1,
+        protocol: 2,
         kind: 'editResult',
         requestId: 'move',
         baseVersion: 1,
@@ -381,7 +381,7 @@ describe('document lifecycle transport', () => {
     host.ingest(snapshot(3));
     expect(host.snapshot()).toBe(accepted);
     host.ingest({
-      protocol: 1,
+      protocol: 2,
       kind: 'editResult',
       baseVersion: 1,
       changed: false,
@@ -417,13 +417,13 @@ describe('document lifecycle transport', () => {
     const host = TestBed.inject(HostAdapter);
     host.ingest(snapshot(1));
     host.ingest({
-      protocol: 1,
+      protocol: 2,
       kind: 'protocolError',
-      supportedVersion: 1,
+      supportedVersion: 2,
       reason: 'Stale edit',
     });
     expect(host.notice()).toContain('Stale edit');
-    expect(host.sent().at(-1)).toEqual({ protocol: 1, kind: 'ready' });
+    expect(host.sent().at(-1)).toEqual({ protocol: 2, kind: 'ready' });
     expect(
       host
         .sent()
@@ -689,7 +689,7 @@ describe('workspace panels and per-view preferences', () => {
   });
 
   it('isolates each webview state and keeps oversized preferences through clamping', async () => {
-    const a = webview({ leftWidth: 360, rightWidth: 480 });
+    const a = webview({ leftWidth: 360, rightWidth: 480, leftVisible: true });
     const first = await mounted();
     first.component.workspaceResize(1100, 800);
     await first.settle();
@@ -755,7 +755,7 @@ describe('workspace panels and per-view preferences', () => {
   });
 
   it('defers elective panel changes during a gesture but cancels it for host resizing', async () => {
-    webview(undefined);
+    webview({ leftVisible: true });
     const m = await mounted();
     m.component.select(0);
     await m.settle();

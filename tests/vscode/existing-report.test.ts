@@ -53,7 +53,7 @@ export async function run(): Promise<void> {
   };
 
   try {
-    session.receive({ protocol: 1, kind: 'ready' });
+    session.receive({ protocol: 2, kind: 'ready' });
     await waitFor(() => snapshots().length > 0, 'initial snapshot');
     const first = snapshots().at(-1)!;
     const titleIndex = first.scene!.items.findIndex(
@@ -72,7 +72,7 @@ export async function run(): Promise<void> {
     const edit = (targetId: string, property: string, value: string) => {
       sequence += 1;
       session.receive({
-        protocol: 1,
+        protocol: 2,
         kind: 'edit',
         requestId: `us1-${sequence}`,
         baseVersion: document.version,

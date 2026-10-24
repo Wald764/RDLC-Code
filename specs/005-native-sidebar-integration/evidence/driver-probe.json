@@ -1,0 +1,458 @@
+{
+  "schemaVersion": 1,
+  "recordKind": "historical-bootstrap-diagnostics",
+  "status": "FAIL",
+  "featureComplete": false,
+  "eligibleForAcceptance": false,
+  "eligibilityReason": "Mandatory visual/security/drag assertions have not passed; before/after input freezing is not yet integrated into execution. Recording-time identity cannot retroactively bind these historical observations.",
+  "recordingTimeCandidate": {
+    "provenanceCommit": "a9998ad5d097ce32498da33cb627dcdf1677536f",
+    "inputFingerprint": "0cbf37c24b7b5d3eef7c2766f3be8caf435a741e74d8f7db4c82f5d6753a1a42",
+    "scopedPatchDigest": "de2b064813f630e2ef2d856f78539611aa0d98df39e920a7e4726e0f5a00d886",
+    "manifest": "candidate-inputs.json",
+    "vsixSha256": "a1a0611c6b2d551a24c646abf02825088254cb42a32fae3240ae4cfcfe973cfd"
+  },
+  "completedTasks": [
+    "T001",
+    "T002",
+    "T003",
+    "T004"
+  ],
+  "unvalidatedStories": [
+    "US1",
+    "US2",
+    "US3",
+    "US4",
+    "US5",
+    "US6"
+  ],
+  "observations": [
+    {
+      "mode": {
+        "probe": true,
+        "packaged": true,
+        "visual": false
+      },
+      "requestedVersion": "1.142.0",
+      "probe": {
+        "schemaVersion": 1,
+        "identity": {
+          "version": "1.142.0",
+          "requestedVersion": "1.142.0",
+          "build": "6d62b1d5dace93a33b3a6d3eca1317bd5e15bcb1",
+          "executablePath": "C:\\_Projets\\rdlc-code\\.vscode-test\\vscode-win32-x64-archive-1.142.0\\Code.exe",
+          "executableSha256": "5ca701a1facb91fec1ac6bbae11fc837821a1da34ddebb91a0bad7e87ab88144",
+          "transport": "electron",
+          "transportDetail": "playwright _electron.launch",
+          "driver": "playwright@1.64.1",
+          "profileDir": "C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-profiles\\packaged-1.142.0-41856-24680d0d-af16-48df-b442-064f3dcdb296",
+          "workspace": "C:\\_Projets\\rdlc-code",
+          "launchArgs": [
+            "--user-data-dir=C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-profiles\\packaged-1.142.0-41856-24680d0d-af16-48df-b442-064f3dcdb296",
+            "--extensions-dir=C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-profiles\\packaged-1.142.0-41856-24680d0d-af16-48df-b442-064f3dcdb296\\extensions",
+            "--skip-welcome",
+            "--skip-release-notes",
+            "--no-cached-data",
+            "--disable-gpu",
+            "--no-sandbox",
+            "C:\\_Projets\\rdlc-code"
+          ],
+          "packaged": true,
+          "trace": "started",
+          "vsixSha256": "3c2742d0d26f7f59ea52015fc1cd5f6a68dd3bdd8dbd1136756aa5c2c7c5eeb4",
+          "identityPath": "C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-artifacts\\run-18dd5fcd-401f-4ea5-bdf9-0586d7a37e0a\\bootstrap\\identity\\driver-1.142.0-packaged-1792829736311.json",
+          "tracePath": "C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-artifacts\\run-18dd5fcd-401f-4ea5-bdf9-0586d7a37e0a\\bootstrap\\trace-41856-1792829742558.zip"
+        },
+        "capabilities": {
+          "launch": "passed",
+          "nativeInput": "passed",
+          "angular": "passed",
+          "source": "passed",
+          "undo": "passed",
+          "accessibility": "passed",
+          "screenshotComparison": "failed",
+          "securityObserver": "unrun",
+          "cleanup": "passed"
+        },
+        "error": "A snapshot doesn't exist at C:\\_Projets\\rdlc-code\\tests\\desktop\\baselines\\bootstrap.spec\\bootstrap.png.",
+        "validated": false
+      },
+      "missingSuites": [
+        "security-observer.spec.ts",
+        "native-drag.spec.ts"
+      ],
+      "runnerExitCode": 1,
+      "artifacts": [
+        {
+          "path": ".vscode-test/desktop-artifacts/run-18dd5fcd-401f-4ea5-bdf9-0586d7a37e0a/bootstrap/probe.json",
+          "sha256": "63507d1479bded1d60fc2e6d9c1aed520b1067d036c2b107d1e145c77da07fd1"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-18dd5fcd-401f-4ea5-bdf9-0586d7a37e0a/runner-status.json",
+          "sha256": "25865da00c1ece86d43f021c79a0844be7821f6e193d8d630e7493355c9509cd"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-18dd5fcd-401f-4ea5-bdf9-0586d7a37e0a/playwright-report.json",
+          "sha256": "d71d7f389f0bd472041ede82626b11bfb255e3ec4dbdc8670aa8b90952bc2bba"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-18dd5fcd-401f-4ea5-bdf9-0586d7a37e0a/bootstrap/captures/bootstrap/workbench.png",
+          "sha256": "6035c38b174e27ec91f5b62e60056189c6a1ce350a7851455a5ce26c7894b2c4"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-18dd5fcd-401f-4ea5-bdf9-0586d7a37e0a/bootstrap/captures/bootstrap/designer.png",
+          "sha256": "2c06d1d87d7bfcfdd118ad5930c388dcccfdad8fccc075b46a02df4081597589"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-18dd5fcd-401f-4ea5-bdf9-0586d7a37e0a/bootstrap/trace-41856-1792829742558.zip",
+          "sha256": "c9b9d81b50ac1113b1e0ba7e59be5dd247b1599624e20a199c66b5086595188a"
+        }
+      ]
+    },
+    {
+      "mode": {
+        "probe": true,
+        "packaged": false,
+        "visual": false
+      },
+      "requestedVersion": "1.142.0",
+      "probe": {
+        "schemaVersion": 1,
+        "fixture": {
+          "id": "local-blank",
+          "sha256": "7f9401c906b19199aea6be2e430c6fe1fc6f1e5c69f12dcb2baac7e0ae6dd90d"
+        },
+        "oracle": {
+          "sha256": "f60e7b11079fcf3c496a33c1d880fda20c84d0e0ee6fd7e2af6db3afe1b8c721",
+          "outsideFootprint": "exact source equality outside the single ReportItems insertion"
+        },
+        "assertion": "tests/desktop/bootstrap.spec.ts::bootstrap: real Desktop insertion, source oracle, Undo, semantics and pixels",
+        "identity": {
+          "version": "1.142.0",
+          "requestedVersion": "1.142.0",
+          "build": "6d62b1d5dace93a33b3a6d3eca1317bd5e15bcb1",
+          "environment": {
+            "platform": "win32",
+            "osRelease": "10.0.26300",
+            "architecture": "x64",
+            "observed": {
+              "locale": "en-US",
+              "timezone": "Europe/Paris",
+              "display": {
+                "width": 2560,
+                "height": 1440,
+                "dpr": 1
+              },
+              "window": {
+                "width": 1456,
+                "height": 908,
+                "contentWidth": 1440,
+                "contentHeight": 900
+              },
+              "theme": "vs-dark monaco-enable-motion modern-ui modern-ui-tabs modern-ui-connected-editor-tabs modern-ui-notifications-dialogs monaco-workbench windows chromium nopanel floating-panels panel-position-bottom panel-alignment-center",
+              "fontFamily": "\"Times New Roman\"",
+              "fonts": [
+                {
+                  "family": "codicon",
+                  "style": "normal",
+                  "weight": "normal",
+                  "status": "loaded"
+                }
+              ]
+            }
+          },
+          "executablePath": "C:\\_Projets\\rdlc-code\\.vscode-test\\vscode-win32-x64-archive-1.142.0\\Code.exe",
+          "executableSha256": "5ca701a1facb91fec1ac6bbae11fc837821a1da34ddebb91a0bad7e87ab88144",
+          "transport": "electron",
+          "transportDetail": "playwright _electron.launch",
+          "driver": "playwright@1.64.1",
+          "profileDir": "C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-profiles\\development-1.142.0-45096-0899e278-cd99-4e4b-b3a9-c144c899fd36",
+          "workspace": "C:\\_Projets\\rdlc-code",
+          "launchArgs": [
+            "--user-data-dir=C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-profiles\\development-1.142.0-45096-0899e278-cd99-4e4b-b3a9-c144c899fd36",
+            "--extensions-dir=C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-profiles\\development-1.142.0-45096-0899e278-cd99-4e4b-b3a9-c144c899fd36\\extensions",
+            "--skip-welcome",
+            "--skip-release-notes",
+            "--no-cached-data",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--extensionDevelopmentPath=C:\\_Projets\\rdlc-code\\apps\\vscode-extension",
+            "--extensionDevelopmentPath=C:\\_Projets\\rdlc-code\\tests\\vscode\\harness",
+            "C:\\_Projets\\rdlc-code"
+          ],
+          "packaged": false,
+          "trace": "started",
+          "identityPath": "C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-artifacts\\run-1e80c77a-555c-4f38-afc2-1277a301e9cf\\bootstrap\\identity\\driver-1.142.0-development-1792830105710.json",
+          "frameDiscovery": {
+            "url": "vscode-webview://1oj4krs6808c2mfq3h1i1jl888sjciimujnl8ajmm6rrq5mhgv9g/fake.html?id=d0c98192-264f-4113-8f32-fb0321bf76ca",
+            "name": "pending-frame",
+            "matchedDesignerCount": 1
+          },
+          "tracePath": "C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-artifacts\\run-1e80c77a-555c-4f38-afc2-1277a301e9cf\\bootstrap\\trace-45096-1792830110201.zip"
+        },
+        "capabilities": {
+          "launch": "passed",
+          "nativeInput": "passed",
+          "angular": "passed",
+          "source": "passed",
+          "undo": "passed",
+          "accessibility": "passed",
+          "screenshotComparison": "failed",
+          "securityObserver": "unrun",
+          "cleanup": "passed"
+        },
+        "error": "A snapshot doesn't exist at C:\\_Projets\\rdlc-code\\tests\\desktop\\baselines\\bootstrap-bootstrap.png.",
+        "cleanupError": null,
+        "validated": false
+      },
+      "missingSuites": [
+        "security-observer.spec.ts",
+        "native-drag.spec.ts"
+      ],
+      "runnerExitCode": 1,
+      "artifacts": [
+        {
+          "path": ".vscode-test/desktop-artifacts/run-1e80c77a-555c-4f38-afc2-1277a301e9cf/bootstrap/probe.json",
+          "sha256": "b6a6f0362692baac11af67e16b751b389a4b18876eb1761286cbd66bc768c4cb"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-1e80c77a-555c-4f38-afc2-1277a301e9cf/runner-status.json",
+          "sha256": "cfd7cf0fb664dbd0cb97ebc9f1eb18c0c4735a5b40e778235dcd2fc1e5f3f1f8"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-1e80c77a-555c-4f38-afc2-1277a301e9cf/playwright-report.json",
+          "sha256": "8e94ca50d21ba6ddba82eb08514749bdbce78216c408162e82d4c624cec40882"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-1e80c77a-555c-4f38-afc2-1277a301e9cf/bootstrap/captures/bootstrap/workbench.png",
+          "sha256": "7263e2e308c8dfb0e951985b8d85eaf1f63f6a8b76a22171d3fdae30247f2e46"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-1e80c77a-555c-4f38-afc2-1277a301e9cf/bootstrap/captures/bootstrap/designer.png",
+          "sha256": "9485009603c7b078b2670b8507fc3d31a90a4020ac77f1cd885dbed191a1f043"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-1e80c77a-555c-4f38-afc2-1277a301e9cf/bootstrap/trace-45096-1792830110201.zip",
+          "sha256": "728b3a23296b2f6ae10666b0bd5c35b5c8aae281c54277ff9a5400d5e88f192e"
+        }
+      ]
+    },
+    {
+      "mode": {
+        "probe": true,
+        "packaged": false,
+        "visual": false
+      },
+      "requestedVersion": "1.142.0",
+      "probe": {
+        "schemaVersion": 1,
+        "identity": {
+          "version": "1.142.0",
+          "requestedVersion": "1.142.0",
+          "build": "6d62b1d5dace93a33b3a6d3eca1317bd5e15bcb1",
+          "executablePath": "C:\\_Projets\\rdlc-code\\.vscode-test\\vscode-win32-x64-archive-1.142.0\\Code.exe",
+          "executableSha256": "5ca701a1facb91fec1ac6bbae11fc837821a1da34ddebb91a0bad7e87ab88144",
+          "transport": "electron",
+          "transportDetail": "playwright _electron.launch",
+          "driver": "playwright@1.64.1",
+          "profileDir": "C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-profiles\\development-1.142.0-40316-44d5df0e-cecc-4e2a-b92a-40fab86c4b7e",
+          "workspace": "C:\\_Projets\\rdlc-code",
+          "launchArgs": [
+            "--user-data-dir=C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-profiles\\development-1.142.0-40316-44d5df0e-cecc-4e2a-b92a-40fab86c4b7e",
+            "--extensions-dir=C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-profiles\\development-1.142.0-40316-44d5df0e-cecc-4e2a-b92a-40fab86c4b7e\\extensions",
+            "--skip-welcome",
+            "--skip-release-notes",
+            "--no-cached-data",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--extensionDevelopmentPath=C:\\_Projets\\rdlc-code\\apps\\vscode-extension",
+            "--extensionDevelopmentPath=C:\\_Projets\\rdlc-code\\tests\\vscode\\harness",
+            "C:\\_Projets\\rdlc-code"
+          ],
+          "packaged": false,
+          "trace": "started",
+          "identityPath": "C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-artifacts\\run-7da1038c-ce5e-40fe-8034-105a080833fe\\bootstrap\\identity\\driver-1.142.0-development-1792829702200.json",
+          "tracePath": "C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-artifacts\\run-7da1038c-ce5e-40fe-8034-105a080833fe\\bootstrap\\trace-40316-1792829709762.zip"
+        },
+        "capabilities": {
+          "launch": "passed",
+          "nativeInput": "passed",
+          "angular": "passed",
+          "source": "passed",
+          "undo": "passed",
+          "accessibility": "passed",
+          "screenshotComparison": "failed",
+          "securityObserver": "unrun",
+          "cleanup": "passed"
+        },
+        "error": "A snapshot doesn't exist at C:\\_Projets\\rdlc-code\\tests\\desktop\\baselines\\bootstrap.spec\\bootstrap.png.",
+        "validated": false
+      },
+      "missingSuites": [
+        "security-observer.spec.ts",
+        "native-drag.spec.ts"
+      ],
+      "runnerExitCode": 1,
+      "artifacts": [
+        {
+          "path": ".vscode-test/desktop-artifacts/run-7da1038c-ce5e-40fe-8034-105a080833fe/bootstrap/probe.json",
+          "sha256": "8a541afc7f9a43fe80addb9f6ae9732481f7e0ee67308c60783ff656e7ca5092"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-7da1038c-ce5e-40fe-8034-105a080833fe/runner-status.json",
+          "sha256": "9c53541367b4e9a6e04ce9cb08dfe9a1549af810d6f94ca6b8d6f98ab59f043b"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-7da1038c-ce5e-40fe-8034-105a080833fe/playwright-report.json",
+          "sha256": "dc83f322c05c4cd08fbdd3131ba7e07842f2881ca91dae05cb11714e6c0cb9fd"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-7da1038c-ce5e-40fe-8034-105a080833fe/bootstrap/captures/bootstrap/workbench.png",
+          "sha256": "8a87f08846b6deff2939ca14519eeb02466e7c15750a1f738b95555584489af9"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-7da1038c-ce5e-40fe-8034-105a080833fe/bootstrap/captures/bootstrap/designer.png",
+          "sha256": "9485009603c7b078b2670b8507fc3d31a90a4020ac77f1cd885dbed191a1f043"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-7da1038c-ce5e-40fe-8034-105a080833fe/bootstrap/trace-40316-1792829709762.zip",
+          "sha256": "382c34765ec664aa2689bd258f3f986ee4a54dd7af059690f258a97d1ee75684"
+        }
+      ]
+    },
+    {
+      "mode": {
+        "probe": true,
+        "packaged": true,
+        "visual": false
+      },
+      "requestedVersion": "stable",
+      "probe": {
+        "schemaVersion": 1,
+        "fixture": {
+          "id": "local-blank",
+          "sha256": "7f9401c906b19199aea6be2e430c6fe1fc6f1e5c69f12dcb2baac7e0ae6dd90d"
+        },
+        "oracle": {
+          "sha256": "f60e7b11079fcf3c496a33c1d880fda20c84d0e0ee6fd7e2af6db3afe1b8c721",
+          "outsideFootprint": "exact source equality outside the single ReportItems insertion"
+        },
+        "assertion": "tests/desktop/bootstrap.spec.ts::bootstrap: real Desktop insertion, source oracle, Undo, semantics and pixels",
+        "identity": {
+          "version": "1.143.1",
+          "requestedVersion": "stable",
+          "build": "e646868227c3e3a9e3f24277c8c7220be42c0be7",
+          "environment": {
+            "platform": "win32",
+            "osRelease": "10.0.26300",
+            "architecture": "x64",
+            "observed": {
+              "locale": "en-US",
+              "timezone": "Europe/Paris",
+              "display": {
+                "width": 2560,
+                "height": 1440,
+                "dpr": 1
+              },
+              "window": {
+                "width": 1456,
+                "height": 908,
+                "contentWidth": 1440,
+                "contentHeight": 900
+              },
+              "theme": "vs-dark monaco-enable-motion modern-ui modern-ui-tabs modern-ui-connected-editor-tabs modern-ui-notifications-dialogs monaco-workbench windows chromium nopanel floating-panels panel-position-bottom panel-alignment-center",
+              "fontFamily": "\"Times New Roman\"",
+              "fonts": [
+                {
+                  "family": "codicon",
+                  "style": "normal",
+                  "weight": "normal",
+                  "status": "loaded"
+                }
+              ]
+            }
+          },
+          "executablePath": "C:\\_Projets\\rdlc-code\\.vscode-test\\vscode-win32-x64-archive-1.143.1\\Code.exe",
+          "executableSha256": "325fb30ba28d17fa6ba4df58043727b2469aca9d641793a65e413721b2110ec6",
+          "transport": "electron",
+          "transportDetail": "playwright _electron.launch",
+          "driver": "playwright@1.64.1",
+          "profileDir": "C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-profiles\\packaged-stable-43720-64f5f3f2-4263-4851-95c9-52c761b3cc5e",
+          "workspace": "C:\\_Projets\\rdlc-code",
+          "launchArgs": [
+            "--user-data-dir=C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-profiles\\packaged-stable-43720-64f5f3f2-4263-4851-95c9-52c761b3cc5e",
+            "--extensions-dir=C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-profiles\\packaged-stable-43720-64f5f3f2-4263-4851-95c9-52c761b3cc5e\\extensions",
+            "--skip-welcome",
+            "--skip-release-notes",
+            "--no-cached-data",
+            "--disable-gpu",
+            "--no-sandbox",
+            "C:\\_Projets\\rdlc-code"
+          ],
+          "packaged": true,
+          "trace": "started",
+          "vsixSha256": "a1a0611c6b2d551a24c646abf02825088254cb42a32fae3240ae4cfcfe973cfd",
+          "identityPath": "C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-artifacts\\run-a53dec59-2522-41b2-98ac-59376b11dbad\\bootstrap\\identity\\driver-stable-packaged-1792830218127.json",
+          "frameDiscovery": {
+            "url": "vscode-webview://1l9nofqj4nbbgrrqgva3ve9jbriq52255agaqgdaa0o1h3tfcjr9/fake.html?id=5fba1f33-8bc8-47ed-be5b-ff2457be948b",
+            "name": "pending-frame",
+            "matchedDesignerCount": 1
+          },
+          "tracePath": "C:\\_Projets\\rdlc-code\\.vscode-test\\desktop-artifacts\\run-a53dec59-2522-41b2-98ac-59376b11dbad\\bootstrap\\trace-43720-1792830222865.zip"
+        },
+        "capabilities": {
+          "launch": "passed",
+          "nativeInput": "passed",
+          "angular": "passed",
+          "source": "passed",
+          "undo": "passed",
+          "accessibility": "passed",
+          "screenshotComparison": "failed",
+          "securityObserver": "unrun",
+          "cleanup": "passed"
+        },
+        "error": "A snapshot doesn't exist at C:\\_Projets\\rdlc-code\\tests\\desktop\\baselines\\bootstrap\\bootstrap.png.",
+        "cleanupError": null,
+        "validated": false
+      },
+      "missingSuites": [
+        "security-observer.spec.ts",
+        "native-drag.spec.ts"
+      ],
+      "runnerExitCode": 1,
+      "artifacts": [
+        {
+          "path": ".vscode-test/desktop-artifacts/run-a53dec59-2522-41b2-98ac-59376b11dbad/bootstrap/probe.json",
+          "sha256": "b68c3c985b570d7fab92e42ff4be874e71b930d09e9ccba304c319e8413f8605"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-a53dec59-2522-41b2-98ac-59376b11dbad/runner-status.json",
+          "sha256": "78b2a9af5152a6a242a3f5b2b4c560801d4f0b9b8da6c2a7133534b065316222"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-a53dec59-2522-41b2-98ac-59376b11dbad/playwright-report.json",
+          "sha256": "65245ecac47766b2fa3f35df2abc7fd6bf4ce161f1602144d71698911191a4fb"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-a53dec59-2522-41b2-98ac-59376b11dbad/bootstrap/captures/bootstrap/workbench.png",
+          "sha256": "6197a6f37803387276c1b8a916d4a9892eeb0ac4b034421f3eaf66810100ad0b"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-a53dec59-2522-41b2-98ac-59376b11dbad/bootstrap/captures/bootstrap/designer.png",
+          "sha256": "1b7ae53448871b4ccd137115f2bd07276836dd26cf782a4f74cbe1d7aa8d217f"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/run-a53dec59-2522-41b2-98ac-59376b11dbad/bootstrap/trace-43720-1792830222865.zip",
+          "sha256": "cc4d59f816c548e1ef539f78fc662202a1d0036422e360b0a64ff1078f9cd756"
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "No committed bootstrap reference PNG, geometry/contrast/announcement proof, or pinned Ubuntu visual execution.",
+    "security-observer.spec.ts and native-drag.spec.ts are not implemented. No security positive control or native-drag capability has been validated.",
+    "Current Windows token is not elevated. WSL and Docker are unavailable. Partial JavaScript/CDP observation cannot certify all native host-process-tree attempted accesses.",
+    "All shared bridge/context, sidebar User Story, CI integration and completion tasks T005-T075 remain incomplete.",
+    "CDP fallback and Linux/macOS targets have not been executed."
+  ]
+}

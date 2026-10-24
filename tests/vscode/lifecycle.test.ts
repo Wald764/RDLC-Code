@@ -79,7 +79,7 @@ async function directManipulation(): Promise<void> {
               };
         const requestId = `direct-${table}-${handle}`;
         view.session.receive({
-          protocol: 1,
+          protocol: 2,
           kind: 'edit',
           requestId,
           baseVersion: snapshot.version,
@@ -177,7 +177,7 @@ async function mixedHistory(): Promise<void> {
     const requestId = `mixed-${++count}`;
     const errors = v.messages.filter((m) => m.kind === 'protocolError').length;
     v.session.receive({
-      protocol: 1,
+      protocol: 2,
       kind: 'edit',
       requestId,
       baseVersion: base,
@@ -471,7 +471,7 @@ export async function run(): Promise<void> {
       const state = snapshot.authoring;
       const requestId = `structural-${index}`;
       view.session.receive({
-        protocol: 1,
+        protocol: 2,
         kind: 'edit',
         requestId,
         baseVersion: document.version,
@@ -590,7 +590,7 @@ async function mvpTextboxJourney(): Promise<void> {
       eol: '\n',
     }).root!;
     observed.session.receive({
-      protocol: 1,
+      protocol: 2,
       kind: 'edit',
       requestId: 'mvp-title',
       baseVersion: document.version,
@@ -719,14 +719,14 @@ async function guardedHistoryTargets(eol: '\n' | '\r\n'): Promise<void> {
         : undefined,
     );
     session.onMessage((message) => messages.push(message));
-    session.receive({ protocol: 1, kind: 'ready' });
+    session.receive({ protocol: 2, kind: 'ready' });
     await until(
       () => messages.some((m) => m.kind === 'snapshot'),
       'History guard ready',
     );
     const before = document.version;
     session.receive({
-      protocol: 1,
+      protocol: 2,
       kind: 'history',
       requestId: mode,
       baseVersion: before,
@@ -743,7 +743,7 @@ async function guardedHistoryTargets(eol: '\n' | '\r\n'): Promise<void> {
     const count = messages.length;
     session.dispose();
     session.receive({
-      protocol: 1,
+      protocol: 2,
       kind: 'history',
       requestId: 'disposed-history',
       baseVersion: document.version,
@@ -766,7 +766,7 @@ async function nudging(): Promise<void> {
   const view = observe(document);
   const nudge = async (requestId: string, targetId: string, dxPt: number) => {
     view.session.receive({
-      protocol: 1,
+      protocol: 2,
       kind: 'edit',
       requestId,
       baseVersion: document.version,
@@ -804,7 +804,7 @@ async function nudging(): Promise<void> {
       ).textboxes.find((t) => t.name === 'Behind')!;
     // Navigation/preferences have no host channel: the closed protocol refuses them.
     const version = document.version;
-    view.session.receive({ protocol: 1, kind: 'viewState', zoom: 2 });
+    view.session.receive({ protocol: 2, kind: 'viewState', zoom: 2 });
     await until(
       () => view.messages.some((m) => m.kind === 'protocolError'),
       'view state refused',
@@ -842,7 +842,7 @@ async function nudging(): Promise<void> {
       ).length;
     const before = refusals();
     view.session.receive({
-      protocol: 1,
+      protocol: 2,
       kind: 'edit',
       requestId: 'stale',
       baseVersion: held.version,
@@ -917,7 +917,7 @@ async function arrangement(): Promise<void> {
               };
       const requestId = `arrange-${action}`;
       view.session.receive({
-        protocol: 1,
+        protocol: 2,
         kind: 'edit',
         requestId,
         baseVersion: document.version,

@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
-import type { HostMessage } from '@rdlc/report-model/protocol';
+import { validateMessage, type HostMessage } from '@rdlc/report-model/protocol';
 import { EditorComponent } from './editor.component';
 import { HostAdapter } from './host-adapter';
 
@@ -26,7 +26,7 @@ function snapshotMessage(options: {
 }): HostMessage {
   const version = options.version ?? 2;
   return {
-    protocol: 1,
+    protocol: 2,
     kind: 'snapshot',
     version,
     sourceLength: 0,
@@ -78,8 +78,13 @@ function snapshotMessage(options: {
   };
 }
 
-function mount() {
+function mount(fallback = true) {
   const fixture = TestBed.createComponent(EditorComponent);
+  if (fallback)
+    fixture.componentInstance.view.update((view) => ({
+      ...view,
+      leftVisible: true,
+    }));
   const host = TestBed.inject(HostAdapter);
   const element = fixture.nativeElement as HTMLElement;
   const settle = async () => {
@@ -90,6 +95,142 @@ function mount() {
 }
 
 describe('editor surface', () => {
+  it('defaults to compact navigation and exposes an explicit reversible fallback without edits', async () => {
+    const { fixture, host, element, settle } = mount(false);
+    host.ingest(snapshotMessage({}));
+    await settle();
+    expect(fixture.componentInstance.view().leftVisible).toBe(false);
+    expect(fixture.componentInstance.panelShown('left')).toBe(false);
+    fixture.componentInstance.panelAccess('left');
+    await settle();
+    expect(element.querySelector('[data-card="Textbox"]')).not.toBeNull();
+    expect(fixture.componentInstance.panelShown('left')).toBe(true);
+    fixture.componentInstance.panelAccess('left');
+    await settle();
+    expect(fixture.componentInstance.view().leftVisible).toBe(false);
+    expect(
+      host.sent().some((message) => validateMessage(message)?.kind === 'edit'),
+    ).toBe(false);
+  });
+  it('accepts native selection and properties once without creating an edit', async () => {
+    const { fixture, host, settle } = mount();
+    host.ingest({
+      ...snapshotMessage({}),
+      viewBinding: {
+        viewId: 'view-1',
+        documentLifetimeId: 'document-1',
+        contextGeneration: 1,
+      },
+    });
+    await settle();
+    const base = {
+      protocol: 2,
+      kind: 'nativeAction',
+      uri: 'file:///report.rdlc',
+      viewId: 'view-1',
+      documentLifetimeId: 'document-1',
+      contextGeneration: 1,
+      baseVersion: 2,
+      targetIds: ['2:3'],
+    };
+    const select = {
+      ...base,
+      requestId: 'select-native',
+      action: 'select',
+      capability: 'select',
+      primaryId: '2:3',
+      additive: false,
+    };
+    host.ingest(select);
+    await settle();
+    expect(fixture.componentInstance.acceptedSelection().primaryId).toBe('2:3');
+    host.ingest(select);
+    await settle();
+    const properties = {
+      ...base,
+      requestId: 'properties-native',
+      action: 'properties',
+      capability: 'properties',
+    };
+    host.ingest(properties);
+    await settle();
+    expect(host.nativeAction()).toBeNull();
+    const outcomes = host
+      .sent()
+      .map(validateMessage)
+      .filter((message) => message?.kind === 'actionOutcome');
+    expect(
+      outcomes.filter((message) => message.requestId === 'select-native'),
+    ).toHaveLength(1);
+    expect(
+      outcomes.filter(
+        (message) =>
+          message.requestId === 'properties-native' &&
+          message.status === 'accepted',
+      ),
+    ).toHaveLength(1);
+    expect(
+      host.sent().some((message) => validateMessage(message)?.kind === 'edit'),
+    ).toBe(false);
+  });
+
+  it('ends a held native action on Cancel and never replays its captured selection', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest({
+      ...snapshotMessage({}),
+      viewBinding: {
+        viewId: 'view-1',
+        documentLifetimeId: 'document-1',
+        contextGeneration: 1,
+      },
+    });
+    await settle();
+    fixture.componentInstance.select(0);
+    await settle();
+    const input = element.querySelector<HTMLInputElement>(
+      'input[data-property="text"]',
+    )!;
+    input.value = 'Unsubmitted draft';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const action = {
+      protocol: 2,
+      kind: 'nativeAction',
+      uri: 'file:///report.rdlc',
+      viewId: 'view-1',
+      documentLifetimeId: 'document-1',
+      contextGeneration: 1,
+      baseVersion: 2,
+      targetIds: ['2:3'],
+      requestId: 'held-native',
+      action: 'select',
+      capability: 'select',
+      primaryId: '2:3',
+      additive: false,
+    };
+    host.ingest(action);
+    await settle();
+    expect(fixture.componentInstance.conflict()).not.toBeNull();
+    fixture.componentInstance.cancelConflict();
+    await settle();
+    expect(host.nativeOutcome()?.status).toBe('cancelled');
+    expect(input.value).toBe('Unsubmitted draft');
+    expect(
+      host.sent().some((message) => validateMessage(message)?.kind === 'edit'),
+    ).toBe(false);
+    host.ingest(action);
+    await settle();
+    expect(
+      host
+        .sent()
+        .map(validateMessage)
+        .filter(
+          (message) =>
+            message?.kind === 'actionOutcome' &&
+            message.requestId === 'held-native',
+        ),
+    ).toHaveLength(1);
+  });
+
   for (const status of ['invalid-source', 'source-only'] as const)
     it(`keeps safe Structure, native history and source access in ${status}`, async () => {
       const { fixture, host, element, settle } = mount();
@@ -292,7 +433,7 @@ describe('editor surface', () => {
       },
     });
     host.ingest({
-      protocol: 1,
+      protocol: 2,
       kind: 'editResult',
       requestId: request.requestId,
       baseVersion: 2,
@@ -349,7 +490,7 @@ describe('editor surface', () => {
     fixture.componentInstance.commit({ property: 'width', value: '-1in' });
     const request = host.sent().at(-1) as { requestId: string };
     host.ingest({
-      protocol: 1,
+      protocol: 2,
       kind: 'editResult',
       requestId: request.requestId,
       baseVersion: 2,
@@ -438,7 +579,7 @@ describe('editor surface', () => {
       expect(fixture.componentInstance.selected()).toBeNull();
       const next = directSnapshot(3, '3:4');
       const result = {
-        protocol: 1,
+        protocol: 2,
         kind: 'editResult',
         requestId: request.requestId,
         baseVersion: 2,
@@ -469,7 +610,7 @@ describe('editor surface', () => {
       payload: { action: 'createTextbox', left: '20pt', top: '20pt' },
     });
     host.ingest({
-      protocol: 1,
+      protocol: 2,
       kind: 'editResult',
       requestId: (host.sent().at(-1) as { requestId: string }).requestId,
       baseVersion: 2,
@@ -522,7 +663,7 @@ describe('editor surface', () => {
     fixture.componentInstance.create('textbox');
     const request = host.sent().at(-1) as { requestId: string };
     host.ingest({
-      protocol: 1,
+      protocol: 2,
       kind: 'editResult',
       requestId: request.requestId,
       baseVersion: 2,
@@ -670,7 +811,7 @@ describe('editor surface', () => {
           },
         };
         const result = {
-          protocol: 1,
+          protocol: 2,
           kind: 'editResult',
           requestId,
           baseVersion: 2,
@@ -927,7 +1068,7 @@ describe('editor surface', () => {
         },
       };
       const result = {
-        protocol: 1,
+        protocol: 2,
         kind: 'editResult',
         requestId,
         baseVersion: 2,
@@ -1050,7 +1191,7 @@ describe('editor surface', () => {
       fixture.componentInstance.commit({ property: 'left', value: '1in' });
       const requestId = (host.sent()[0] as { requestId: string }).requestId;
       const result = {
-        protocol: 1,
+        protocol: 2,
         kind: 'editResult',
         requestId,
         baseVersion: 2,
@@ -1403,7 +1544,7 @@ describe('property drafts, limitations and focus', () => {
     const requestId = (mounted.host.sent()[0] as { requestId: string })
       .requestId;
     mounted.host.ingest({
-      protocol: 1,
+      protocol: 2,
       kind: 'editResult',
       requestId,
       baseVersion: 2,
@@ -2174,7 +2315,7 @@ describe('clipboard reuse', () => {
     request: { requestId: string; action: string },
     patch: Record<string, unknown>,
   ) => ({
-    protocol: 1,
+    protocol: 2,
     kind: 'clipboardResult',
     requestId: request.requestId,
     action: request.action,
@@ -2236,7 +2377,7 @@ describe('clipboard reuse', () => {
     const paste = requests(m.host).at(-1)!;
     // The host owns offsets (10pt, 20pt, ...); paste carries only the display unit.
     expect(paste).toEqual({
-      protocol: 1,
+      protocol: 2,
       kind: 'clipboard',
       requestId: paste.requestId,
       baseVersion: 2,
@@ -2252,7 +2393,7 @@ describe('clipboard reuse', () => {
     key(m.viewport, { key: 'x', ctrlKey: true });
     const [cut] = requests(m.host);
     expect(cut).toEqual({
-      protocol: 1,
+      protocol: 2,
       kind: 'clipboard',
       requestId: cut!.requestId,
       baseVersion: 2,

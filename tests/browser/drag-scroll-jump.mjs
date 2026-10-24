@@ -110,7 +110,7 @@ try {
   await send('Page.enable');
   await send('Runtime.enable');
   const snapshot = {
-    protocol: 1,
+    protocol: 2,
     kind: 'snapshot',
     version: 2,
     projection: {
@@ -298,7 +298,7 @@ try {
               ? { left: 232, top: 280, width: 288, height: 48 }
               : { left: 200, top: 240, width: 320, height: 88 };
           const result = {
-            protocol: 1,
+            protocol: 2,
             kind: 'editResult',
             requestId: request.requestId,
             baseVersion: 2,
@@ -374,7 +374,7 @@ try {
               assert.equal(latest.payload.dyPt, 0);
             }
             const unchanged = {
-              protocol: 1,
+              protocol: 2,
               kind: 'editResult',
               requestId: latest.requestId,
               baseVersion: 3,
@@ -392,7 +392,7 @@ try {
             stable(scrolled, await state(), accepted ? 'No-op' : 'Refusal');
           }
           await evaluate(
-            `window.postMessage({ protocol: 1, kind: 'protocolError', supportedVersion: 1, reason: 'Long informational message '.repeat(150) }, '*')`,
+            `window.postMessage({ protocol: 2, kind: 'protocolError', supportedVersion: 2, reason: 'Long informational message '.repeat(150) }, '*')`,
           );
           await settle();
           stable(scrolled, await state(), 'Wrapped informational message');

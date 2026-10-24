@@ -28,6 +28,7 @@ import {
   type SizeUnit,
 } from '@rdlc/report-model/geometry';
 import type { Bounds, DesignSceneItem } from '@rdlc/report-model/scene';
+import type { NativeActionMessage } from '@rdlc/report-model/protocol';
 import { directProposal, type DirectHandle } from './manipulation';
 import { snapDelta, type Guide } from './placement';
 import {
@@ -43,6 +44,7 @@ import {
   panelBounds,
   panelLayout,
   revealScroll,
+  centeredTargetScroll,
   type Frame,
   type InspectorSection,
   type ViewState,
@@ -632,6 +634,7 @@ export class EditorComponent {
       if (draft && draft.version !== version) {
         this.draft.set(null);
         this.conflict.set(null);
+        this.cancelNativeProperties();
         this.gestureNotice.set(
           'The document changed; your unapplied draft was discarded.',
         );
@@ -781,9 +784,204 @@ export class EditorComponent {
         this.selection.set(accepted);
       }
     });
+    // Publish accepted canvas selection without inventing a new intent.
+    effect(() => {
+      const snapshot = this.host.snapshot();
+      const selection = this.acceptedSelection();
+      if (snapshot && selection.version === snapshot.version)
+        untracked(() => this.host.publishSelection(selection));
+    });
+    effect(() => {
+      const action = this.host.nativeAction();
+      if (action) untracked(() => this.runNative(action));
+    });
   }
 
   private readonly destroyRef = inject(DestroyRef);
+
+  /** Run one captured host action through the existing handlers; settle it once. */
+  private runNative(action: NativeActionMessage): void {
+    if (this.host.nativeAction() !== action) return;
+    if (this.held(() => this.runNative(action))) return;
+    const snapshot = this.host.snapshot();
+    if (!snapshot || snapshot.version !== action.baseVersion)
+      return this.refuseNative(
+        'The report changed before the native action arrived.',
+      );
+    if (action.action === 'select') {
+      const selection = this.selectNativeTargets(
+        action.targetIds,
+        action.primaryId,
+        action.additive,
+      );
+      if (!selection)
+        return this.refuseNative('The selected target is no longer available.');
+      this.cancelGesture();
+      this.selection.set(selection);
+      afterNextRender(
+        () => {
+          if (
+            this.host.snapshot()?.version === action.baseVersion &&
+            this.acceptedSelection().primaryId === selection.primaryId &&
+            this.acceptedSelection().structureTargetId ===
+              selection.structureTargetId &&
+            this.acceptedSelection().cellTargetId === selection.cellTargetId
+          )
+            this.revealSelection(true);
+        },
+        { injector: this.injector },
+      );
+      this.host.publishSelection(this.acceptedSelection(), action.requestId);
+      this.host.settleNativeAction('accepted');
+      return;
+    }
+    if (action.action === 'properties' || action.action === 'source') {
+      const selection = this.selectNativeTargets(
+        action.targetIds,
+        action.targetIds[0]!,
+      );
+      if (!selection)
+        return this.refuseNative('The selected target is no longer available.');
+      this.cancelGesture();
+      this.selection.set(selection);
+      this.host.publishSelection(this.acceptedSelection(), action.requestId);
+      if (action.action === 'source') {
+        this.host.openSource(action.targetIds[0]);
+        this.host.settleNativeAction('accepted');
+      } else {
+        this.focusProperties();
+        this.host.settleNativeAction('accepted');
+      }
+      return;
+    }
+    if (action.action === 'create') {
+      if (!this.create(action.create, undefined, action.requestId))
+        this.refuseNative(
+          this.gestureNotice() || 'Creation is unavailable for this report.',
+        );
+      return;
+    }
+    if (action.action === 'clipboard') {
+      if (action.clipboard !== 'paste') {
+        const selection = this.selectNativeTargets(
+          action.targetIds,
+          action.targetIds[0]!,
+        );
+        if (!selection)
+          return this.refuseNative(
+            'The clipboard targets are no longer available.',
+          );
+        this.selection.set(selection);
+      }
+      if (!this.clipboard(action.clipboard, action.requestId))
+        this.refuseNative(
+          this.gestureNotice() ||
+            'Clipboard is unavailable for this selection.',
+        );
+      return;
+    }
+    if (
+      !this.author(
+        { targetId: action.targetIds[0]!, payload: action.payload },
+        action.requestId,
+      )
+    )
+      this.refuseNative('This authoring action is unavailable.');
+  }
+
+  /** Exact accepted targets; never invents a canvas rectangle for structural/data IDs. */
+  private selectNativeTargets(
+    ids: readonly string[],
+    primaryId: string | null,
+    additive = false,
+  ): Selection | null {
+    const snapshot = this.host.snapshot();
+    const scene = this.scene();
+    if (!snapshot || !ids.length) return null;
+    const renderedCell =
+      ids.length === 1
+        ? scene?.items.find(
+            (item) => item.kind === 'cell' && item.xmlCellId === ids[0],
+          )
+        : undefined;
+    if (renderedCell)
+      return {
+        ...emptySelection(snapshot.version),
+        cellTargetId: renderedCell.id,
+      };
+    const nativeCell =
+      ids.length === 1
+        ? snapshot.navigation?.structure.nodes.find(
+            (node) => node.id === ids[0] && node.kind === 'table-cell',
+          )
+        : undefined;
+    if (nativeCell) {
+      const children = (snapshot.navigation?.structure.nodes ?? []).filter(
+        (node) =>
+          node.parentId === nativeCell.id &&
+          scene?.items.some(
+            (item) => item.id === node.id && item.kind === 'cell',
+          ),
+      );
+      return children.length === 1
+        ? { ...emptySelection(snapshot.version), cellTargetId: children[0]!.id }
+        : {
+            ...emptySelection(snapshot.version),
+            structureTargetId: nativeCell.id,
+          };
+    }
+    const items = ids.map((id) => scene?.items.find((item) => item.id === id));
+    if (ids.length === 1 && items[0]?.kind === 'cell')
+      return { ...emptySelection(snapshot.version), cellTargetId: ids[0]! };
+    if (
+      ids.length === 1 &&
+      !items[0] &&
+      (snapshot.structure?.nodes.some((node) => node.id === ids[0]) ||
+        snapshot.navigation?.structure.nodes.some(
+          (node) => node.id === ids[0],
+        ) ||
+        snapshot.navigation?.data.nodes.some((node) => node.id === ids[0]))
+    )
+      return {
+        ...emptySelection(snapshot.version),
+        structureTargetId: ids[0]!,
+      };
+    if (!scene) return null;
+    const body = items
+      .filter((item): item is DesignSceneItem => !!item && item.kind !== 'cell')
+      .map((item) => item.id);
+    if (body.length !== ids.length) return null;
+    const ordered = additive
+      ? [...new Set([...this.acceptedSelection().bodyItemIds, ...body])]
+      : body;
+    const primary =
+      primaryId && ordered.includes(primaryId) ? primaryId : ordered.at(-1)!;
+    return {
+      ...emptySelection(snapshot.version),
+      bodyItemIds: ordered,
+      primaryId: primary,
+    };
+  }
+
+  private refuseNative(reason: string): void {
+    this.gestureNotice.set(reason);
+    this.host.settleNativeAction('refused', reason);
+  }
+
+  private nativePropertiesRequest(): string | undefined {
+    const action = this.host.nativeAction();
+    return action?.action === 'properties' ? action.requestId : undefined;
+  }
+
+  /** A different target ends an open properties action without inventing an edit. */
+  private cancelNativeProperties(): void {
+    const action = this.host.nativeAction();
+    if (action?.action === 'properties' && !this.draft())
+      this.host.settleNativeAction(
+        'cancelled',
+        'The target changed; the pending properties action was cancelled.',
+      );
+  }
 
   workspaceResize(width: number, height: number): void {
     if (width === this.workspaceWidth() && height === this.workspaceHeight)
@@ -935,6 +1133,7 @@ export class EditorComponent {
   select(index: number, toggle = false): void {
     if (this.host.pending() || this.held(() => this.select(index, toggle)))
       return;
+    this.cancelNativeProperties();
     this.cancelGesture();
     const version = this.host.snapshot()?.version;
     const item = this.scene()?.items[index];
@@ -958,6 +1157,7 @@ export class EditorComponent {
         ?.structure?.nodes.some((node) => node.id === target.id)
     )
       return;
+    this.cancelNativeProperties();
     this.cancelGesture();
     this.selection.set(
       selectStructure(
@@ -1176,6 +1376,7 @@ export class EditorComponent {
 
   selectAll(): void {
     if (this.host.pending() || this.held(() => this.selectAll())) return;
+    this.cancelNativeProperties();
     this.cancelGesture();
     this.selection.set(
       selectAll(this.host.snapshot()?.version ?? 0, this.scene()?.items ?? []),
@@ -1184,6 +1385,7 @@ export class EditorComponent {
 
   clearSelection(): void {
     if (this.host.pending() || this.held(() => this.clearSelection())) return;
+    this.cancelNativeProperties();
     this.cancelGesture();
     this.selection.set(emptySelection(this.host.snapshot()?.version ?? 0));
   }
@@ -1236,15 +1438,18 @@ export class EditorComponent {
   }
 
   /** Host-authoritative Copy/Cut/Paste/Duplicate of complete body selections. */
-  clipboard(action: 'copy' | 'cut' | 'paste' | 'duplicate'): void {
+  clipboard(
+    action: 'copy' | 'cut' | 'paste' | 'duplicate',
+    nativeRequestId?: string,
+  ): boolean {
     const snapshot = this.host.snapshot();
     if (
       !snapshot ||
       snapshot.status !== 'editable' ||
       this.host.pending() ||
-      this.held(() => this.clipboard(action))
+      this.held(() => this.clipboard(action, nativeRequestId))
     )
-      return;
+      return false;
     this.cancelGesture();
     const ids = this.selectedIds();
     const common = {
@@ -1252,8 +1457,10 @@ export class EditorComponent {
       baseVersion: snapshot.version,
     };
     if (action === 'paste') {
-      this.host.sendClipboard({ ...common, action, unit: this.view().unit });
-      return;
+      return this.host.sendClipboard(
+        { ...common, action, unit: this.view().unit },
+        nativeRequestId,
+      );
     }
     if (!ids.length) {
       this.gestureNotice.set(
@@ -1261,7 +1468,7 @@ export class EditorComponent {
           ? 'Table cells cannot be copied separately; select the whole table.'
           : 'Select one or more body items first.',
       );
-      return;
+      return false;
     }
     const items = ids.map((id) => this.scene()?.items.find((i) => i.id === id));
     const locked = items.findIndex((item) => !item || item.placeholder);
@@ -1269,14 +1476,15 @@ export class EditorComponent {
       this.gestureNotice.set(
         `${items[locked]?.label ?? ids[locked]} is preservation-only and cannot be copied; inspect it in source.`,
       );
-      return;
+      return false;
     }
     this.gestureNotice.set('');
     // An explicit Cut is its own acknowledgement; one native Undo restores it.
-    this.host.sendClipboard(
+    return this.host.sendClipboard(
       action === 'copy' || action === 'cut'
         ? { ...common, action, targetIds: ids }
         : { ...common, action, targetIds: ids, unit: this.view().unit },
+      nativeRequestId,
     );
   }
 
@@ -2074,7 +2282,7 @@ export class EditorComponent {
     );
   }
 
-  revealSelection(): void {
+  revealSelection(center = false): void {
     const scene = this.scene();
     const selection = this.acceptedSelection();
     const ids = selection.cellTargetId
@@ -2084,11 +2292,23 @@ export class EditorComponent {
       .filter((i) => ids.includes(i.id) && i.bounds)
       .map((i) => i.bounds!);
     if (!scene || !known.length) {
-      this.gestureNotice.set('Select an item with known bounds to reveal it.');
+      if (!center)
+        this.gestureNotice.set(
+          'Select an item with known bounds to reveal it.',
+        );
       return;
     }
     const target = union(known);
-    const scroll = revealScroll(
+    const viewport = this.viewport()?.nativeElement;
+    const scroll = (
+      center && viewport
+        ? (bounds: Bounds, frame: Frame, zoom: number) =>
+            centeredTargetScroll(bounds, frame, zoom, {
+              width: viewport.scrollWidth,
+              height: viewport.scrollHeight,
+            })
+        : revealScroll
+    )(
       {
         ...target,
         left: scene.body.left + target.left,
@@ -2153,27 +2373,34 @@ export class EditorComponent {
    * Creates a component at a body point (pt), or at the default position for
    * keyboard and click activation: the visible body top-left plus 0.25in.
    */
-  create(kind: CreationKind, at?: { left: number; top: number }): void {
-    if (this.held(() => this.create(kind, at))) return;
+  create(
+    kind: CreationKind,
+    at?: { left: number; top: number },
+    nativeRequestId?: string,
+  ): boolean {
+    if (this.held(() => this.create(kind, at, nativeRequestId))) return false;
     const reason = this.creationReason();
     const authoring = this.host.snapshot()?.authoring;
     if (reason || !authoring) {
       this.gestureNotice.set(reason);
-      return;
+      return false;
     }
     const spot = kind === 'dataset' ? null : (at ?? this.defaultSpot(kind));
     const size = (pt: number) => this.inUnit(pointsToPixels(pt));
     this.keyboardCreation = !at;
-    this.author({
-      targetId: authoring.id,
-      payload: !spot
-        ? { action: 'createDataset' }
-        : {
-            action: kind === 'table' ? 'createTable' : 'createTextbox',
-            left: size(spot.left),
-            top: size(spot.top),
-          },
-    });
+    return this.author(
+      {
+        targetId: authoring.id,
+        payload: !spot
+          ? { action: 'createDataset' }
+          : {
+              action: kind === 'table' ? 'createTable' : 'createTextbox',
+              left: size(spot.left),
+              top: size(spot.top),
+            },
+      },
+      nativeRequestId,
+    );
   }
 
   /** Default creation spot (pt), offset one grid step while the top-left is taken. */
@@ -2401,6 +2628,10 @@ export class EditorComponent {
     const draft = this.draft();
     if (!draft || this.host.pending()) return;
     this.conflict.set(null);
+    this.host.settleNativeAction(
+      'cancelled',
+      'The draft is being applied; activate the native action again afterward.',
+    );
     const property = draft.control.dataset['property'];
     if (property)
       this.sendCommit({
@@ -2420,6 +2651,7 @@ export class EditorComponent {
       '';
     this.originals.delete(draft.control);
     this.draft.set(null);
+    this.cancelNativeProperties();
     const conflict = this.conflict();
     this.conflict.set(null);
     this.element.nativeElement.querySelector<HTMLElement>('.feedback')?.focus();
@@ -2428,35 +2660,52 @@ export class EditorComponent {
 
   cancelConflict(): void {
     this.conflict.set(null);
+    this.host.settleNativeAction(
+      'cancelled',
+      'The draft decision was cancelled; the accepted selection is unchanged.',
+    );
     this.draft()?.control.focus();
   }
 
-  author(request: AuthoringRequest): void {
+  author(
+    request: AuthoringRequest,
+    nativeRequestId: string | undefined = this.nativePropertiesRequest(),
+  ): boolean {
     const form = this.submitted;
     this.submitted = null;
     const submitted = form instanceof HTMLFormElement ? form : null;
-    if (this.held(() => this.sendAuthor(request, submitted), form)) return;
-    this.sendAuthor(request, submitted);
+    if (
+      this.held(
+        () => this.sendAuthor(request, submitted, nativeRequestId),
+        form,
+      )
+    )
+      return false;
+    return this.sendAuthor(request, submitted, nativeRequestId);
   }
 
   private sendAuthor(
     request: AuthoringRequest,
     form: HTMLFormElement | null = null,
-  ): void {
+    nativeRequestId?: string,
+  ): boolean {
     this.cancelGesture();
     const snapshot = this.host.snapshot();
-    if (!snapshot || snapshot.status !== 'editable') return;
+    if (!snapshot || snapshot.status !== 'editable') return false;
     const requestId = crypto.randomUUID();
     this.refusedForm = form ? { requestId, form } : null;
     if (form)
       for (const control of form.querySelectorAll('[aria-invalid]'))
         control.removeAttribute('aria-invalid');
-    const accepted = this.host.sendEdit({
-      requestId,
-      baseVersion: snapshot.version,
-      operation: 'author',
-      ...request,
-    });
+    const accepted = this.host.sendEdit(
+      {
+        requestId,
+        baseVersion: snapshot.version,
+        operation: 'author',
+        ...request,
+      },
+      nativeRequestId,
+    );
     if (
       accepted &&
       ['createTextbox', 'createTable', 'createDataset'].includes(
@@ -2477,6 +2726,7 @@ export class EditorComponent {
     }
     this.keyboardCreation = false;
     this.draft.set(null);
+    return accepted;
   }
 
   bindField(name: string): void {
@@ -2494,11 +2744,14 @@ export class EditorComponent {
   }
 
   /** Typed intent only; the host validates, patches, reparses and applies. */
-  private sendCommit(edit: TextboxCommit): void {
+  private sendCommit(
+    edit: TextboxCommit,
+    nativeRequestId: string | undefined = this.nativePropertiesRequest(),
+  ): boolean {
     this.cancelGesture();
     const snapshot = this.host.snapshot();
     const item = this.selected();
-    if (!snapshot || snapshot.status !== 'editable' || !item) return;
+    if (!snapshot || snapshot.status !== 'editable' || !item) return false;
     const intent: EditIntent = {
       requestId: crypto.randomUUID(),
       baseVersion: snapshot.version,
@@ -2506,6 +2759,8 @@ export class EditorComponent {
       operation: 'setProperty',
       payload: { property: edit.property, value: edit.value },
     };
-    if (this.host.sendEdit(intent)) this.draft.set(null);
+    const sent = this.host.sendEdit(intent, nativeRequestId);
+    if (sent) this.draft.set(null);
+    return sent;
   }
 }

@@ -4,6 +4,34 @@ import type { AuthoringState } from '@rdlc/report-model/protocol';
 import { fieldTypes } from '@rdlc/report-model/report';
 
 describe('selected local definition', () => {
+  for (const type of Object.keys(fieldTypes))
+    it(`initializes the existing field type ${type} without an edit`, () => {
+      const fixture = TestBed.createComponent(DatasetsComponent);
+      fixture.componentRef.setInput('state', {
+        id: '1:1',
+        page: {},
+        tables: [],
+        datasets: [
+          {
+            id: '1:2',
+            name: 'Orders',
+            fields: [{ id: '1:3', name: 'Id', type }],
+          },
+        ],
+      });
+      fixture.componentRef.setInput('selectedId', '1:3');
+      const requests: unknown[] = [];
+      fixture.componentInstance.request.subscribe((request) =>
+        requests.push(request),
+      );
+      fixture.detectChanges();
+      expect(
+        (fixture.nativeElement.querySelector('select') as HTMLSelectElement)
+          .value,
+      ).toBe(type);
+      expect(requests).toEqual([]);
+      fixture.destroy();
+    });
   it('shows only the selected dataset/field, retains seven types and emits no initialization edits', () => {
     const fixture = TestBed.createComponent(DatasetsComponent);
     const state: AuthoringState = {

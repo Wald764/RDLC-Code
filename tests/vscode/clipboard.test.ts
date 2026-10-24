@@ -60,7 +60,7 @@ export function view(
   const session = new DocumentSession(document, undefined, clipboard);
   const messages: HostMessage[] = [];
   const listener = session.onMessage((message) => messages.push(message));
-  session.receive({ protocol: 1, kind: 'ready' });
+  session.receive({ protocol: 2, kind: 'ready' });
   let count = 0;
   const ids = (...names: string[]) => {
     const projection = projectReport(
@@ -83,7 +83,7 @@ export function view(
   ): Promise<Result> => {
     const requestId = `clip-${action}-${++count}-${Math.random().toString(36).slice(2, 8)}`;
     session.receive({
-      protocol: 1,
+      protocol: 2,
       kind: 'clipboard',
       requestId,
       baseVersion: document.version,

@@ -58,6 +58,8 @@ jobs:
       VSCODE_VERSION: ${{ matrix.vscode }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@9fd676a19091d4595eefd76e4bd31c97133911f1 # v4.2.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -78,6 +80,40 @@ jobs:
         run: xvfb-run -a pnpm test:package
       - if: runner.os != 'Linux'
         run: pnpm test:package
+      - name: Prepare Linux Desktop observation environment
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends strace iptables fontconfig fonts-dejavu-core locales
+          sudo locale-gen en_US.UTF-8
+          # The native observer attaches strace to the running Desktop process tree.
+          sudo sysctl -w kernel.yama.ptrace_scope=0
+          mkdir -p .vscode-test/desktop-artifacts
+          {
+            echo "image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            grep -E '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release
+            dpkg-query -W -f='${Package} ${Version}\n' strace iptables fontconfig fonts-dejavu-core locales
+            echo "ptrace_scope: $(sysctl -n kernel.yama.ptrace_scope)"
+            echo "node: $(node --version)"
+          } | tee .vscode-test/desktop-artifacts/linux-environment.txt
+      - name: Probe installed Desktop capabilities on Linux
+        if: runner.os == 'Linux'
+        env:
+          TZ: UTC
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e --probe --packaged
+      - name: Probe installed Desktop capabilities on Windows and macOS
+        if: runner.os != 'Linux'
+        run: pnpm test:e2e --probe --packaged
+      - name: Upload Desktop probe evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-probe-${{ matrix.os }}-${{ matrix.vscode }}
+          path: .vscode-test/desktop-artifacts/**
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload VS Code logs on failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

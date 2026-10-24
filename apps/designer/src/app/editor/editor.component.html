@@ -170,10 +170,11 @@
           class="tb left-access"
           type="button"
           aria-controls="left-panel"
+          aria-description="Compact designer navigation fallback with components, report structure and local data. Supports HTML drag insertion."
           [attr.aria-expanded]="panelShown('left')"
           [title]="
             (panelShown('left') ? 'Hide' : 'Show') +
-            ' the Components and Structure panel'
+            ' the compact Components and Structure fallback'
           "
           (click)="panelAccess('left')"
         >

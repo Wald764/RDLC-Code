@@ -35,7 +35,7 @@ export function observe(
   const session = new DocumentSession(document, apply);
   const messages: HostMessage[] = [];
   const listener = session.onMessage((message) => messages.push(message));
-  session.receive({ protocol: 1, kind: 'ready' });
+  session.receive({ protocol: 2, kind: 'ready' });
   const intent = (requestId: string, value: string) => {
     const syntax = parse({
       uri: document.uri.toString(),
@@ -44,7 +44,7 @@ export function observe(
       eol: '\n',
     });
     return {
-      protocol: 1,
+      protocol: 2,
       kind: 'edit',
       requestId,
       baseVersion: document.version,

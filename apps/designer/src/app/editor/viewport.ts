@@ -123,6 +123,34 @@ export function revealScroll(
   };
 }
 
+/** Center accepted page-relative bounds at unchanged zoom, clamped to reachable scroll. */
+export function centeredTargetScroll(
+  bounds: Bounds,
+  frame: Frame,
+  zoom: number,
+  content: { width: number; height: number },
+): Scroll {
+  if (
+    ![bounds.left, bounds.top, bounds.width, bounds.height, zoom].every(
+      Number.isFinite,
+    ) ||
+    bounds.width <= 0 ||
+    bounds.height <= 0 ||
+    zoom <= 0
+  )
+    return { scrollLeft: frame.scrollLeft, scrollTop: frame.scrollTop };
+  return {
+    scrollLeft: Math.min(
+      Math.max(0, content.width - frame.width),
+      Math.max(0, (bounds.left + bounds.width / 2) * zoom - frame.width / 2),
+    ),
+    scrollTop: Math.min(
+      Math.max(0, content.height - frame.height),
+      Math.max(0, (bounds.top + bounds.height / 2) * zoom - frame.height / 2),
+    ),
+  };
+}
+
 /** Navigable extent (unzoomed px): the page plus body items overflowing it. Report bounds are untouched. */
 export function extent(
   page: Bounds,
@@ -210,7 +238,7 @@ export const defaultViewState: ViewState = {
   guidesSnap: true,
   leftWidth: 220,
   rightWidth: 300,
-  leftVisible: true,
+  leftVisible: false,
   rightVisible: true,
   leftTab: 'components',
   inspectorExpanded: {

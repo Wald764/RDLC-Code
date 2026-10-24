@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { readFileSync } from 'node:fs';
 import { DocumentSession } from './document-session.js';
 import { createNonce, renderWebviewHtml } from './webview.js';
+import type { SidebarHostContext } from './sidebar/host-context.js';
 
 /** A panel reveal alone is insufficient: verify the real active custom tab and URI. */
 export async function activateHistoryTarget(
@@ -34,7 +35,10 @@ export async function activateHistoryTarget(
 
 /** Custom editor host: source-preserving sessions over the packaged Angular surface. */
 export class RdlcEditorProvider implements vscode.CustomTextEditorProvider {
-  constructor(private readonly extensionUri: vscode.Uri) {}
+  constructor(
+    private readonly extensionUri: vscode.Uri,
+    private readonly sidebar: SidebarHostContext,
+  ) {}
 
   resolveCustomTextEditor(
     document: vscode.TextDocument,
@@ -70,6 +74,7 @@ export class RdlcEditorProvider implements vscode.CustomTextEditorProvider {
     const session = new DocumentSession(document, undefined, undefined, () =>
       activateHistoryTarget(document, panel),
     );
+    const sidebar = this.sidebar.register(document, panel, session);
     const subscription = session.onMessage((message) => {
       void panel.webview.postMessage(message);
     });
@@ -77,6 +82,7 @@ export class RdlcEditorProvider implements vscode.CustomTextEditorProvider {
       session.receive(message),
     );
     panel.onDidDispose(() => {
+      sidebar.dispose();
       receiver.dispose();
       subscription.dispose();
       session.dispose();

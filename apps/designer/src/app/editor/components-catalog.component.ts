@@ -7,17 +7,13 @@ import {
   signal,
 } from '@angular/core';
 import { IconComponent, iconFor } from './icon.component';
-
-export type CreationKind = 'textbox' | 'table' | 'dataset';
-const categories = [
-  {
-    label: 'Report items',
-    entries: ['Textbox', 'Table', 'Image', 'Line', 'Chart', 'Subreport'],
-  },
-  { label: 'Containers', entries: ['Rectangle', 'List', 'Matrix'] },
-  { label: 'Data', entries: ['Dataset', 'Parameter'] },
-] as const;
-const supported = new Set(['Textbox', 'Table', 'Dataset']);
+import {
+  componentCatalog,
+  filterComponents,
+  type CreationKind,
+} from '@rdlc/report-model/components';
+export type { CreationKind } from '@rdlc/report-model/components';
+const entries = componentCatalog.flatMap((category) => category.entries);
 
 @Component({
   selector: 'rdlc-components-catalog',
@@ -125,25 +121,26 @@ export class ComponentsCatalogComponent {
   readonly query = signal('');
   readonly create = output<CreationKind>();
   readonly filtered = computed(() =>
-    categories
-      .map((c) => ({
-        ...c,
-        entries: c.entries.filter((e) =>
-          e.toLowerCase().includes(this.query().trim().toLowerCase()),
-        ),
-      }))
-      .filter((c) => c.entries.length),
+    filterComponents(this.query()).map((category) => ({
+      ...category,
+      entries: category.entries.map((entry) => entry.label),
+    })),
   );
   icon(entry: string) {
     return iconFor(entry.toLowerCase());
   }
   available(entry: string): boolean {
-    return supported.has(entry) && !this.disabled();
+    return (
+      entries.some(
+        (candidate) => candidate.label === entry && candidate.creatable,
+      ) && !this.disabled()
+    );
   }
   reason(entry: string): string {
-    return supported.has(entry)
-      ? 'Wait for the current operation or open an editable report.'
-      : `${entry} authoring is unavailable. Existing content is preserved; use Code XML.`;
+    return (
+      entries.find((candidate) => candidate.label === entry)?.reason ??
+      'Wait for the current operation or open an editable report.'
+    );
   }
   dragStart(event: DragEvent, entry: string): void {
     if (!this.available(entry) || !event.dataTransfer) {

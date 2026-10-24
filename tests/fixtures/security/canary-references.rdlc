@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition">
+  <DataSources>
+    <DataSource Name="CanarySource">
+      <ConnectionProperties>
+        <DataProvider>SQL</DataProvider>
+        <ConnectString>Data Source=__RDLC_CANARY_PATH__</ConnectString>
+      </ConnectionProperties>
+    </DataSource>
+  </DataSources>
+  <ReportSections><ReportSection>
+    <Body><ReportItems>
+      <Image Name="CanaryImage"><Source>External</Source><Value>__RDLC_CANARY_URL__</Value><Sizing>FitProportional</Sizing><Top>0in</Top><Left>0in</Left><Height>1in</Height><Width>1in</Width></Image>
+    </ReportItems><Height>2in</Height></Body>
+    <Width>6.5in</Width>
+    <Page><PageHeight>11in</PageHeight><PageWidth>8.5in</PageWidth><LeftMargin>1in</LeftMargin><RightMargin>1in</RightMargin><TopMargin>1in</TopMargin><BottomMargin>1in</BottomMargin></Page>
+  </ReportSection></ReportSections>
+</Report>

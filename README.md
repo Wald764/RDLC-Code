@@ -9,7 +9,7 @@ release acceptance and publishing credentials are not yet verified.
 Build a local VSIX using [CONTRIBUTING.md](CONTRIBUTING.md), then install it:
 
 ```sh
-code --install-extension dist/rdlc-code-0.1.0.vsix
+code --install-extension dist/rdlc-code-0.2.0.vsix
 ```
 
 VS Code 1.142.0 or newer is required. Windows has local automated evidence;
@@ -23,6 +23,34 @@ uses bundled assets and needs no server, .NET runtime or data connection.
 - Select an item and explicitly apply its property form. Native save, undo and
   redo operate on the same text document as source edits.
 - Use **RDLC Code: Open Source** for XML, unsupported content or diagnostics.
+
+### Native report workspace (in development)
+
+Open **RDLC Code** in the Activity Bar for **Report Structure**, **Report Data**
+and **Components**, including before opening a designer. **Open Report** uses a
+local `.rdlc` picker. VS Code owns view placement, hiding and restoration.
+
+- Structure follows accepted XML, including cells, members, groups and preserved
+  report items. Activate a row to select its associated designer target; use
+  **Properties** or **Code XML** from its context menu. Eligible body items also
+  expose Copy, Cut and Duplicate. Existing inspector forms retain their validation
+  and destructive-change safeguards.
+- Data lists datasets/fields, parameters, embedded images and data sources.
+  Tooltips contain allowlisted metadata, never image payloads, query text or
+  connection strings. Parameters, images and data sources remain inspection-only.
+- Components shares the compact designer's eleven-kind catalog. Textbox, Table
+  and Dataset activate existing automatic creation. The title **Filter Components**
+  action matches labels without case sensitivity; Escape retains the previous
+  filter, and **Clear Filter** recovers an empty result.
+- The designer starts with its duplicate navigation closed. Its **Components**
+  toolbar button explicitly opens the compact fallback, including existing HTML
+  drag insertion, even when native views are hidden. Explicit saved navigation
+  preferences remain respected.
+
+Native-tree drag delivery is unavailable in the executed Windows probe, so the
+native views advertise activation rather than dragging. The native sidebar is
+not yet acceptance-complete: the selection-latency gate currently fails and
+mandatory visual, security and cross-platform evidence remains outstanding.
 
 ### Interactive canvas
 

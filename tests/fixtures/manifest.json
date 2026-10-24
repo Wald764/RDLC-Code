@@ -317,6 +317,21 @@
       "expectedDiagnostics": ["TABLE_DATASET_REQUIRED"],
       "preservation": "Two-column static table without DataSetName; two local datasets; binding inserts only DataSetName and one detail group",
       "consumerEvidence": null
+    },
+    {
+      "id": "security-canary-references",
+      "path": "security/canary-references.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": ["vendor/04-security/4-security.md"],
+      "operation": "none; the Desktop security observer substitutes a canary file path for the placeholders and asserts the file is never opened",
+      "editFootprint": [],
+      "expectedDiagnostics": [],
+      "preservation": "External image and data source references to a local file outside every allowlist stay inert source; nothing is read, resolved or retrieved",
+      "consumerEvidence": ["tests/desktop/security-observer.spec.ts"]
     }
   ]
 }

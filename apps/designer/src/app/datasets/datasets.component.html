@@ -89,9 +89,11 @@
           >
             <label
               >Field type
-              <select #changedType [value]="field.type">
+              <select #changedType>
                 @for (type of types; track type) {
-                  <option [value]="type">{{ type }}</option>
+                  <option [value]="type" [selected]="type === field.type">
+                    {{ type }}
+                  </option>
                 }
               </select></label
             ><button type="submit">Set type</button>

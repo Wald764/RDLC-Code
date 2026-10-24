@@ -134,7 +134,7 @@ describe('authoring forms', () => {
     for (const [index, request] of requests.entries())
       expect(
         validateMessage({
-          protocol: 1,
+          protocol: 2,
           kind: 'edit',
           requestId: `form-${index}`,
           baseVersion: 1,

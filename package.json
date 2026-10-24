@@ -11,7 +11,7 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm --filter @rdlc/designer typecheck",
-    "test:unit": "node scripts/compile.ts && node --test packages/*/dist/*.test.js dist/apps/vscode-extension/src/*.test.js dist/scripts/*.test.js && pnpm --filter @rdlc/designer test",
+    "test:unit": "node scripts/compile.ts && node --test packages/*/dist/*.test.js dist/apps/vscode-extension/src/*.test.js dist/scripts/*.test.js dist/tests/desktop/*.test.js && pnpm --filter @rdlc/designer test",
     "test:roundtrip": "node scripts/compile.ts && node --test dist/tests/roundtrip/*.test.js",
     "test:compatibility": "node scripts/compile.ts && node --test dist/tests/compatibility/*.test.js",
     "test:acceptance": "node --test dist/tests/performance/*.test.js",
@@ -22,6 +22,8 @@
     "build": "node scripts/compile.ts && node dist/scripts/build.js",
     "package": "node dist/scripts/package.js",
     "test:vscode": "node dist/tests/vscode/run-tests.js",
+    "test:e2e": "node dist/tests/desktop/run-tests.js",
+    "test:visual": "node dist/tests/desktop/run-tests.js --visual",
     "test:package": "node --test dist/tests/package/*.test.js && node dist/tests/vscode/run-tests.js --packaged"
   },
   "devDependencies": {
@@ -39,6 +41,7 @@
     "esbuild": "0.27.0",
     "eslint": "9.39.1",
     "jiti": "2.6.1",
+    "playwright": "1.64.1",
     "prettier": "3.6.2",
     "typescript": "6.0.3",
     "typescript-eslint": "8.71.2"

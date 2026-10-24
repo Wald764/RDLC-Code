@@ -56,6 +56,7 @@ export function renderTable(
         id: textbox?.node.id ?? cell.node.id,
         kind: 'cell',
         parentTableId: table.node.id,
+        xmlCellId: cell.node.id,
         bounds:
           left !== null &&
           top !== null &&

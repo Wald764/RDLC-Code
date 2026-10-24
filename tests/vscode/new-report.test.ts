@@ -38,7 +38,7 @@ export async function run(): Promise<void> {
   const subscription = session.onMessage((message) => {
     if (message.kind === 'editResult') results.push(message);
   });
-  session.receive({ protocol: 1, kind: 'ready' });
+  session.receive({ protocol: 2, kind: 'ready' });
   let sequence = 0;
   const current = () => {
     const syntax = parse({
@@ -55,7 +55,7 @@ export async function run(): Promise<void> {
     accepted = true,
   ) => {
     session.receive({
-      protocol: 1,
+      protocol: 2,
       kind: 'edit',
       requestId: `us2-${++sequence}`,
       baseVersion: document.version,

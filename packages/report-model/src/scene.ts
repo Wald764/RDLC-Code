@@ -35,6 +35,8 @@ export interface DesignScene {
     readonly bounds: Bounds | null;
     readonly kind?: 'textbox' | 'table' | 'cell' | 'preserved';
     readonly parentTableId?: string;
+    /** Source XML cell; `id` may instead name its rendered child textbox. */
+    readonly xmlCellId?: string;
     readonly sourceOrder?: number;
     readonly zIndex?: number;
     readonly resolvedGeometry?: ResolvedGeometry;

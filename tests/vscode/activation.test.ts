@@ -9,6 +9,18 @@ export async function run(): Promise<void> {
   const commands = await vscode.commands.getCommands(true);
   assert.ok(commands.includes('rdlcCode.openSource'));
   assert.ok(commands.includes('rdlcCode.openDesigner'));
+  for (const id of [
+    'openReport',
+    'activate',
+    'properties',
+    'source',
+    'filter',
+    'clearFilter',
+  ])
+    assert.ok(
+      commands.includes(`rdlcCode.sidebar.${id}`),
+      `Native command ${id} activates without a designer`,
+    );
   const document = await vscode.workspace.openTextDocument({
     content: '<Report/>',
     language: 'xml',

@@ -11,6 +11,39 @@ import type { DesignScene } from './scene.js';
 import type { ReportProjection } from './report.js';
 import { sizeUnits, type SizeUnit } from './geometry.js';
 import { clipboardActions, type ClipboardAction } from './clipboard.js';
+import {
+  structureKinds,
+  validateAcceptedNavigation,
+  validateAcceptedSelection,
+  validateActionOutcome,
+  validateNativeAction,
+  validateViewIdentity,
+  type AcceptedNavigation,
+  type AcceptedSelectionMessage,
+  type ActionOutcomeMessage,
+  type NativeActionMessage,
+  type ReportStructure,
+  type ViewIdentity,
+} from './navigation.js';
+export { structureKinds, validateViewIdentity } from './navigation.js';
+export type {
+  AcceptedNavigation,
+  AcceptedSelectionMessage,
+  ActionOutcomeMessage,
+  ActionStatus,
+  CreateKind,
+  NavigationCapability,
+  NavigationKind,
+  NavigationNode,
+  NavigationOperation,
+  NavigationProjection,
+  NavigationSelection,
+  NativeActionMessage,
+  NativeOperation,
+  ReportStructure,
+  StructureNode,
+  ViewIdentity,
+} from './navigation.js';
 
 export interface AuthoringState {
   readonly id: string;
@@ -43,45 +76,8 @@ export interface AuthoringState {
   }[];
 }
 
-export const structureKinds = [
-  'report',
-  'sections',
-  'section',
-  'body',
-  'header',
-  'footer',
-  'textbox',
-  'table',
-  'row',
-  'cell',
-  'dataset',
-  'field',
-  'container',
-  'preserved',
-] as const;
-export interface StructureNode {
-  /** Actual XML node ID in the accepted version; unique within snapshot. */
-  readonly id: string;
-  /** Emitted parent ID or null for root; no missing parent, cycle or >32-level chain. */
-  readonly parentId: string | null;
-  readonly kind: (typeof structureKinds)[number];
-  /** Actual type/name or honest structural label; never evaluated content. */
-  readonly label: string;
-  /** Existing declared name or null; not an authorization to rename. */
-  readonly name: string | null;
-  /** Actual source range with finite integer 0 <= start <= end <= source.length. */
-  readonly range: { readonly start: number; readonly end: number };
-  /** Null or an explanation of preserved/opaque scope, including actual unsupported type where known. */
-  readonly preservedReason: string | null;
-}
-export interface ReportStructure {
-  /** Flat, source-ordered structural entries; maximum 2,000. */
-  readonly nodes: readonly StructureNode[];
-  /** True when entry/depth/available transport budgets prevent a complete projection; visible limitation and source access required. */
-  readonly truncated: boolean;
-}
 export interface HistoryRequestMessage {
-  readonly protocol: 1;
+  readonly protocol: 2;
   readonly kind: 'history';
   readonly requestId: string;
   readonly baseVersion: number;
@@ -97,30 +93,47 @@ export interface HistoryResultMessage
 }
 
 export type ClientMessage =
-  | { readonly protocol: 1; readonly kind: 'ready' }
-  | ({ readonly protocol: 1; readonly kind: 'edit' } & EditIntent)
+  | { readonly protocol: 2; readonly kind: 'ready' }
+  | ({
+      readonly protocol: 2;
+      readonly kind: 'edit';
+      /** Optional correlation with the native action that opened this draft. */
+      readonly nativeRequestId?: string;
+    } & EditIntent)
   | {
-      readonly protocol: 1;
+      readonly protocol: 2;
       readonly kind: 'openSource';
       readonly version: number;
       readonly targetId?: string;
     }
   | ClipboardRequestMessage
-  | HistoryRequestMessage;
+  | HistoryRequestMessage
+  | AcceptedSelectionMessage
+  | ActionOutcomeMessage;
 /** Selection-bearing actions name body roots; Paste carries no XML or manifest. */
 export interface ClipboardRequestMessage {
-  readonly protocol: 1;
+  readonly protocol: 2;
   readonly kind: 'clipboard';
   readonly requestId: string;
   readonly baseVersion: number;
   readonly action: ClipboardAction;
   readonly targetIds?: readonly string[];
   readonly unit?: SizeUnit;
+  /** Optional correlation with the native action that requested this clipboard work. */
+  readonly nativeRequestId?: string;
 }
 export type HostMessage =
   | HistoryResultMessage
+  | NativeActionMessage
   | {
-      readonly protocol: 1;
+      readonly protocol: 2;
+      readonly kind: 'nativeCancel';
+      readonly requestId: string;
+      readonly baseVersion: number;
+      readonly reason: string;
+    }
+  | {
+      readonly protocol: 2;
       readonly kind: 'snapshot';
       readonly version: number;
       readonly projection: Pick<
@@ -130,10 +143,13 @@ export type HostMessage =
       readonly scene: DesignScene | null;
       readonly sourceLength?: number;
       readonly structure?: ReportStructure;
+      readonly navigation?: AcceptedNavigation;
+      /** Bound designer identity; omitted by legacy snapshots. */
+      readonly viewBinding?: ViewIdentity;
       readonly authoring?: AuthoringState | null;
     }
   | {
-      readonly protocol: 1;
+      readonly protocol: 2;
       readonly kind: 'editResult';
       readonly version: number;
       readonly baseVersion: number;
@@ -147,7 +163,7 @@ export type HostMessage =
       readonly created?: { readonly id: string; readonly name: string };
     }
   | {
-      readonly protocol: 1;
+      readonly protocol: 2;
       readonly kind: 'clipboardResult';
       readonly requestId: string;
       readonly action: ClipboardAction;
@@ -163,9 +179,9 @@ export type HostMessage =
       readonly diagnostics: readonly Diagnostic[];
     }
   | {
-      readonly protocol: 1;
+      readonly protocol: 2;
       readonly kind: 'protocolError';
-      readonly supportedVersion: 1;
+      readonly supportedVersion: 2;
       readonly reason: string;
     };
 export type ProtocolMessage = ClientMessage | HostMessage;
@@ -341,6 +357,7 @@ function sceneItem(value: unknown): boolean {
       'capabilities',
       'kind',
       'parentTableId',
+      'xmlCellId',
       'sourceOrder',
       'zIndex',
       'resolvedGeometry',
@@ -355,6 +372,11 @@ function sceneItem(value: unknown): boolean {
       ['textbox', 'table', 'cell', 'preserved'].includes(String(value.kind))) &&
     (value.parentTableId === undefined ||
       (value.kind === 'cell' && id(value.parentTableId))) &&
+    (value.xmlCellId === undefined ||
+      (value.kind === 'cell' &&
+        id(value.xmlCellId) &&
+        String(value.xmlCellId).split(':')[0] ===
+          String(value.id).split(':')[0])) &&
     (value.sourceOrder === undefined || version(value.sourceOrder)) &&
     (value.zIndex === undefined || version(value.zIndex)) &&
     (value.resolvedGeometry === undefined ||
@@ -568,11 +590,35 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
     new TextEncoder().encode(JSON.stringify(value)).length >
       (snapshot ? 8 * 1024 * 1024 : 65536) ||
     !record(value) ||
-    value.protocol !== 1
+    value.protocol !== 2
   )
     return null;
   let valid = false;
   switch (value.kind) {
+    case 'nativeAction':
+      valid = validateNativeAction(value);
+      break;
+    case 'nativeCancel':
+      valid =
+        keys(value, [
+          'protocol',
+          'kind',
+          'requestId',
+          'baseVersion',
+          'reason',
+        ]) &&
+        id(value.requestId) &&
+        version(value.baseVersion) &&
+        string(value.reason) &&
+        value.reason.length > 0 &&
+        value.reason.length <= 2048;
+      break;
+    case 'acceptedSelection':
+      valid = validateAcceptedSelection(value);
+      break;
+    case 'actionOutcome':
+      valid = validateActionOutcome(value);
+      break;
     case 'history':
     case 'historyResult': {
       const result = value.kind === 'historyResult';
@@ -607,12 +653,14 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
           'kind',
           'requestId',
           'baseVersion',
+          'nativeRequestId',
           ...(value.operation === 'layout' ? [] : ['targetId']),
           'operation',
           'payload',
         ]) &&
         id(value.requestId) &&
         version(value.baseVersion) &&
+        (value.nativeRequestId === undefined || id(value.nativeRequestId)) &&
         (value.operation === 'layout' || id(value.targetId)) &&
         record(value.payload) &&
         ((value.operation === 'layout' &&
@@ -645,12 +693,14 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
           'kind',
           'requestId',
           'baseVersion',
+          'nativeRequestId',
           'action',
           ...(selection ? ['targetIds'] : []),
           ...(action === 'paste' || action === 'duplicate' ? ['unit'] : []),
         ]) &&
         id(value.requestId) &&
         version(value.baseVersion) &&
+        (value.nativeRequestId === undefined || id(value.nativeRequestId)) &&
         (!selection ||
           (Array.isArray(ids) &&
             ids.length >= 1 &&
@@ -723,7 +773,7 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
     case 'protocolError':
       valid =
         keys(value, ['protocol', 'kind', 'supportedVersion', 'reason']) &&
-        value.supportedVersion === 1 &&
+        value.supportedVersion === 2 &&
         string(value.reason);
       break;
     case 'editResult':
@@ -787,6 +837,8 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
           'authoring',
           'sourceLength',
           'structure',
+          'navigation',
+          'viewBinding',
         ]) &&
         version(value.version) &&
         record(value.projection) &&
@@ -799,9 +851,24 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
         scene(value.scene, value.version) &&
         authoring(value.authoring) &&
         (value.sourceLength === undefined || version(value.sourceLength)) &&
+        (value.viewBinding === undefined ||
+          validateViewIdentity(value.viewBinding)) &&
         (value.structure === undefined ||
           (version(value.sourceLength) &&
-            structure(value.structure, value.version, value.sourceLength)));
+            structure(value.structure, value.version, value.sourceLength))) &&
+        (value.navigation === undefined ||
+          (version(value.sourceLength) &&
+            validateAcceptedNavigation(
+              value.navigation,
+              value.version,
+              value.sourceLength,
+            ) &&
+            (!value.structure ||
+              (value.structure as ReportStructure).nodes.length +
+                (value.navigation as AcceptedNavigation).structure.nodes
+                  .length +
+                (value.navigation as AcceptedNavigation).data.nodes.length <=
+                2000)));
       break;
   }
   return valid ? (value as unknown as ProtocolMessage) : null;

@@ -32,6 +32,29 @@ before disconnecting. Linux Electron checks need a display, for example
 `xvfb-run -a pnpm test:package`. Set `VSCODE_VERSION=1.142.0` to test the minimum;
 the default is stable. Installed VSIX tests use an isolated profile.
 
+### Native sidebar Desktop checks
+
+Feature 005 adds `pnpm test:e2e` and `pnpm test:visual`. Build before running them.
+They fail closed for missing mandatory suites, references, observer capabilities
+or same-candidate evidence. A successful targeted test does not certify the full
+feature. Baseline requirements and the six-target matrix are described in the
+[native sidebar quickstart](specs/005-native-sidebar-integration/quickstart.md).
+
+For a focused functional reproduction after `pnpm build` and `pnpm package`:
+
+```sh
+pnpm exec playwright test --config tests/desktop/playwright.config.ts workspace.spec.ts data.spec.ts components.spec.ts structure.spec.ts
+```
+
+Set `RDLC_DESKTOP_PACKAGED=true` to test the installed VSIX and
+`VSCODE_VERSION=1.142.0` or the desired stable version explicitly. The tests launch
+real Desktop profiles and use native input; screenshots and timing samples are
+diagnostics until all required comparison/coverage gates pass. The Structure
+test retains its 95/100 selections within 200ms assertion; current Windows
+measurements fail that gate. The separate native-drag probe records unavailable
+custom-MIME delivery on Windows; native activation and compact HTML drag remain
+independent functional requirements.
+
 Follow the [quickstart scenarios](specs/001-rdlc-vscode-editor/quickstart.md)
 and [acceptance measurement procedure](docs/validation/acceptance.md). Record
 actual tool/OS/consumer versions and unrun checks honestly. The historical

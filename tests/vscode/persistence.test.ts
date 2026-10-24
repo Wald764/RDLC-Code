@@ -84,7 +84,7 @@ function move(document: vscode.TextDocument, requestId: string, dxPt = 5) {
     }),
   );
   return {
-    protocol: 1,
+    protocol: 2,
     kind: 'edit',
     requestId,
     baseVersion: document.version,

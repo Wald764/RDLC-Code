@@ -3,6 +3,7 @@ import { pixelsToPoints } from '@rdlc/report-model/geometry';
 import {
   anchoredScroll,
   centerScroll,
+  centeredTargetScroll,
   rulerTicks,
   clampZoom,
   clientToBody,
@@ -28,6 +29,31 @@ const body = { left: 96, top: 48 };
 const zooms = [0.25, 0.5, 1, 2, 4] as const;
 
 describe('viewport transforms', () => {
+  for (const zoom of zooms)
+    it(`centers native targets at unchanged ${zoom} zoom with reachable clamping`, () => {
+      const bounds = { left: 4000, top: 3000, width: 240, height: 120 };
+      const scroll = centeredTargetScroll(bounds, frame, zoom, {
+        width: 10000 * zoom,
+        height: 10000 * zoom,
+      });
+      expect(
+        (bounds.left + bounds.width / 2) * zoom - scroll.scrollLeft,
+      ).toBeCloseTo(frame.width / 2, 8);
+      expect(
+        (bounds.top + bounds.height / 2) * zoom - scroll.scrollTop,
+      ).toBeCloseTo(frame.height / 2, 8);
+      expect(
+        centeredTargetScroll(bounds, frame, zoom, { width: 900, height: 700 }),
+      ).toEqual({ scrollLeft: 100, scrollTop: 100 });
+      expect(
+        centeredTargetScroll(
+          { ...bounds, width: 0 },
+          { ...frame, scrollLeft: 17, scrollTop: 23 },
+          zoom,
+          { width: 900, height: 700 },
+        ),
+      ).toEqual({ scrollLeft: 17, scrollTop: 23 });
+    });
   for (const zoom of zooms)
     it(`rebases idle center and page ruler without a body/DPR offset at ${zoom}`, () => {
       const old = { ...frame, scrollLeft: 600, scrollTop: 400 };
@@ -194,7 +220,7 @@ describe('per-view state restore', () => {
       guidesSnap: true,
       leftWidth: 220,
       rightWidth: 300,
-      leftVisible: true,
+      leftVisible: false,
       rightVisible: true,
       leftTab: 'components',
       inspectorExpanded: {
@@ -268,7 +294,7 @@ describe('per-view state restore', () => {
       zoom: 2,
       leftWidth: 220,
       rightWidth: 480,
-      leftVisible: true,
+      leftVisible: false,
       rightVisible: false,
       leftTab: 'components',
     });
@@ -290,7 +316,7 @@ describe('per-view state restore', () => {
 });
 
 describe('effective panel layout', () => {
-  const view = defaultViewState;
+  const view = { ...defaultViewState, leftVisible: true };
   it('uses 220/300 defaults with a majority canvas at 1280px', () => {
     const layout = panelLayout(1280, view);
     expect(layout).toEqual({

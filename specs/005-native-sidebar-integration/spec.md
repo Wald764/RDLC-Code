@@ -6,7 +6,7 @@
 
 **Created**: 2026-10-24
 
-**Status**: Planned and analyzed; U1/U2 documentary corrections authorized by the user on 2026-10-24. Separate approval of the complete specification for implementation is not established by the available history. Runtime validation remains not run.
+**Status**: Implementation authorized by the user's explicit full-implementation instruction on 2026-10-24. Automation foundation is in progress; the feature is incomplete and no User Story has validated runtime acceptance.
 
 **Input**: Add a native RDLC Code Activity Bar container with Report Structure, Report Data and Components views. Reuse the implemented features 001–004 and the central Angular designer. Preserve authoritative report text, atomic edits, offline operation and existing authoring capabilities. Every acceptance criterion must be validated automatically, including real Desktop end-to-end and visual coverage. Specification only.
 
@@ -244,4 +244,4 @@ Out of scope: new report-item/parameter/image/data-source authoring semantics, r
 - Presentation limits inherit 003's 2,000 entries/32 levels per bounded hierarchy projection; planning must allocate shared transport budget explicitly, with visible truncation for either native view rather than silently raising limits.
 - Measured selection/layout targets use reports up to 1 MiB with 100 selectable body items; dedicated boundary fixtures exercise presentation/parser limits separately. Measurements identify the exact reference environment and input-to-visible-result boundary.
 - Historical mandatory usability studies or manual walkthroughs are not imported as completion gates. New/affected workflows and inherited behavior exercised by this feature require automated functional, accessibility, Desktop, visual and preservation evidence as defined here.
-- Planning, task generation and analysis artifacts now exist. The user's 2026-10-24 instruction authorizes U1/U2 documentary corrections and approval-status reconciliation only; it does not establish prior approval of the complete specification or authorize application implementation. Implementation still requires specification approval. No application code, dependencies, workflows or vendored material are changed by these corrections, and no runtime acceptance result is implied.
+- Planning, task generation and analysis artifacts exist. The earlier 2026-10-24 instruction authorized U1/U2 documentary corrections only. The subsequent explicit full-implementation instruction authorizes implementation against these artifacts. This authorization is not acceptance evidence; mandatory failed, blocked or unrun assertions remain unvalidated.

@@ -15,6 +15,7 @@ import { activateHistoryTarget } from '../../apps/vscode-extension/src/editor-pr
 import type { HostMessage } from '@rdlc/report-model/protocol';
 
 export async function run(): Promise<void> {
+  await sourceNavigationRaces();
   await nativeDesignerHistory();
   await clipboardViewRace();
   await groupSynchronization();
@@ -59,7 +60,7 @@ export async function run(): Promise<void> {
   try {
     const targetId = a.intent('target', '').targetId;
     const layoutRequest = {
-      protocol: 1,
+      protocol: 2,
       kind: 'edit',
       requestId: 'direct-noop',
       baseVersion: document.version,
@@ -112,7 +113,7 @@ export async function run(): Promise<void> {
       );
       // Contextual creation and native history get the same read-only refusal.
       readonlyView.session.receive({
-        protocol: 1,
+        protocol: 2,
         kind: 'edit',
         requestId: 'readonly-create',
         baseVersion: readonlyDocument.version,
@@ -134,7 +135,7 @@ export async function run(): Promise<void> {
         'Read-only creation refusal',
       );
       readonlyView.session.receive({
-        protocol: 1,
+        protocol: 2,
         kind: 'history',
         requestId: 'readonly-undo',
         baseVersion: readonlyDocument.version,
@@ -414,6 +415,105 @@ export async function run(): Promise<void> {
   }
 }
 
+async function sourceNavigationRaces(): Promise<void> {
+  const source = readFileSync(
+    resolve(__dirname, '../../../tests/fixtures/textboxes/supported.rdlc'),
+    'utf8',
+  );
+  for (const change of ['none', 'version', 'generation'] as const) {
+    const document = await vscode.workspace.openTextDocument({
+      language: 'xml',
+      content: source,
+    });
+    let release!: () => void;
+    const opened = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let editor: vscode.TextEditor | undefined;
+    let opening = false;
+    const session = new DocumentSession(
+      document,
+      undefined,
+      undefined,
+      undefined,
+      async (uri) => {
+        assert.equal(uri.toString(), document.uri.toString());
+        editor = await vscode.window.showTextDocument(document);
+        editor.selection = new vscode.Selection(0, 0, 0, 0);
+        opening = true;
+        await opened;
+      },
+    );
+    session.setViewIdentity({
+      viewId: 'source-view',
+      documentLifetimeId: 'source-life',
+      contextGeneration: 0,
+    });
+    let snapshots = 0;
+    const subscription = session.onMessage((message) => {
+      if (message.kind === 'snapshot') snapshots++;
+    });
+    try {
+      session.receive({ protocol: 2, kind: 'ready' });
+      await until(() => snapshots > 0, 'source-race handshake');
+      const version = document.version;
+      const target = session.evaluation.projection.textboxes[0]!.node;
+      session.receive({
+        protocol: 2,
+        kind: 'openSource',
+        version,
+        targetId: target.id,
+      });
+      await until(() => opening, 'actual source editor opening boundary');
+      if (change === 'version') {
+        assert.equal(
+          await editor!.edit((edit) =>
+            edit.insert(
+              new vscode.Position(0, 0),
+              '<!-- external change -->\n',
+            ),
+          ),
+          true,
+        );
+        editor!.selection = new vscode.Selection(0, 0, 0, 0);
+      }
+      if (change === 'generation')
+        session.setViewIdentity({
+          viewId: 'source-view',
+          documentLifetimeId: 'source-life',
+          contextGeneration: 1,
+        });
+      const before = snapshots;
+      release();
+      session.receive({ protocol: 2, kind: 'ready' });
+      await until(() => snapshots > before, 'queued source opening completes');
+      if (change === 'none')
+        assert.equal(
+          document.getText(editor!.selection),
+          source.slice(target.range.start, target.range.end),
+        );
+      else
+        assert.equal(
+          editor!.selection.isEmpty,
+          true,
+          `${change} change refuses the old source range`,
+        );
+      assert.equal(
+        document.getText(),
+        change === 'version' ? `<!-- external change -->\n${source}` : source,
+      );
+    } finally {
+      release();
+      subscription.dispose();
+      session.dispose();
+      await vscode.window.showTextDocument(document);
+      await vscode.commands.executeCommand(
+        'workbench.action.revertAndCloseActiveEditor',
+      );
+    }
+  }
+}
+
 async function nativeDesignerHistory(): Promise<void> {
   const type = 'rdlcCode.historyProof';
   const views: {
@@ -437,7 +537,7 @@ async function nativeDesignerHistory(): Promise<void> {
         session.onMessage((message) => messages.push(message));
         panel.onDidDispose(() => session.dispose());
         views.push({ panel, session, messages });
-        session.receive({ protocol: 1, kind: 'ready' });
+        session.receive({ protocol: 2, kind: 'ready' });
       },
     },
     {
@@ -483,7 +583,7 @@ async function nativeDesignerHistory(): Promise<void> {
       )!;
       const requestId = `mixed-history-${i}`;
       first.session.receive({
-        protocol: 1,
+        protocol: 2,
         kind: 'edit',
         requestId,
         baseVersion: a.version,
@@ -543,7 +643,7 @@ async function nativeDesignerHistory(): Promise<void> {
       for (const [i, text] of expected.entries()) {
         const requestId = `native-${action}-${i}`;
         first.session.receive({
-          protocol: 1,
+          protocol: 2,
           kind: 'history',
           requestId,
           baseVersion: a.version,
@@ -577,7 +677,7 @@ async function nativeDesignerHistory(): Promise<void> {
       }
       if (action === 'undo') {
         first.session.receive({
-          protocol: 1,
+          protocol: 2,
           kind: 'history',
           requestId: 'empty-history',
           baseVersion: a.version,
@@ -603,7 +703,7 @@ async function nativeDesignerHistory(): Promise<void> {
         assert.equal(b.getText(), exactB);
         for (const requestId of ['pending-history-1', 'pending-history-2'])
           first.session.receive({
-            protocol: 1,
+            protocol: 2,
             kind: 'history',
             requestId,
             baseVersion: a.version,
@@ -631,7 +731,7 @@ async function nativeDesignerHistory(): Promise<void> {
           (m) => m.kind === 'protocolError',
         ).length;
         first.session.receive({
-          protocol: 1,
+          protocol: 2,
           kind: 'history',
           requestId: 'stale-history',
           baseVersion: a.version - 1,
@@ -667,7 +767,7 @@ async function nativeDesignerHistory(): Promise<void> {
       'Source-only snapshot published',
     );
     first.session.receive({
-      protocol: 1,
+      protocol: 2,
       kind: 'history',
       requestId: 'source-only-history',
       baseVersion: a.version,
@@ -686,7 +786,7 @@ async function nativeDesignerHistory(): Promise<void> {
     const version = a.version;
     await vscode.window.showTextDocument(b, vscode.ViewColumn.Three);
     first.session.receive({
-      protocol: 1,
+      protocol: 2,
       kind: 'history',
       requestId: 'inactive-history',
       baseVersion: version,
@@ -757,7 +857,7 @@ async function groupSynchronization(): Promise<void> {
       (i) => i.kind === 'preserved' && i.bounds,
     )!.id;
     const base = {
-      protocol: 1,
+      protocol: 2,
       kind: 'edit',
       baseVersion: document.version,
       operation: 'layout',
@@ -869,7 +969,7 @@ async function independentViewNudge(): Promise<void> {
       }),
     ).textboxes.find((t) => t.name === 'Behind')!.node.id;
     first.session.receive({
-      protocol: 1,
+      protocol: 2,
       kind: 'edit',
       requestId: 'view-a-nudge',
       baseVersion: document.version,
@@ -939,7 +1039,7 @@ async function ambiguousIndependentChange(): Promise<void> {
       }),
     ).textboxes.find((t) => t.name === 'Front')!.node.id;
     const stale = {
-      protocol: 1,
+      protocol: 2,
       kind: 'edit',
       requestId: 'stale-ambiguous',
       baseVersion: document.version,
@@ -1008,7 +1108,7 @@ async function clipboardViewRace(): Promise<void> {
       parse({ uri: 'x', version: 1, source: original, eol: '\n' }),
     ).textboxes.find((t) => t.name === 'Outside')!.node.id;
     const request = (requestId: string) => ({
-      protocol: 1,
+      protocol: 2,
       kind: 'clipboard',
       requestId,
       baseVersion: document.version,
