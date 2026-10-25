@@ -8,7 +8,7 @@ import {
 } from './editing.js';
 import { clipboardActions, type ClipboardAction } from './clipboard.js';
 
-/** Actual syntax kinds; datasets/fields stay until the Data projection migration lands. */
+/** Legacy wire kinds remain accepted; data definitions are emitted through navigation.data. */
 export const structureKinds = [
   'report',
   'sections',

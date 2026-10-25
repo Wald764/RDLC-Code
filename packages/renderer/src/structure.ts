@@ -15,12 +15,15 @@ const kinds: Readonly<Record<string, StructureNode['kind']>> = {
   Textbox: 'textbox',
   Tablix: 'table',
   Table: 'table',
+  TablixBody: 'table-body',
   TablixRow: 'row',
   TableRow: 'row',
   TablixCell: 'cell',
   TableCell: 'cell',
-  DataSet: 'dataset',
-  Field: 'field',
+  TablixMember: 'member',
+  TablixHeader: 'member-header',
+  Group: 'group',
+  Grouping: 'group',
   Rectangle: 'container',
   List: 'container',
   Matrix: 'container',
@@ -28,9 +31,9 @@ const kinds: Readonly<Record<string, StructureNode['kind']>> = {
 const wrappers = new Set([
   'ReportItems',
   'Page',
-  'DataSets',
-  'Fields',
-  'TablixBody',
+  'TablixRowHierarchy',
+  'TablixColumnHierarchy',
+  'TablixMembers',
   'TablixRows',
   'TablixCells',
   'CellContents',
@@ -39,11 +42,20 @@ const wrappers = new Set([
   'Details',
   'Header',
   'Footer',
+  'TableGroups',
+  'TableGroup',
 ]);
-const ns =
-  'http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition';
+const namespaces = new Set(
+  ['2003/10', '2005/01', '2008/01', '2010/01', '2016/01'].map(
+    (version) =>
+      `http://schemas.microsoft.com/sqlserver/reporting/${version}/reportdefinition`,
+  ),
+);
 
-/** Read-only navigation projection; presentation limits never change parser or authoring eligibility. */
+/**
+ * Read-only structure projection; presentation limits never change parser or
+ * authoring eligibility. Datasets/fields belong to the Data projection only.
+ */
 export function projectStructure(
   syntax: XmlSyntaxDocument,
   report: ReportProjection,
@@ -53,6 +65,10 @@ export function projectStructure(
   let truncated = false;
   if (!syntax.root || syntax.status === 'invalid-source')
     return { nodes, truncated };
+  const namespace = syntax.root.expandedName.namespaceUri;
+  const known =
+    syntax.root.expandedName.localName === 'Report' &&
+    namespaces.has(namespace);
   const supported = new Set([
     ...report.textboxes
       .filter((t) => t.capabilities.length > 0)
@@ -66,7 +82,7 @@ export function projectStructure(
     inherited: string | null,
   ): void => {
     const local = node.expandedName.localName;
-    const foreign = node.expandedName.namespaceUri !== ns;
+    const foreign = !known || node.expandedName.namespaceUri !== namespace;
     const item =
       node.parentId !== null &&
       syntaxNodes.get(node.parentId)?.expandedName.localName === 'ReportItems';
@@ -106,13 +122,7 @@ export function projectStructure(
       range: { ...node.range },
       preservedReason,
     });
-    if (
-      foreign ||
-      kind === 'preserved' ||
-      kind === 'textbox' ||
-      kind === 'field'
-    )
-      return;
+    if (foreign || kind === 'preserved' || kind === 'textbox') return;
     for (const child of node.children)
       visit(child, node.id, depth + 1, preservedReason);
   };
