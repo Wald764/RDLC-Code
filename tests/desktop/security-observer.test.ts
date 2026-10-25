@@ -131,39 +131,53 @@ test('Windows host blocking fails closed with the WFP rule and positive control 
   );
 });
 
-test('supported launch capture follows a short-lived process tree end to end', async (t) => {
-  const capability = detectNativeCapability();
-  if (!capability.launch.supported) {
-    assert.ok(capability.launch.reason);
-    t.diagnostic(`launch capture unsupported: ${capability.launch.reason}`);
-    return;
-  }
-  const traced = await startTracedCommand(
-    {
-      command: process.execPath,
-      args: [
-        '-e',
-        'const fs=require("node:fs");const cp=require("node:child_process");const net=require("node:net");try{fs.openSync("/nonexistent/rdlc-test","r")}catch{};cp.execFile("/nonexistent/rdlc-test-exec",()=>{});net.connect({host:"127.0.0.1",port:1}).on("error",()=>{});setTimeout(()=>process.exit(0),500)',
-      ],
-      maxDurationMs: 30_000,
-    },
-    capability,
-  );
-  const observation = await traced.stop();
-  assert.equal(observation.state, 'observed', observation.reason ?? '');
-  assert.ok(observation.events.some((event) => event.channel === 'exec'));
-  assert.ok(
-    observation.events.some(
-      (event) => event.channel === 'file' && event.outcome === 'failed',
-    ),
-  );
-  assert.ok(
-    observation.events.some(
-      (event) => event.channel === 'network' && event.outcome === 'failed',
-    ),
-  );
-  assert.ok(observation.events.some((event) => event.channel === 'process'));
-});
+test(
+  'supported launch capture follows a short-lived process tree end to end',
+  { timeout: 60_000 },
+  async (t) => {
+    const capability = detectNativeCapability();
+    if (!capability.launch.supported) {
+      assert.ok(capability.launch.reason);
+      t.diagnostic(`launch capture unsupported: ${capability.launch.reason}`);
+      return;
+    }
+    const traced = await startTracedCommand(
+      {
+        command: process.execPath,
+        args: [
+          '-e',
+          'const fs=require("node:fs");const cp=require("node:child_process");const net=require("node:net");try{fs.openSync("/nonexistent/rdlc-test","r")}catch{};cp.execFile("/nonexistent/rdlc-test-exec",()=>{});net.connect({host:"127.0.0.1",port:1}).on("error",()=>{});setTimeout(()=>process.exit(0),500)',
+        ],
+        maxDurationMs: 30_000,
+      },
+      capability,
+    );
+    // Let the short-lived tree finish under strace: stopping mid-trace can leave
+    // a stopped tracee holding this test's pipes open.
+    if (traced.child.exitCode === null && traced.child.signalCode === null)
+      await new Promise<void>((done) => {
+        const timer = setTimeout(done, 20_000);
+        traced.child.once('exit', () => {
+          clearTimeout(timer);
+          done();
+        });
+      });
+    const observation = await traced.stop();
+    assert.equal(observation.state, 'observed', observation.reason ?? '');
+    assert.ok(observation.events.some((event) => event.channel === 'exec'));
+    assert.ok(
+      observation.events.some(
+        (event) => event.channel === 'file' && event.outcome === 'failed',
+      ),
+    );
+    assert.ok(
+      observation.events.some(
+        (event) => event.channel === 'network' && event.outcome === 'failed',
+      ),
+    );
+    assert.ok(observation.events.some((event) => event.channel === 'process'));
+  },
+);
 
 class FakeContext extends EventEmitter {}
 
