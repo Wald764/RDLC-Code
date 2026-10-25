@@ -855,6 +855,14 @@ export async function launchDesktop(
   const launchArgs = desktopLaunchArgs(resolved, paths);
 
   mkdirSync(paths.profileDir, { recursive: true });
+  // Sticky-scroll ancestor rows overlay real tree rows and intercept their
+  // pointer input; the journeys address the rows themselves.
+  mkdirSync(join(paths.profileDir, 'User'), { recursive: true });
+  writeFileSync(
+    join(paths.profileDir, 'User', 'settings.json'),
+    `${JSON.stringify({ 'workbench.tree.enableStickyScroll': false }, null, 2)}
+`,
+  );
   mkdirSync(paths.extensionsDir, { recursive: true });
   mkdirSync(captureRoot, { recursive: true });
 

@@ -1140,9 +1140,9 @@ test('FR-017-keyboard', async () => {
     await focusView(ctx, 'Components');
     await focusRow(ctx.page, /^Dataset, Insert/);
     await ctx.page.keyboard.press('Enter');
+    await expect(createdNotice(frame, 'DataSet1')).toHaveCount(1);
     await save(ctx);
     await expect.poll(() => bytes(ctx, 'report.rdlc')).toBe(datasetMade);
-    await expect(createdNotice(frame, 'DataSet1')).toHaveCount(1);
     await expect(frame.locator('.feedback #report-refusal')).toHaveCount(0);
     const datasetName = frame.getByRole('textbox', { name: 'Dataset name' });
     await expect(datasetName).toHaveValue('DataSet1');

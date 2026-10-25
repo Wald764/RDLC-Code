@@ -583,13 +583,17 @@ async function observeOpening(page: Page, baseline: number): Promise<void> {
 }
 
 /**
- * Delay hook (T053 allows observation/delay hooks only): pause the extension
- * host through its Node inspector while the real designer opening is in flight.
- * The renderer keeps applying the disturbance and queues its events ahead of
- * the designer's readiness, so the host can only see the change first. The
- * product is untouched; resuming restores normal processing.
+ * Delay hook (T053 allows observation/delay hooks only). Through the extension
+ * host's Node inspector, a breakpoint is armed on the opening path right after
+ * `vscode.openWith` resolves: the designer panel exists, and every later
+ * revalidation (readiness, binding, delivery) still lies ahead. The test then
+ * disturbs the workbench and resumes, on every machine at the same point of the
+ * real code. Nothing in the product changes; holding nothing fails loudly.
  */
-async function holdExtensionHost(port: number): Promise<() => Promise<void>> {
+async function armOpeningHold(port: number): Promise<{
+  readonly paused: Promise<void>;
+  release(): Promise<void>;
+}> {
   const targets = (await (
     await fetch(`http://127.0.0.1:${port}/json/list`)
   ).json()) as { webSocketDebuggerUrl: string }[];
@@ -602,14 +606,62 @@ async function holdExtensionHost(port: number): Promise<() => Promise<void>> {
     });
   });
   let id = 0;
-  const send = (method: string) =>
-    socket.send(JSON.stringify({ id: ++id, method }));
-  send('Debugger.enable');
-  send('Debugger.pause');
-  return async () => {
-    send('Debugger.resume');
-    send('Debugger.disable');
-    socket.close();
+  const replies = new Map<number, (result: unknown) => void>();
+  const scripts: { scriptId: string; url: string }[] = [];
+  let onPaused: () => void = () => {};
+  const paused = new Promise<void>((done) => (onPaused = done));
+  socket.addEventListener('message', (event) => {
+    const message = JSON.parse(String(event.data)) as {
+      id?: number;
+      method?: string;
+      params?: { scriptId: string; url: string };
+      result?: unknown;
+    };
+    if (message.id !== undefined) replies.get(message.id)?.(message.result);
+    else if (message.method === 'Debugger.scriptParsed')
+      scripts.push(message.params!);
+    else if (message.method === 'Debugger.paused') onPaused();
+  });
+  const send = <T>(method: string, params: object = {}) =>
+    new Promise<T>((done) => {
+      replies.set(++id, done as (result: unknown) => void);
+      socket.send(JSON.stringify({ id, method, params }));
+    });
+  await send('Debugger.enable');
+  // Both the installed VSIX and the development build load build/extension.cjs.
+  const script = scripts.find((entry) => {
+    const url = decodeURIComponent(entry.url).replaceAll('\\', '/');
+    return url.endsWith('/build/extension.cjs') && url.includes('rdlc');
+  });
+  expect(script, 'the extension bundle is loaded').toBeDefined();
+  const { scriptSource } = await send<{ scriptSource: string }>(
+    'Debugger.getScriptSource',
+    { scriptId: script!.scriptId },
+  );
+  const lines = scriptSource.split('\n');
+  const marker = lines.findIndex((line) =>
+    line.includes('Opening the report designer timed out.'),
+  );
+  const lineNumber = lines.findIndex(
+    (line, index) => index > marker && line.includes('clearTimeout(timer);'),
+  );
+  expect(marker, 'the opening path is in the bundle').toBeGreaterThan(-1);
+  expect(lineNumber, 'the post-opening line is in the bundle').toBeGreaterThan(
+    marker,
+  );
+  const { breakpointId } = await send<{ breakpointId: string }>(
+    'Debugger.setBreakpoint',
+    { location: { scriptId: script!.scriptId, lineNumber } },
+  );
+  return {
+    paused,
+    async release() {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      await send('Debugger.removeBreakpoint', { breakpointId });
+      await send('Debugger.resume');
+      await send('Debugger.disable');
+      socket.close();
+    },
   };
 }
 
@@ -667,6 +719,7 @@ async function runRace(
 
   const tabs = page.locator('.part.editor .tabs-container .tab');
   const baseline = await tabs.count();
+  const hold = await armOpeningHold(ctx.inspector);
   if (options.action === 'select') await row(page, 'Front').click();
   else if (options.action === 'properties') {
     await row(page, 'Front').click({ button: 'right' });
@@ -676,10 +729,10 @@ async function runRace(
       .click({ delay: 250 });
   } else await page.getByRole('treeitem', { name: /^Textbox, Insert/ }).click();
 
-  // A new tab proves opening; the held host keeps readiness pending. The
-  // refusal below is mandatory: a late disturbance cannot certify a race.
+  // The host stops right after the real opening; the refusal below is
+  // mandatory, so a request that never reached that point cannot pass.
+  await hold.paused;
   await observeOpening(page, baseline);
-  const release = await holdExtensionHost(ctx.inspector);
 
   if (options.disturbance === 'edit')
     await writeFile(ctx.path('a.rdlc'), markers.markedA);
@@ -695,9 +748,9 @@ async function runRace(
     await page.keyboard.press(`${MOD}+w`);
   }
   // Bounded settle for the renderer to apply the disturbance (the disk watcher
-  // reload is the slowest), then the host processes it ahead of readiness.
-  await page.waitForTimeout(1_500);
-  await release();
+  // reload is the slowest); the resumed host then meets it before readiness.
+  await page.waitForTimeout(2_500);
+  await hold.release();
 
   await expect
     .poll(() => notifications(page), {
@@ -706,7 +759,6 @@ async function runRace(
     })
     .toMatch(REFUSAL);
   const reason = await notifications(page);
-  await release();
 
   const expectedA =
     options.disturbance === 'edit' ? markers.markedA : markers.originalA;

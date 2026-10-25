@@ -509,7 +509,11 @@ async function sourceNavigationRaces(): Promise<void> {
         );
       assert.equal(
         document.getText(),
-        change === 'version' ? `<!-- external change -->\n${source}` : source,
+        // The editor normalizes the inserted newline to the document's EOL
+        // (CRLF when the fixture is checked out with Windows line endings).
+        change === 'version'
+          ? `<!-- external change -->${document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'}${source}`
+          : source,
       );
     } finally {
       release();

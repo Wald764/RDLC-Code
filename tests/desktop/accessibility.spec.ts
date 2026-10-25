@@ -24,6 +24,9 @@ import { dirname, join, resolve } from 'node:path';
 import { launchTrustedDesktop, type DesktopDriver } from './driver.js';
 
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
+// Keyboard context menu: Shift+F10 on Windows/Linux; macOS keyboards have no
+// F10 convention, and VS Code lists also open their menu on the ContextMenu key.
+const MENU_KEY = process.platform === 'darwin' ? 'ContextMenu' : 'Shift+F10';
 const NO_REPORT = 'Open or create a report to begin.';
 const COMPONENT_KINDS = [
   'Textbox',
@@ -347,7 +350,7 @@ async function activeMenuItem(page: Page): Promise<string | null> {
 
 /** Open Shift+F10's real context menu and walk it with the arrow keys only. */
 async function menuTo(page: Page, match: RegExp): Promise<void> {
-  await page.keyboard.press('Shift+F10');
+  await page.keyboard.press(MENU_KEY);
   const context = page.locator('.context-view');
   const items = context
     .getByRole('menuitem')
@@ -875,10 +878,14 @@ test('FR-027-keyboard', async () => {
       await nameField.focus();
       await page.keyboard.press(`${MOD}+a`);
       await page.keyboard.press('ArrowRight');
-      const caret = await nameField.evaluate(
-        (element) => (element as HTMLInputElement).selectionStart,
-      );
-      expect(caret).toBe(accepted.length);
+      // Relayed into the webview asynchronously, like the clipboard keys.
+      await expect
+        .poll(() =>
+          nameField.evaluate(
+            (element) => (element as HTMLInputElement).selectionStart,
+          ),
+        )
+        .toBe(accepted.length);
       expect(await frame.locator('.item.primary').boundingBox()).toEqual(
         itemBox,
       );

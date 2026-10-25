@@ -24,6 +24,9 @@ import { dirname, join, resolve } from 'node:path';
 import { launchTrustedDesktop, type DesktopDriver } from './driver.js';
 
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
+// Keyboard context menu: Shift+F10 on Windows/Linux; macOS keyboards have no
+// F10 convention, and VS Code lists also open their menu on the ContextMenu key.
+const MENU_KEY = process.platform === 'darwin' ? 'ContextMenu' : 'Shift+F10';
 const DRIFT_BUDGET_DEVICE_PX = 1;
 const PLACEMENT_BUDGET_PT = 0.01;
 const NUDGE_STEPS = 40;
@@ -1045,7 +1048,7 @@ test('FR-029-stability', async () => {
         page.locator('.part.sidebar .monaco-list-row.focused').first(),
         'a sidebar row owns the keyboard focus',
       ).toBeVisible();
-      await page.keyboard.press('Shift+F10');
+      await page.keyboard.press(MENU_KEY);
       const contextMenu = page
         .locator('.context-view')
         .getByRole('menuitem')
