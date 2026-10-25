@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -12,6 +13,9 @@ const { readZip } = createRequire(import.meta.url)(
     filter: (path: string) => boolean,
   ): Promise<Map<string, Buffer>>;
 };
+const digest = (bytes: Buffer) =>
+  createHash('sha256').update(bytes).digest('hex');
+
 export const readVsix = (path: string) => readZip(path, () => true);
 
 // Desktop validation tooling is development-only and must never ship.
@@ -96,10 +100,13 @@ export function verifyVsix(entries: ReadonlyMap<string, Buffer>): void {
     if (path === '[content_types].xml' || path === 'extension.vsixmanifest')
       continue;
     assert.ok(allowed.has(path), `Unreviewed package content: ${path}`);
-    assert.deepEqual(
-      bytes,
-      allowed.get(path),
-      `Production bytes differ: ${path}`,
+    // Compare digests: a failing deepEqual on large Buffers builds a quadratic
+    // diff that can exhaust a CI runner before reporting anything.
+    const actual = digest(bytes);
+    const reviewed = digest(allowed.get(path)!);
+    assert.ok(
+      actual === reviewed,
+      `Production bytes differ: ${path} (${actual} != ${reviewed})`,
     );
   }
   for (const path of allowed.keys())
