@@ -41,6 +41,12 @@ jobs:
     env:
       RELEASE_VALIDATION_RESULT: ${{ needs.validation.result }}
       RELEASE_QUALITY_RESULT: ${{ needs.quality.result }}
+      # Every applicable check certifies the same minimum binary the pinned
+      # visual reference is recorded against.
+      VSCODE_VERSION: '1.142.0'
+      TZ: UTC
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -60,6 +66,32 @@ jobs:
       - run: pnpm build
       - run: pnpm package
       - run: xvfb-run -a pnpm test:package
+      - name: Provision and record the candidate observation environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends strace iptables fontconfig fonts-dejavu-core locales
+          sudo locale-gen en_US.UTF-8
+          # The native observer attaches strace to the running Desktop process tree.
+          sudo sysctl -w kernel.yama.ptrace_scope=0
+          mkdir -p .vscode-test/desktop-artifacts
+          {
+            echo "image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            grep -E '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release
+            dpkg-query -W -f='${Package} ${Version}\n' strace iptables fontconfig fonts-dejavu-core locales
+            echo "ptrace_scope: $(sysctl -n kernel.yama.ptrace_scope)"
+            echo "node: $(node --version)"
+            echo "vscode: ${VSCODE_VERSION}"
+            echo "display: 1440x1000 dpr=1"
+            echo "locale: ${LANG} timezone: ${TZ}"
+          } | tee .vscode-test/desktop-artifacts/linux-environment.txt
+      # Applicable installed, security and visual checks below install the exact
+      # bytes built in this job; they certify nothing but those bytes.
+      - name: Certify the canonical bytes with installed Desktop journeys
+        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e --packaged
+      - name: Certify the canonical bytes with security observation
+        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e --probe --packaged
+      - name: Certify the canonical bytes against the pinned visual references
+        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:visual --packaged
       - name: Bind the canonical bytes to source, gates and accepted evidence
         run: node dist/scripts/release-artifact.js
       - name: Include the publishers' verifiers in the handoff
@@ -80,6 +112,16 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           overwrite: false
+      # Separate from the canonical handoff: diagnostics upload on every
+      # outcome and never carry release bytes.
+      - name: Upload Desktop diagnostics for this run
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-diagnostics-${{ github.ref_name }}-${{ github.run_id }}
+          path: .vscode-test/desktop-artifacts/**
+          if-no-files-found: ignore
+          retention-days: 7
     outputs:
       artifact-id: ${{ steps.canonical.outputs.artifact-id }}
       archive-digest: ${{ steps.canonical.outputs.artifact-digest }}

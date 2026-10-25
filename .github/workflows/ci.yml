@@ -53,9 +53,13 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-2022, macos-14]
         vscode: ['1.142.0', stable]
+        # Disjoint parallel slices of the Desktop journeys (tests/desktop/run-tests.ts).
+        group: [core, authoring, context]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     env:
       VSCODE_VERSION: ${{ matrix.vscode }}
+      RDLC_DESKTOP_GROUP: ${{ matrix.group }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -72,13 +76,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm package
-      - if: runner.os == 'Linux'
+      # Host suites and the capability probe run once per OS/version, in core.
+      - if: runner.os == 'Linux' && matrix.group == 'core'
         run: xvfb-run -a pnpm test:vscode
-      - if: runner.os != 'Linux'
+      - if: runner.os != 'Linux' && matrix.group == 'core'
         run: pnpm test:vscode
-      - if: runner.os == 'Linux'
+      - if: runner.os == 'Linux' && matrix.group == 'core'
         run: xvfb-run -a pnpm test:package
-      - if: runner.os != 'Linux'
+      - if: runner.os != 'Linux' && matrix.group == 'core'
         run: pnpm test:package
       - name: Prepare Linux Desktop observation environment
         if: runner.os == 'Linux'
@@ -97,20 +102,40 @@ jobs:
             echo "node: $(node --version)"
           } | tee .vscode-test/desktop-artifacts/linux-environment.txt
       - name: Probe installed Desktop capabilities on Linux
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.group == 'core'
         env:
           TZ: UTC
           LANG: en_US.UTF-8
           LC_ALL: en_US.UTF-8
         run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e --probe --packaged
       - name: Probe installed Desktop capabilities on Windows and macOS
-        if: runner.os != 'Linux'
+        if: runner.os != 'Linux' && matrix.group == 'core'
         run: pnpm test:e2e --probe --packaged
-      - name: Upload Desktop probe evidence
+      - name: Run Desktop functional journeys on Linux
+        if: runner.os == 'Linux'
+        env:
+          TZ: UTC
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e
+      - name: Run Desktop functional journeys on Windows and macOS
+        if: runner.os != 'Linux'
+        run: pnpm test:e2e
+      - name: Run installed Desktop journeys on Linux
+        if: runner.os == 'Linux'
+        env:
+          TZ: UTC
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e --packaged
+      - name: Run installed Desktop journeys on Windows and macOS
+        if: runner.os != 'Linux'
+        run: pnpm test:e2e --packaged
+      - name: Upload Desktop run evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: desktop-probe-${{ matrix.os }}-${{ matrix.vscode }}
+          name: desktop-probe-${{ matrix.os }}-${{ matrix.vscode }}-${{ matrix.group }}
           path: .vscode-test/desktop-artifacts/**
           if-no-files-found: ignore
           retention-days: 7
@@ -118,19 +143,71 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: vscode-logs-${{ matrix.os }}-${{ matrix.vscode }}
+          name: vscode-logs-${{ matrix.os }}-${{ matrix.vscode }}-${{ matrix.group }}
           path: .vscode-test/profile-*/logs/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+  visual:
+    name: Pinned visual references
+    needs: quality
+    runs-on: ubuntu-24.04
+    env:
+      VSCODE_VERSION: '1.142.0'
+      TZ: UTC
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@9fd676a19091d4595eefd76e4bd31c97133911f1 # v4.2.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            .node-version
+            package.json
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Provision and record the reference candidate environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core locales
+          sudo locale-gen en_US.UTF-8
+          mkdir -p .vscode-test/desktop-artifacts
+          {
+            echo "image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            grep -E '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release
+            dpkg-query -W -f='${Package} ${Version}\n' fontconfig fonts-dejavu-core locales
+            echo "vscode: ${VSCODE_VERSION}"
+            echo "display: 1440x1000 dpr=1"
+            echo "locale: ${LANG} timezone: ${TZ}"
+          } | tee .vscode-test/desktop-artifacts/reference-environment.txt
+      # Missing references or a reference-environment mismatch fail this step;
+      # CI never refreshes or skips a required comparison.
+      - name: Run fixed-environment visual comparisons
+        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:visual
+      - name: Upload visual evidence on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: visual-evidence-${{ github.run_id }}
+          path: .vscode-test/desktop-artifacts/**
           if-no-files-found: ignore
           retention-days: 7
 
   required:
     name: Required checks
     if: always()
-    needs: [quality, desktop]
+    needs: [quality, desktop, visual]
     runs-on: ubuntu-24.04
     steps:
-      - name: Require successful quality and every desktop matrix entry
+      - name: Require successful quality, every desktop matrix entry and pinned visual
         env:
           QUALITY: ${{ needs.quality.result }}
           DESKTOP: ${{ needs.desktop.result }}
-        run: test "$QUALITY" = success && test "$DESKTOP" = success
+          VISUAL: ${{ needs.visual.result }}
+        run: test "$QUALITY" = success && test "$DESKTOP" = success && test "$VISUAL" = success
