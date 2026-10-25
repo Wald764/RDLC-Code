@@ -1,10 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import type { TextboxProperty } from '@rdlc/report-model/editing';
+import type {
+  AuthoringIntent,
+  TextboxProperty,
+} from '@rdlc/report-model/editing';
 import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
-import { planTextboxIntent, correlateTargets } from './edit-controller.js';
+import {
+  planTextboxIntent,
+  planAuthoringIntent,
+  correlateTargets,
+} from './edit-controller.js';
 
 const source = readFileSync('tests/fixtures/textboxes/supported.rdlc', 'utf8');
 
@@ -228,4 +235,50 @@ test('invalid named colors and multi-paragraph text edits are refused by the hos
   assert.equal(outcome.ok, false);
   if (!outcome.ok)
     assert.equal(outcome.diagnostics[0]?.code, 'CAPABILITY_BLOCKED');
+});
+
+test('typed calculated fields refuse forged field mutations while typed mapped fields stay editable', () => {
+  const fixture = readFileSync('tests/fixtures/sidebar/data.rdlc', 'utf8');
+  const snapshot = {
+    uri: 'test:calculated',
+    version: 1,
+    source: fixture,
+    eol: '\n' as const,
+  };
+  const syntax = parse(snapshot);
+  const report = projectReport(syntax);
+  const sales = report.datasets[0]!;
+  const submit = (targetId: string, payload: AuthoringIntent['payload']) =>
+    planAuthoringIntent(snapshot, syntax, report, {
+      requestId: 'forged-calculated',
+      baseVersion: 1,
+      targetId,
+      operation: 'author',
+      payload,
+    });
+
+  const calculated = sales.fields.find(
+    (field) => field.name === 'RunningTotal',
+  )!;
+  assert.equal(calculated.type, 'decimal', 'recognized field type');
+  assert.notEqual(calculated.calculatedValue, null, 'and a calculated value');
+  for (const payload of [
+    { action: 'setFieldType', type: 'text' },
+    { action: 'renameField', name: 'Rewritten' },
+    { action: 'deleteField' },
+  ] as const)
+    assert.equal(
+      submit(calculated.node.id, payload).ok,
+      false,
+      JSON.stringify(payload),
+    );
+
+  // The existing guarded workflow still accepts a recognized typed mapped field.
+  const mapped = sales.fields.find((field) => field.name === 'Customer')!;
+  assert.equal(mapped.dataField, 'CustomerName');
+  assert.equal(mapped.type, 'text');
+  assert.equal(
+    submit(mapped.node.id, { action: 'setFieldType', type: 'Boolean' }).ok,
+    true,
+  );
 });

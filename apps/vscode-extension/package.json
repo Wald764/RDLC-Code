@@ -57,12 +57,12 @@
     "viewsWelcome": [
       {
         "view": "rdlcCode.structure",
-        "contents": "Open a report to inspect its structure.\n[New Report](command:rdlcCode.newReport)\n[Open Report](command:rdlcCode.sidebar.openReport)",
+        "contents": "Open or create a report to begin.\n[New Report](command:rdlcCode.newReport)\n[Open Report](command:rdlcCode.sidebar.openReport)",
         "when": "!rdlcCode.hasReport"
       },
       {
         "view": "rdlcCode.data",
-        "contents": "Open a report to inspect its local data definitions.\n[Open Report](command:rdlcCode.sidebar.openReport)",
+        "contents": "Open or create a report to begin.\n[Open Report](command:rdlcCode.sidebar.openReport)",
         "when": "!rdlcCode.hasReport"
       }
     ],
@@ -92,38 +92,78 @@
           "command": "rdlcCode.sidebar.openReport",
           "when": "view == rdlcCode.structure",
           "group": "navigation"
+        },
+        {
+          "command": "rdlcCode.sidebar.dataAddDataset",
+          "when": "view == rdlcCode.data && rdlcCode.hasReport",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
         {
           "command": "rdlcCode.sidebar.properties",
-          "when": "viewItem =~ /^rdlcCode\\.(body|editable)$/",
+          "when": "viewItem =~ /^rdlcCode\\.(body|editable)/",
           "group": "navigation@1"
         },
         {
           "command": "rdlcCode.sidebar.properties",
-          "when": "viewItem =~ /^rdlcCode\\.(body|editable)$/",
+          "when": "viewItem =~ /^rdlcCode\\.(body|editable)/",
           "group": "inline"
         },
         {
           "command": "rdlcCode.sidebar.source",
-          "when": "viewItem =~ /^rdlcCode\\.(body|editable|source)$/",
+          "when": "viewItem =~ /^rdlcCode\\.(body|editable|group|source|dataset|field)/",
           "group": "navigation"
         },
         {
           "command": "rdlcCode.sidebar.copy",
-          "when": "viewItem == rdlcCode.body",
+          "when": "viewItem =~ /^rdlcCode\\.body/",
           "group": "clipboard@1"
         },
         {
           "command": "rdlcCode.sidebar.cut",
-          "when": "viewItem == rdlcCode.body",
+          "when": "viewItem =~ /^rdlcCode\\.body/",
           "group": "clipboard@2"
         },
         {
           "command": "rdlcCode.sidebar.duplicate",
-          "when": "viewItem == rdlcCode.body",
+          "when": "viewItem =~ /^rdlcCode\\.body/",
           "group": "clipboard@3"
+        },
+        {
+          "command": "rdlcCode.sidebar.table",
+          "when": "viewItem =~ /\\.table$/",
+          "group": "navigation@2"
+        },
+        {
+          "command": "rdlcCode.sidebar.group",
+          "when": "viewItem == rdlcCode.group",
+          "group": "navigation@3"
+        },
+        {
+          "command": "rdlcCode.sidebar.delete",
+          "when": "view == rdlcCode.structure && viewItem =~ /^rdlcCode\\.(body|editable\\.table)/",
+          "group": "destructive@1"
+        },
+        {
+          "command": "rdlcCode.sidebar.dataEdit",
+          "when": "view == rdlcCode.data && viewItem =~ /^rdlcCode\\.(dataset|field)$/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "rdlcCode.sidebar.dataAddField",
+          "when": "view == rdlcCode.data && viewItem == rdlcCode.dataset",
+          "group": "navigation@2"
+        },
+        {
+          "command": "rdlcCode.sidebar.dataRename",
+          "when": "view == rdlcCode.data && viewItem =~ /^rdlcCode\\.(dataset|field)$/",
+          "group": "navigation@3"
+        },
+        {
+          "command": "rdlcCode.sidebar.dataDelete",
+          "when": "view == rdlcCode.data && viewItem =~ /^rdlcCode\\.(dataset|field)$/",
+          "group": "destructive@1"
         }
       ]
     },
@@ -151,6 +191,39 @@
       {
         "command": "rdlcCode.sidebar.duplicate",
         "title": "RDLC Code: Duplicate"
+      },
+      {
+        "command": "rdlcCode.sidebar.delete",
+        "title": "RDLC Code: Delete"
+      },
+      {
+        "command": "rdlcCode.sidebar.table",
+        "title": "RDLC Code: Table Properties"
+      },
+      {
+        "command": "rdlcCode.sidebar.group",
+        "title": "RDLC Code: Group Properties"
+      },
+      {
+        "command": "rdlcCode.sidebar.dataEdit",
+        "title": "RDLC Code: Edit Data"
+      },
+      {
+        "command": "rdlcCode.sidebar.dataAddField",
+        "title": "RDLC Code: Add Field"
+      },
+      {
+        "command": "rdlcCode.sidebar.dataRename",
+        "title": "RDLC Code: Rename"
+      },
+      {
+        "command": "rdlcCode.sidebar.dataDelete",
+        "title": "RDLC Code: Delete"
+      },
+      {
+        "command": "rdlcCode.sidebar.dataAddDataset",
+        "title": "RDLC Code: New Dataset",
+        "icon": "$(add)"
       },
       {
         "command": "rdlcCode.sidebar.openReport",

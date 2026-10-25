@@ -372,20 +372,27 @@ export class DocumentBinding {
           };
     }
     // Refusals and cancellations settle the pending request at any version so
-    // the host never waits out its timeout; only accepted outcomes can be stale.
-    if (message.status === 'accepted') {
-      if (message.resultVersion < this.version)
-        return {
-          ok: false,
-          reason: 'Outcome is older than the document',
-          ignored: true,
-        };
-      if (message.selectionSequence < this.selectionSequence)
-        return { ok: false, reason: 'Older selection sequence', ignored: true };
-    }
-    request.outcome = message;
+    // the host never waits out its timeout. The designer sends one outcome per
+    // request, so an accepted one overtaken by an independent change is terminal
+    // too: it settles once as a refusal instead of leaving the request pending.
+    if (
+      message.status === 'accepted' &&
+      message.selectionSequence < this.selectionSequence
+    )
+      return { ok: false, reason: 'Older selection sequence', ignored: true };
+    const settled: ActionOutcomeMessage =
+      message.status === 'accepted' && message.resultVersion < this.version
+        ? {
+            ...message,
+            resultVersion: this.version,
+            status: 'refused',
+            reason:
+              'The report changed before the native action completed; it was not replayed.',
+          }
+        : message;
+    request.outcome = settled;
     this.correlated.delete(message.requestId);
-    return { ok: true, message };
+    return { ok: true, message: settled };
   }
 
   /** Failed postMessage or an exhausted bounded wait settles the request once. */

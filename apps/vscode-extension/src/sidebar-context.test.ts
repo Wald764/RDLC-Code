@@ -553,3 +553,247 @@ test('Save As follows the real lifetime and invalidates obsolete captures', () =
   registry.focusOther();
   assert.equal(registry.focusDocument(id).viewId, view);
 });
+
+/*
+ * The tests below are registry-level routing authority only: they prove which
+ * lifetime, version, view and generation a captured action belongs to. They
+ * carry no transport, delivery or mutation-queue evidence — the real
+ * delayed/stale/duplicate/disposed request races live in the host suite
+ * (`tests/vscode/synchronization.test.ts`), and the real opening races in
+ * `tests/desktop/context.spec.ts`.
+ */
+
+test('split A and B designers of identically named reports never share authority', () => {
+  const registry = new WindowContextRegistry();
+  const facts = {
+    state: 'editable' as const,
+    version: 1,
+    targets: ['t1'],
+    capabilities: ['select', 'create'],
+  };
+  const a = registry.openDocument({}, 'file:///reports/same.rdlc', 1);
+  registry.focusDocument(a);
+  registry.setEvaluation(a, facts);
+  const b = registry.openDocument({}, 'file:///archive/same.rdlc', 1);
+  registry.setEvaluation(b, facts);
+  assert.equal(
+    registry.context().documentId,
+    a,
+    'registering B never steals A\u2019s focus',
+  );
+
+  // B already has a live panel while A is still source-only: A's own
+  // preliminary capture must never bind it.
+  const bFirst = registry.registerView(b);
+  const prelimA = captured(registry.capture('a-prelim', 'create', []));
+  assert.equal(prelimA.viewId, null, 'A has no panel yet');
+  assert.deepEqual(registry.bind(prelimA, bFirst), {
+    ok: false,
+    reason: 'foreign-view',
+  });
+  registry.settle(prelimA);
+
+  // A binds its own panel, and its captures carry A's own view only.
+  const aFirst = registry.registerView(a);
+  const aSecond = registry.registerView(a);
+  registry.focusView(aSecond);
+  const onA = captured(registry.capture('a-create', 'create', []));
+  assert.equal(onA.viewId, aSecond, 'A captures A\u2019s own surviving view');
+
+  // The reverse direction: A's live panel never binds B's capture either.
+  registry.disposeView(bFirst);
+  registry.focusDocument(b);
+  const prelimB = captured(registry.capture('b-prelim', 'create', []));
+  assert.equal(prelimB.viewId, null, 'B has no panel at capture');
+  assert.deepEqual(registry.bind(prelimB, aFirst), {
+    ok: false,
+    reason: 'foreign-view',
+  });
+  registry.settle(prelimB);
+
+  const bSecond = registry.registerView(b);
+  const pending = captured(registry.capture('b-pending', 'create', []));
+  assert.equal(pending.viewId, bSecond);
+  const terminated: { id: string; reason: string }[] = [];
+  const stop = registry.onDidTerminate((event) =>
+    terminated.push({ id: event.capture.requestId, reason: event.reason }),
+  );
+
+  // Disposing B's panel while A is the source of authority terminates B's
+  // request and nothing of A's.
+  registry.focusDocument(a);
+  registry.disposeView(bSecond);
+  assert.equal(registry.context().viewId, aSecond, 'A keeps its own designer');
+  registry.focusDocument(b);
+  assert.equal(registry.context().viewId, null, 'B has no surviving panel');
+  assert.equal(registry.revalidate(pending), 'disposed-view');
+  assert.deepEqual(
+    terminated.map((event) => `${event.id}:${event.reason}`),
+    ['b-pending:view-disposed'],
+  );
+  assert.equal(
+    terminated.some((event) => event.id === 'a-create'),
+    false,
+    'B never terminates A',
+  );
+  stop();
+
+  registry.focusDocument(a);
+  assert.equal(registry.context().viewId, aSecond);
+  assert.equal(
+    registry.revalidate(onA),
+    'stale-context',
+    'switching documents never revives a pending action',
+  );
+  assert.equal(
+    registry.pendingCount,
+    1,
+    'only A\u2019s request is still pending',
+  );
+});
+
+test('an untitled report keeps one lifetime through Save As, close and reopen', () => {
+  const registry = new WindowContextRegistry();
+  const handle = {};
+  const id = registry.openDocument(handle, 'untitled:Untitled-1', 1);
+  assert.equal(
+    registry.openDocument(handle, 'untitled:Untitled-1', 1),
+    id,
+    'one handle, one lifetime',
+  );
+  registry.focusDocument(id);
+  registry.setEvaluation(id, {
+    state: 'editable',
+    version: 1,
+    targets: ['t1'],
+    capabilities: ['author'],
+  });
+  const view = registry.registerView(id);
+  registry.focusView(view);
+  const before = captured(registry.capture('untitled', 'author', ['t1']));
+  assert.equal(before.uri, 'untitled:Untitled-1');
+
+  // Save As follows the host transition on the same lifetime and invalidates.
+  registry.retarget(id, 'file:///reports/saved.rdlc', 2);
+  assert.equal(registry.context().uri, 'file:///reports/saved.rdlc');
+  assert.equal(registry.context().state, 'loading');
+  assert.equal(registry.context().viewId, view);
+  assert.equal(registry.revalidate(before), 'stale-document');
+  registry.setEvaluation(id, {
+    state: 'editable',
+    version: 2,
+    targets: ['t1'],
+    capabilities: ['author'],
+  });
+  const saved = captured(registry.capture('saved', 'author', ['t1']));
+  assert.equal(saved.uri, 'file:///reports/saved.rdlc');
+  assert.equal(saved.viewId, view, 'the same panel survives Save As');
+
+  // A different untitled document is its own lifetime from the start.
+  const other = registry.openDocument({}, 'untitled:Untitled-2', 1);
+  assert.notEqual(other, id);
+  assert.equal(
+    registry.context().documentId,
+    id,
+    'registering a document never steals focus',
+  );
+
+  // Reopening the saved URI is a fresh lifetime with no inherited panel.
+  registry.closeDocument(id);
+  assert.equal(registry.revalidate(saved), 'stale-document');
+  assert.equal(registry.context().state, 'no-report');
+  const reopened = registry.openDocument({}, 'file:///reports/saved.rdlc', 2);
+  assert.notEqual(reopened, id);
+  registry.focusDocument(reopened);
+  assert.equal(
+    registry.context().viewId,
+    null,
+    'a reopened report inherits no panel',
+  );
+  assert.equal(registry.revalidate(before), 'stale-document');
+  registry.focusDocument(other);
+  assert.notEqual(registry.context().documentId, id);
+});
+
+test('delayed refreshes, selections and outcomes settle one authority once', () => {
+  const registry = new WindowContextRegistry();
+  const id = editable(registry, {}, 'file:///a.rdlc', 2);
+  const view = registry.registerView(id);
+  registry.focusView(view);
+  const generation = registry.context().generation;
+
+  // A refresh for a superseded version arrives late and never resurrects.
+  assert.equal(
+    registry.setEvaluation(id, {
+      state: 'editable',
+      version: 1,
+      targets: ['t1'],
+      capabilities: ['author'],
+    }),
+    false,
+  );
+  const delayed = captured(
+    registry.capture('delayed-refresh', 'author', ['t1']),
+  );
+  assert.equal(delayed.contextGeneration, generation);
+
+  // The current refresh is rechecked fact by fact without moving the context.
+  assert.equal(
+    registry.setEvaluation(id, {
+      state: 'editable',
+      version: 2,
+      targets: ['t1'],
+      capabilities: ['author'],
+    }),
+    true,
+  );
+  assert.equal(
+    registry.context().generation,
+    generation,
+    'a same-version refresh is not a context change',
+  );
+  assert.equal(
+    registry.revalidate(delayed),
+    null,
+    'authority survives the refreshed facts',
+  );
+
+  // A delayed selection hands the panel to another view: the pending action
+  // is stale, and returning to the first view never revives it.
+  const other = registry.registerView(id);
+  registry.focusView(other);
+  assert.equal(registry.revalidate(delayed), 'stale-context');
+  registry.focusView(view);
+  assert.equal(
+    registry.revalidate(delayed),
+    'stale-context',
+    'a delayed selection cannot revive a pending action',
+  );
+  registry.settle(delayed);
+  assert.equal(registry.pendingCount, 0);
+
+  // A delayed outcome settles its own request exactly once; every duplicate
+  // settlement and every repeated activation is a no-op or a refusal.
+  const outcome = captured(
+    registry.capture('delayed-outcome', 'author', ['t1']),
+  );
+  assert.equal(outcome.viewId, view);
+  registry.settle(outcome);
+  registry.settle(outcome);
+  registry.settle({ ...outcome });
+  assert.equal(registry.pendingCount, 0);
+  assert.equal(registry.revalidate(outcome), 'settled');
+  assert.deepEqual(
+    registry.capture('delayed-outcome', 'author', ['t1']),
+    { ok: false, reason: 'duplicate' },
+    'a settled request ID is never reusable',
+  );
+  assert.equal(
+    registry.revalidate({ ...outcome }),
+    'settled',
+    'a copied capture cannot settle or revive anything',
+  );
+  const fresh = captured(registry.capture('fresh', 'author', ['t1']));
+  assert.equal(registry.revalidate(fresh), null);
+  registry.settle(fresh);
+});

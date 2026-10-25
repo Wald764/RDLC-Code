@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { groupDataCategories, type DataCategoryKey } from '@rdlc/renderer/data';
 import {
   filterComponents,
   type ComponentEntry,
@@ -6,7 +7,15 @@ import {
 } from '@rdlc/report-model/components';
 import type { NavigationNode } from '@rdlc/report-model/navigation';
 import { SidebarHostContext } from './host-context.js';
-import { clipboardIntent } from './actions.js';
+import type { ContextState } from './context.js';
+import {
+  clipboardIntent,
+  dataIntent,
+  datasetCreateRoute,
+  structureContextValue,
+  structureIntent,
+  type DataAction,
+} from './actions.js';
 
 interface Row {
   readonly key: string;
@@ -15,7 +24,55 @@ interface Row {
   readonly node?: NavigationNode;
   readonly component?: ComponentEntry;
   readonly children: Row[];
-  readonly authority: string;
+  /** Captured with the row; rows that survive a context change only move it. */
+  authority: string;
+}
+
+/**
+ * Registered native Data commands. Every key must exist in package.json's
+ * `contributes.commands`, and only these rows reach the existing guarded
+ * dataset form — no command carries an authoring payload of its own.
+ */
+export const dataCommandActions = {
+  dataEdit: 'edit',
+  dataAddField: 'add-field',
+  dataRename: 'rename',
+  dataDelete: 'delete',
+} as const satisfies Record<string, DataAction>;
+
+/** Title command with no row target: the existing creation route owns defaults. */
+export const dataCreateCommand = 'dataAddDataset';
+
+/** Why insertion is unavailable (null when it is available). */
+export function insertionReason(state: ContextState): string | null {
+  return state === 'editable'
+    ? null
+    : 'Open an editable report to insert components.';
+}
+
+/**
+ * Native view message per state. No-report: Structure/Data leave it empty so their
+ * viewsWelcome (New/Open Report) renders; Components keeps rows and conveys it by message.
+ */
+export function stateMessage(
+  kind: 'structure' | 'data' | 'components',
+  state: ContextState,
+): string {
+  const text =
+    state === 'no-report'
+      ? kind === 'components'
+        ? 'Open or create a report to begin.'
+        : ''
+      : state === 'loading'
+        ? 'Loading accepted report…'
+        : state === 'invalid-source'
+          ? 'Invalid XML. Open Code XML to repair this report.'
+          : state === 'source-only'
+            ? 'Source-only report. Inspection and Code XML are available.'
+            : '';
+  return kind === 'components'
+    ? `${text} Native drag is unavailable. Activate Textbox, Table or Dataset to insert; use the compact designer fallback for drag.`.trim()
+    : text;
 }
 
 /** Native display rows have no authority until their owned activation is rechecked. */
@@ -26,8 +83,22 @@ export class SidebarViews implements vscode.Disposable {
   private query = '';
   private lastReport = '';
   private contentSignature = '';
+  private lastFilter: string | undefined;
   private lastTreeSelection = '';
   private readonly selecting = new Set<string>();
+  /**
+   * One native selection this view itself dispatched, held until the host
+   * accepts it: the tree the user just clicked already shows that row with its
+   * ancestors open, so revealing it would only reset their scroll. The authority
+   * scopes it to the context that captured it and it is consumed by the exact
+   * accepted selection it caused, so it can neither outlive that context nor
+   * suppress an unrelated canvas selection.
+   */
+  private ownReveal: {
+    readonly authority: string;
+    readonly provider: NativeView;
+    readonly selection: string;
+  } | null = null;
 
   constructor(private readonly host: SidebarHostContext) {
     this.providers = (['structure', 'data', 'components'] as const).map(
@@ -98,6 +169,25 @@ export class SidebarViews implements vscode.Disposable {
             outcome.reason ?? 'The clipboard action was cancelled.',
           );
       });
+    for (const action of ['delete', 'table', 'group'] as const)
+      register(action, async (input) => {
+        const row = this.checked(input);
+        if (!row.node)
+          throw new Error('Choose a report node in Report Structure.');
+        const route = structureIntent(
+          row.node,
+          this.host.evaluation?.scene ?? null,
+          action,
+          this.host.evaluation?.navigation.structure.nodes ?? [],
+        );
+        const outcome = await this.host.dispatch(route.intent, route.targetIds);
+        if (outcome.status !== 'accepted')
+          throw new Error(outcome.reason ?? 'The report action was cancelled.');
+        void vscode.window.showInformationMessage(route.notice);
+      });
+    for (const [id, action] of Object.entries(dataCommandActions))
+      register(id, (input) => this.dataAction(input, action));
+    register(dataCreateCommand, () => this.dataCreateDataset());
     register('filter', async () => {
       const query = await vscode.window.showInputBox({
         title: 'Filter Components',
@@ -162,30 +252,51 @@ export class SidebarViews implements vscode.Disposable {
       if (outcome.status !== 'accepted')
         throw new Error(outcome.reason ?? 'Insertion was cancelled.');
     } else if (row.node) {
-      const selected = this.providers[0]!.view.selection;
+      // The command's row belongs to exactly one native view, so a multi-select
+      // must come from that view's own selection and never from another view's.
+      const provider = this.providers.find(
+        (candidate) => candidate.find(row.node!.id) === row,
+      );
+      const selected = provider?.view.selection ?? [];
+      const inSelection = selected.some(
+        (candidate) => candidate.key === row.key,
+      );
+      // Command route only: when the owning view no longer holds this row, its
+      // selection event already carried this interaction, so the command must
+      // not re-select a row the user just removed.
+      if (
+        nativeRows === undefined &&
+        provider &&
+        selected.length > 0 &&
+        !inSelection
+      )
+        return;
       const rows =
-        nativeRows ??
-        (selected.some((candidate) => candidate.key === row.key) &&
-        selected.length > 1
-          ? selected
-          : [row]);
+        nativeRows ?? (inSelection && selected.length > 1 ? selected : [row]);
       rows.forEach((candidate) => this.checked(candidate));
       if (rows.some((candidate) => !candidate.node))
         throw new Error('Choose report nodes only.');
-      const signature = JSON.stringify([
-        row.authority,
-        rows.map((candidate) => candidate.node!.id),
-        row.node.id,
-      ]);
+      const targetIds = rows.map((candidate) => candidate.node!.id);
+      const signature = JSON.stringify([row.authority, targetIds, row.node.id]);
       if (this.selecting.has(signature)) return;
       this.selecting.add(signature);
+      if (provider)
+        this.ownReveal = {
+          authority: row.authority,
+          provider,
+          selection: JSON.stringify([targetIds, row.node.id]),
+        };
       try {
         const outcome = await this.host.dispatch(
           { action: 'select', primaryId: row.node.id, additive: false },
-          rows.map((candidate) => candidate.node!.id),
+          targetIds,
         );
         if (outcome.status !== 'accepted')
           throw new Error(outcome.reason ?? 'Selection was cancelled.');
+      } catch (error) {
+        // A refused selection never arrives as an accepted one.
+        this.ownReveal = null;
+        throw error;
       } finally {
         this.selecting.delete(signature);
       }
@@ -216,10 +327,41 @@ export class SidebarViews implements vscode.Disposable {
     await this.host.openSource(row.node.id);
   }
 
+  /**
+   * Native Data row → the existing guarded dataset form: capability first,
+   * captured authority at dispatch, and exactly one notice only on acceptance.
+   */
+  private async dataAction(input: Row | undefined, action: DataAction) {
+    const row = this.checked(input);
+    if (!row.node) throw new Error('Choose a dataset or field in Report Data.');
+    const route = dataIntent(
+      row.node,
+      action,
+      this.host.evaluation?.navigation.data.nodes ?? [],
+    );
+    const outcome = await this.host.dispatch(route.intent, route.targetIds);
+    if (outcome.status !== 'accepted')
+      throw new Error(outcome.reason ?? 'The data action was refused.');
+    void vscode.window.showInformationMessage(route.notice);
+  }
+
+  /** Title action with no row: the existing creation route supplies its defaults. */
+  private async dataCreateDataset(): Promise<void> {
+    const route = datasetCreateRoute();
+    const outcome = await this.host.dispatch(route.intent, route.targetIds);
+    if (outcome.status !== 'accepted')
+      throw new Error(outcome.reason ?? 'Dataset creation was cancelled.');
+    void vscode.window.showInformationMessage(route.notice);
+  }
+
   private refresh(): void {
     const context = this.host.registry.context();
     const evaluation = this.host.evaluation;
     const authority = this.authority();
+    // A native selection captured for another context can never be the one the
+    // host is accepting now, so it stops being a candidate at all.
+    if (this.ownReveal && this.ownReveal.authority !== authority)
+      this.ownReveal = null;
     const report = context.uri
       ? vscode.Uri.parse(context.uri).path.split('/').at(-1) ||
         'Untitled report'
@@ -249,6 +391,12 @@ export class SidebarViews implements vscode.Disposable {
     ]);
     const rebuild = contentSignature !== this.contentSignature;
     this.contentSignature = contentSignature;
+    // Toolbox rows derive from the filter alone, never from the document:
+    // republishing them on every edit replaces each row inside a pointer
+    // gesture, and the list then reports the click on their common ancestor, so
+    // the row's command never runs.
+    const filterRebuild = this.query !== this.lastFilter;
+    this.lastFilter = this.query;
     const create = (
       label: string,
       key: string,
@@ -271,21 +419,19 @@ export class SidebarViews implements vscode.Disposable {
     };
     for (const provider of this.providers) {
       let roots: Row[] = [];
-      provider.view.description = report;
-      provider.insertionReason =
-        context.state === 'editable'
-          ? null
-          : 'Open an editable report to insert components.';
-      provider.view.message =
-        context.state === 'no-report'
-          ? 'Open or create a report to begin.'
-          : context.state === 'loading'
-            ? 'Loading accepted report…'
-            : context.state === 'invalid-source'
-              ? 'Invalid XML. Open Code XML to repair this report.'
-              : context.state === 'source-only'
-                ? 'Source-only report. Inspection and Code XML are available.'
-                : '';
+      const rowsRebuild =
+        provider.kind === 'components' ? filterRebuild : rebuild;
+      // The TreeView message setter has no equality guard, so every write fires the
+      // extension host data event and reopens its 200 ms debounce in front of the
+      // row refresh below: write the view chrome only when its value changed.
+      const message = stateMessage(provider.kind, context.state);
+      // The header may only claim the report the next fetch will paint: it is
+      // published with those rows, so it can never lead its own projection.
+      provider.pendingDescription =
+        provider.view.description === report ? undefined : report;
+      if (provider.view.message !== message) provider.view.message = message;
+      provider.insertionReason = insertionReason(context.state);
+      provider.scene = evaluation?.scene ?? null;
       const selection = this.host.selection;
       provider.pending = this.host.pendingTargets;
       provider.pendingComponents = this.host.pendingComponents;
@@ -293,9 +439,7 @@ export class SidebarViews implements vscode.Disposable {
         selection?.version === context.version
           ? selection.selection
           : { mode: 'empty' };
-      if (rebuild && provider.kind === 'components') {
-        provider.view.message =
-          `${provider.view.message ?? ''} Native drag is unavailable. Activate Textbox, Table or Dataset to insert; use the compact designer fallback for drag.`.trim();
+      if (rowsRebuild && provider.kind === 'components') {
         roots = filterComponents(this.query).map((category) => {
           const parent = create(category.label, `category:${category.label}`);
           category.entries.forEach((entry) =>
@@ -337,30 +481,27 @@ export class SidebarViews implements vscode.Disposable {
           paths.set(node.id, path);
           identities.set(path, (identities.get(path) ?? 0) + 1);
         }
-        const categories = new Map<string, Row>();
-        if (provider.kind === 'data')
-          for (const label of [
-            'Datasets / Fields',
-            'Parameters',
-            'Embedded Images',
-            'Data Sources',
-          ]) {
-            const row = create(label, `data-category:${label}`);
-            categories.set(label, row);
+        const grouped =
+          provider.kind === 'data'
+            ? groupDataCategories(projection.nodes, evaluation.syntax)
+            : null;
+        const categoryRows = new Map<DataCategoryKey, Row>();
+        const categoryOf = new Map<string, DataCategoryKey>();
+        if (grouped) {
+          for (const group of grouped.categories) {
+            const row = create(group.label, `data-category:${group.key}`);
+            categoryRows.set(group.key, row);
             roots.push(row);
+            for (const node of group.nodes) categoryOf.set(node.id, group.key);
           }
+        }
         for (const node of projection.nodes) {
           let parent = node.parentId ? byId.get(node.parentId) : undefined;
-          if (provider.kind === 'data' && !parent) {
-            const label =
-              {
-                dataset: 'Datasets / Fields',
-                field: 'Datasets / Fields',
-                parameter: 'Parameters',
-                'embedded-image': 'Embedded Images',
-                'data-source': 'Data Sources',
-              }[node.kind as 'dataset'] ?? 'Datasets / Fields';
-            parent = categories.get(label);
+          if (!parent && grouped) {
+            // No supported collection claims it: keep the row visible at the root
+            // instead of inventing a category for it.
+            const key = categoryOf.get(node.id);
+            parent = key === undefined ? undefined : categoryRows.get(key);
           }
           const path = paths.get(node.id)!;
           const stable =
@@ -378,16 +519,24 @@ export class SidebarViews implements vscode.Disposable {
           byId.set(node.id, row);
           if (!parent) roots.push(row);
         }
-        if (provider.kind === 'data')
-          for (const parent of categories.values())
-            if (!parent.children.length)
-              create(
-                projection.truncated
-                  ? 'Inventory incomplete; inspect Code XML.'
-                  : 'No definitions.',
-                `${parent.key}:empty`,
-                parent,
-              );
+        for (const parent of categoryRows.values())
+          if (!parent.children.length)
+            create(
+              projection.truncated
+                ? 'Inventory incomplete; inspect Code XML.'
+                : 'No definitions.',
+              `${parent.key}:empty`,
+              parent,
+            );
+        // Definitions no supported collection claims stay visible at the root and
+        // say the inventory is incomplete instead of borrowing a category.
+        if (grouped?.unassigned.length && !projection.truncated)
+          roots.push(
+            create(
+              'Unrecognized definitions; inventory incomplete. Inspect Code XML.',
+              'data:unassigned',
+            ),
+          );
         if (projection.truncated)
           roots.push(
             create(
@@ -396,8 +545,18 @@ export class SidebarViews implements vscode.Disposable {
             ),
           );
       }
-      if (rebuild) provider.setRows(roots);
-      else provider.updateCues();
+      if (rowsRebuild) provider.setRows(roots);
+      else {
+        // Rows that survive a context change only move their authority: their
+        // content is unchanged, so republishing them would repaint rows a
+        // pointer gesture may already be holding.
+        provider.retag(authority);
+        provider.updateCues();
+      }
+      // Toolbox rows belong to no document, so their header never waits on a
+      // repaint — including the first one the constructor owes — and the armed
+      // value is what keeps an unchanged refresh from rewriting it.
+      if (provider.kind === 'components') provider.flushDescription();
       const primary =
         provider.selection.mode === 'body'
           ? provider.selection.primaryId
@@ -413,13 +572,27 @@ export class SidebarViews implements vscode.Disposable {
       ]);
       if (row && provider.view.visible && provider.lastReveal !== revealKey) {
         provider.lastReveal = revealKey;
-        void Promise.resolve(
-          provider.view.reveal(row, {
-            focus: false,
-            select: false,
-            expand: true,
-          }),
-        ).catch(() => {});
+        const accepted = provider.selection;
+        const own = this.ownReveal;
+        // The tree the user just clicked already shows this row with its
+        // ancestors open; a programmatic reveal would only reset that scroll.
+        if (
+          own &&
+          own.authority === authority &&
+          own.provider === provider &&
+          accepted.mode === 'body' &&
+          own.selection ===
+            JSON.stringify([accepted.targetIds, accepted.primaryId])
+        )
+          this.ownReveal = null;
+        else
+          void Promise.resolve(
+            provider.view.reveal(row, {
+              focus: false,
+              select: false,
+              expand: true,
+            }),
+          ).catch(() => {});
       }
     }
   }
@@ -431,36 +604,68 @@ export class SidebarViews implements vscode.Disposable {
 
 class NativeView implements vscode.TreeDataProvider<Row>, vscode.Disposable {
   lastReveal = '';
+  /** Description owed to this view; published with the rows it describes. */
+  pendingDescription: string | undefined = undefined;
   private readonly changed = new vscode.EventEmitter<Row | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
   readonly view: vscode.TreeView<Row>;
   private roots: Row[] = [];
   private cues = new WeakMap<Row, string>();
+  /**
+   * Row keys the user folded. The host drops fold state beneath a collapsed
+   * ancestor on refresh, so the provider reports it back instead of Expanded.
+   * In memory only, pruned to the current rows.
+   */
+  private readonly collapsed = new Set<string>();
   selection: import('@rdlc/report-model/navigation').NavigationSelection = {
     mode: 'empty',
   };
   pending: ReadonlySet<string> = new Set();
   pendingComponents: ReadonlySet<string> = new Set();
   insertionReason: string | null = null;
+  scene: import('@rdlc/report-model/scene').DesignScene | null = null;
   constructor(readonly kind: 'structure' | 'data' | 'components') {
     this.view = vscode.window.createTreeView(`rdlcCode.${kind}`, {
       treeDataProvider: this,
       canSelectMany: kind === 'structure',
     });
+    this.view.onDidCollapseElement((event) =>
+      this.collapsed.add(event.element.key),
+    );
+    this.view.onDidExpandElement((event) =>
+      this.collapsed.delete(event.element.key),
+    );
   }
   setRows(rows: Row[]): void {
     this.roots = rows;
     this.cues = new WeakMap();
-    for (const row of this.allRows()) this.cues.set(row, this.cue(row));
+    const keys = new Set<string>();
+    for (const row of this.allRows()) {
+      this.cues.set(row, this.cue(row));
+      keys.add(row.key);
+    }
+    for (const key of this.collapsed)
+      if (!keys.has(key)) this.collapsed.delete(key);
     this.changed.fire(undefined);
   }
+  /** Rows kept across a context change only adopt its authority. */
+  retag(authority: string): void {
+    for (const row of this.allRows()) row.authority = authority;
+  }
   updateCues(): void {
+    let changed = false;
     for (const row of this.allRows()) {
       const cue = this.cue(row);
       if (this.cues.get(row) === cue) continue;
       this.cues.set(row, cue);
-      this.changed.fire(row);
+      changed = true;
     }
+    // One whole-view event per cue pass. A row-level refresh disposes the row it
+    // replaces, and that disposal also deletes the cached command identity
+    // (`<command> /<n>`) the workbench is still about to execute for the very
+    // click that caused this cue change, which surfaces as
+    // "Actual command not found" instead of an activation.
+    if (changed) this.changed.fire(undefined);
   }
   private *allRows(rows = this.roots): Iterable<Row> {
     for (const row of rows) {
@@ -493,7 +698,18 @@ class NativeView implements vscode.TreeDataProvider<Row>, vscode.Disposable {
       : '';
   }
   getChildren(row?: Row): Row[] {
+    // These are the rows the next paint will show, so the header may claim
+    // their report now: it can never lead the projection it describes.
+    if (!row) this.flushDescription();
     return row ? row.children : this.roots;
+  }
+  /** Publish the description owed to this view, if one is pending. */
+  flushDescription(): void {
+    const description = this.pendingDescription;
+    if (description === undefined) return;
+    this.pendingDescription = undefined;
+    if (this.view.description !== description)
+      this.view.description = description;
   }
   getParent(row: Row): Row | undefined {
     return row.parent;
@@ -509,12 +725,20 @@ class NativeView implements vscode.TreeDataProvider<Row>, vscode.Disposable {
     };
     return visit(this.roots);
   }
+  /** Table/group rows expose the owning table, the only surface that owns those forms. */
+  private owningTable(row: Row): NavigationNode | undefined {
+    for (let parent = row.parent; parent; parent = parent.parent)
+      if (parent.node?.kind === 'table') return parent.node;
+    return undefined;
+  }
   getTreeItem(row: Row): vscode.TreeItem {
     const item = new vscode.TreeItem(
       row.label,
-      row.children.length
-        ? vscode.TreeItemCollapsibleState.Expanded
-        : vscode.TreeItemCollapsibleState.None,
+      !row.children.length
+        ? vscode.TreeItemCollapsibleState.None
+        : this.collapsed.has(row.key)
+          ? vscode.TreeItemCollapsibleState.Collapsed
+          : vscode.TreeItemCollapsibleState.Expanded,
     );
     item.id = row.key;
     if (
@@ -536,21 +760,17 @@ class NativeView implements vscode.TreeDataProvider<Row>, vscode.Disposable {
           : this.selection.mode !== 'empty' && this.selection.targetId === id;
       const primary =
         this.selection.mode === 'body' && this.selection.primaryId === id;
-      item.contextValue = row.node.capabilities.some(
-        (capability) =>
-          capability.operation === 'clipboard' && capability.eligible,
-      )
-        ? 'rdlcCode.body'
-        : row.node.capabilities.some(
-              (capability) =>
-                capability.operation === 'properties' && capability.eligible,
-            )
-          ? 'rdlcCode.editable'
-          : 'rdlcCode.source';
+      const contextValue = structureContextValue(
+        row.node,
+        this.owningTable(row),
+        this.scene,
+      );
+      item.contextValue = contextValue;
       item.description = [
         this.pending.has(id) ? 'Pending' : '',
         primary ? 'Primary' : selected ? 'Selected' : '',
-        row.node.opaqueReason ? 'Source only' : '',
+        // Only inspect/source-only rows claim it; the projection reason stays in the tooltip.
+        contextValue === 'rdlcCode.source' ? 'Source only' : '',
       ]
         .filter(Boolean)
         .join(' · ');

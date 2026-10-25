@@ -306,9 +306,11 @@ export function planAuthoringIntent(
         ['renameField', 'deleteField', 'setFieldType'].includes(
           payload.action,
         ) &&
-        (!field || !field.type)
+        (!field || !field.type || field.calculatedValue !== null)
       )
-        return fail('Unknown or absent field types are read-only.');
+        return fail(
+          'Unknown, absent or calculated field definitions are read-only.',
+        );
       if (
         ['renameDataset', 'deleteDataset', 'createField'].includes(
           payload.action,

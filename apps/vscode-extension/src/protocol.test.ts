@@ -1802,24 +1802,19 @@ test('benign stale selections and duplicate outcomes are ignored without state c
     resultVersion: 4,
     selectionSequence: 3,
   };
-  for (const stale of [
-    { ...settled, resultVersion: 3 },
-    { ...settled, selectionSequence: 2 },
-  ]) {
-    const result = binding.receiveOutcome(stale);
-    assert.equal(!result.ok && result.ignored, true, JSON.stringify(stale));
-  }
-  assert.ok(
-    binding.receiveOutcome(settled).ok,
-    'ignored outcomes leave the request pending',
-  );
+  assert.ok(binding.receiveOutcome(settled).ok, 'a current outcome settles');
   assert.ok(binding.receiveOutcome(settled).ok, 'identical duplicate dedupes');
-  const conflicting = binding.receiveOutcome({
-    ...settled,
-    status: 'refused',
-    reason: 'Changed',
-  });
-  assert.equal(!conflicting.ok && conflicting.ignored, true);
+  for (const conflicting of [
+    { ...settled, status: 'refused', reason: 'Changed' },
+    { ...settled, resultVersion: 3 },
+  ]) {
+    const result = binding.receiveOutcome(conflicting);
+    assert.equal(
+      !result.ok && result.ignored,
+      true,
+      JSON.stringify(conflicting),
+    );
+  }
   assert.equal(
     binding.invalidateNative('Context changed', true).length,
     0,
@@ -1835,7 +1830,7 @@ test('benign stale selections and duplicate outcomes are ignored without state c
   }
 });
 
-test('stale refusals settle a pending request once while stale accepted outcomes stay ignored', () => {
+test('stale outcomes of every status settle a pending request exactly once', () => {
   const binding = new DocumentBinding('file:///a.rdlc', 3, ['3:1'], ['author']);
   binding.receive({ protocol: 2, kind: 'ready' });
   assert.ok(binding.bindView(view));
@@ -1850,15 +1845,22 @@ test('stale refusals settle a pending request once while stale accepted outcomes
   );
   binding.update(4, ['4:1'], ['author']);
   const base = { ...outcome, baseVersion: 3, selectionSequence: 0 };
-  for (const stale of [
-    { ...base, resultVersion: 3 },
-    { ...base, resultVersion: 4, selectionSequence: -1 },
-  ])
-    assert.equal(
-      binding.receiveOutcome(stale).ok,
-      false,
-      'stale accepted is ignored',
-    );
+  // The designer sends one outcome per request: an accepted one overtaken by
+  // the independent change settles once as a refusal, never stays pending.
+  const overtaken = binding.receiveOutcome({ ...base, resultVersion: 3 });
+  assert.ok(overtaken.ok);
+  assert.equal(overtaken.message.status, 'refused');
+  assert.equal(overtaken.message.resultVersion, 4);
+  assert.match(overtaken.message.reason ?? '', /report changed/);
+  const late = binding.receiveOutcome({ ...base, resultVersion: 4 });
+  assert.equal(!late.ok && late.ignored, true, 'settled once');
+  assert.equal(binding.invalidateNative('Context changed', true).length, 0);
+  assert.equal(
+    binding.receiveOutcome({ ...base, resultVersion: 4, selectionSequence: -1 })
+      .ok,
+    false,
+    'an out-of-order selection sequence stays ignored',
+  );
   // The host would otherwise wait for its timeout; refusals settle at once.
   for (const status of ['refused', 'cancelled'] as const) {
     const fresh = new DocumentBinding('file:///a.rdlc', 3, ['3:1'], ['author']);
