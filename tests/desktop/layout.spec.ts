@@ -1096,7 +1096,6 @@ test('FR-029-stability', async () => {
           message: 'the viewport scroll survives the zoom round trip',
         })
         .toEqual(scrollBefore);
-      const afterZoom = await sampleCount(frame);
 
       const samples = await stopSampling(frame);
       for (const [phase, from] of [
@@ -1104,7 +1103,7 @@ test('FR-029-stability', async () => {
         ['native-menu', afterCanvasMenu],
         ['refusal', afterNativeMenu],
         ['zoom-round-trip', afterRefusal],
-        ['whole-series', afterZoom],
+        ['whole-series', fromMenu],
       ] as const) {
         const entry = drift(samples, from);
         expect(

@@ -322,6 +322,32 @@ test('binary identity requires actual version and build metadata, including hash
   }
 });
 
+test('a profile whose IPC socket would overflow the Unix limit moves to a short temp dir', () => {
+  const deep = join(tmpdir(), 'x'.repeat(60));
+  const options = {
+    root: deep,
+    version: '1.142.0',
+    packaged: true,
+    artifactDir: join(deep, 'artifacts'),
+  } as const;
+  const id = '5110-12c46e42-8221-43b8-9ddd-cdce2ce2e68e';
+  const moved = desktopPaths(options, id, 'darwin', '/tmp');
+  assert.match(moved.profileDir, /^[\\/]tmp[\\/]rdlc-[0-9a-f]{12}$/);
+  assert.ok(join(moved.profileDir, '1.14-main.sock').length <= 103);
+  assert.equal(moved.extensionsDir, join(moved.profileDir, 'extensions'));
+  assert.equal(
+    desktopPaths(options, id, 'darwin', '/tmp').profileDir,
+    moved.profileDir,
+    'stable for one launch identity',
+  );
+  // Windows uses named pipes, so the repository-local profile stays.
+  assert.ok(
+    desktopPaths(options, id, 'win32', '/tmp').profileDir.startsWith(
+      resolve(deep),
+    ),
+  );
+});
+
 test('an extension inspector port is validated and passed before the folder', () => {
   const root = mkdtempSync(join(tmpdir(), 'rdlc-desktop-'));
   try {

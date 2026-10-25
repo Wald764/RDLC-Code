@@ -653,6 +653,12 @@ async function renameAndReopen(source: string): Promise<void> {
         );
       }
     }
-    await rm(directory, { recursive: true, force: true });
+    // Windows may still hold the closed editor's watcher handle briefly.
+    await rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 200,
+    });
   }
 }

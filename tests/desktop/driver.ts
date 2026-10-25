@@ -26,7 +26,7 @@ import {
 import { rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
-import { arch, platform, release } from 'node:os';
+import { arch, platform, release, tmpdir } from 'node:os';
 
 /** Frozen launch contract used by the Desktop runner and specs. */
 export interface DesktopLaunchOptions {
@@ -178,16 +178,30 @@ function inspector(
   return { inspectExtensions: port };
 }
 
+/** Unix socket paths are limited to 104 bytes on macOS (108 on Linux). */
+const SOCKET_PATH_LIMIT = 103;
+
 export function desktopPaths(
   options: DesktopLaunchOptions,
   id = `${process.pid}-${randomUUID()}`,
+  os: NodeJS.Platform = platform(),
+  temp: string = tmpdir(),
 ): DesktopPaths {
-  const profileDir = join(
+  const name = `${options.packaged ? 'packaged' : 'development'}-${safeSegment(options.version)}-${id}`;
+  let profileDir = join(
     resolve(options.root),
     '.vscode-test',
     'desktop-profiles',
-    `${options.packaged ? 'packaged' : 'development'}-${safeSegment(options.version)}-${id}`,
+    name,
   );
+  // VS Code listens on `<user-data-dir>/<version>-main.sock`; a deep checkout
+  // overflows the socket limit and Desktop never starts, so use a short dir.
+  const socket = join(profileDir, `${options.version.slice(0, 4)}-main.sock`);
+  if (os !== 'win32' && Buffer.byteLength(socket) > SOCKET_PATH_LIMIT)
+    profileDir = join(
+      temp,
+      `rdlc-${createHash('sha256').update(name).digest('hex').slice(0, 12)}`,
+    );
   return {
     profileDir,
     extensionsDir: join(profileDir, 'extensions'),
