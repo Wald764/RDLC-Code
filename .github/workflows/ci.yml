@@ -81,6 +81,13 @@ jobs:
         run: xvfb-run -a pnpm test:vscode
       - if: runner.os != 'Linux' && matrix.group == 'core'
         run: pnpm test:vscode
+      # Diagnostic: the Linux runner has been shut down during test:package.
+      - name: Record Linux resources before package tests
+        if: runner.os == 'Linux' && matrix.group == 'core'
+        run: |
+          free -m
+          df -h .
+          ps -eo pid,rss,etime,args --sort=-rss | head -25
       - if: runner.os == 'Linux' && matrix.group == 'core'
         run: xvfb-run -a pnpm test:package
       - if: runner.os != 'Linux' && matrix.group == 'core'
@@ -131,6 +138,15 @@ jobs:
       - name: Run installed Desktop journeys on Windows and macOS
         if: runner.os != 'Linux'
         run: pnpm test:e2e --packaged
+      # Per-session driver traces run to gigabytes per job; failing tests keep
+      # their own Playwright trace, screenshot and error context.
+      - name: Drop per-session driver traces before upload
+        if: always()
+        shell: bash
+        run: |
+          if [ -d .vscode-test/desktop-artifacts ]; then
+            find .vscode-test/desktop-artifacts -name 'trace-*.zip' -delete
+          fi
       - name: Upload Desktop run evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
