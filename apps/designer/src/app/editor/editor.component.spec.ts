@@ -1,7 +1,12 @@
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
-import { validateMessage, type HostMessage } from '@rdlc/report-model/protocol';
+import {
+  validateMessage,
+  type AuthoringState,
+  type HostMessage,
+  type NavigationNode,
+} from '@rdlc/report-model/protocol';
 import { EditorComponent } from './editor.component';
 import { HostAdapter } from './host-adapter';
 
@@ -14,6 +19,36 @@ const diagnostic: Diagnostic = {
   correctiveAction: 'Correct the page size.',
   blockedOperations: [],
 };
+
+/** Authoritative Data projection row; Structure never carries definitions again. */
+function dataNode(
+  id: string,
+  kind: NavigationNode['kind'],
+  name: string | null,
+  parentId: string | null = null,
+  expandedName?: string,
+): NavigationNode {
+  const expanded =
+    expandedName ??
+    `{urn:rdlc-code:report}${kind === 'dataset' ? 'DataSet' : kind === 'field' ? 'Field' : kind}`;
+  const local = expanded.split('}').at(-1)!;
+  return {
+    id,
+    parentId,
+    sourceOrder: 0,
+    range: { start: 0, end: 0 },
+    expandedName: expanded,
+    name,
+    kind,
+    label: name ? `${local}: ${name}` : local,
+    opaqueReason: null,
+    capabilities: [
+      { operation: 'inspect', eligible: true, reason: null },
+      { operation: 'select', eligible: true, reason: null },
+      { operation: 'properties', eligible: true, reason: null },
+    ],
+  };
+}
 
 function snapshotMessage(options: {
   capabilities?: readonly string[];
@@ -31,6 +66,11 @@ function snapshotMessage(options: {
     version,
     sourceLength: 0,
     structure: { nodes: [], truncated: false },
+    navigation: {
+      version,
+      structure: { nodes: [], truncated: false },
+      data: { nodes: [], truncated: false },
+    },
     projection: {
       status: 'editable',
       capabilities: ['source', 'projection'],
@@ -112,6 +152,174 @@ describe('editor surface', () => {
       host.sent().some((message) => validateMessage(message)?.kind === 'edit'),
     ).toBe(false);
   });
+  it('defaults absent navigation preferences to compact/closed and keeps inspector, toolbar and status', async () => {
+    const { fixture, host, element, settle } = mount(false);
+    host.ingest(directSnapshot());
+    await settle();
+    const component = fixture.componentInstance;
+    expect(component.view()).toMatchObject({
+      leftVisible: false,
+      leftTab: 'components',
+      rightVisible: true,
+    });
+    expect(component.panels().left).toBe(0);
+    expect(component.panelShown('left')).toBe(false);
+    expect(component.panelShown('right')).toBe(true);
+    const toggle = element.querySelector<HTMLElement>('.left-access')!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.title).toBe(
+      'Show the compact Components and Structure fallback',
+    );
+    expect(
+      element.querySelector<HTMLElement>('#components-panel')!.hidden,
+    ).toBe(false);
+    expect(element.querySelector<HTMLElement>('#structure-panel')!.hidden).toBe(
+      true,
+    );
+    expect(element.querySelector('#properties-panel')).not.toBeNull();
+    expect(
+      element.querySelector('[role=toolbar][aria-label="Report commands"]'),
+    ).not.toBeNull();
+    expect(
+      element.querySelector('footer.status .status-text')?.textContent,
+    ).toContain('items');
+  });
+  it('keeps an explicit preference for the open fallback across an open and close', async () => {
+    const store = { view: { leftVisible: true } };
+    const globals = globalThis as { acquireVsCodeApi?: unknown };
+    globals.acquireVsCodeApi = () => ({
+      postMessage: () => {},
+      getState: () => store,
+      setState: () => {},
+    });
+    try {
+      const fixture = TestBed.createComponent(EditorComponent);
+      const host = TestBed.inject(HostAdapter);
+      const element = fixture.nativeElement as HTMLElement;
+      const settle = async () => {
+        fixture.detectChanges();
+        await fixture.whenStable();
+      };
+      host.ingest(directSnapshot());
+      await settle();
+      const component = fixture.componentInstance;
+      expect(host.restoredView.invalid).toEqual([]);
+      expect(component.view().leftVisible).toBe(true);
+      expect(component.panelShown('left')).toBe(true);
+      expect(
+        element
+          .querySelector<HTMLElement>('.left-access')!
+          .getAttribute('aria-expanded'),
+      ).toBe('true');
+      component.panelAccess('left');
+      await settle();
+      expect(component.view().leftVisible).toBe(false);
+      component.panelAccess('left');
+      await settle();
+      expect(component.view().leftVisible).toBe(true);
+      expect(component.panels().left).toBe(220);
+      expect(
+        host
+          .sent()
+          .some((message) => validateMessage(message)?.kind === 'edit'),
+      ).toBe(false);
+    } finally {
+      delete globals.acquireVsCodeApi;
+    }
+  });
+  it('retains structure, local data and catalog drag behind the labeled explicit fallback', async () => {
+    const { fixture, host, element, settle } = mount(false);
+    const snapshot = directSnapshot();
+    host.ingest({
+      ...snapshot,
+      structure: {
+        nodes: [
+          {
+            id: '2:1',
+            parentId: null,
+            kind: 'report',
+            label: 'Report',
+            name: null,
+            range: { start: 0, end: 0 },
+            preservedReason: null,
+          },
+        ],
+        truncated: false,
+      },
+      navigation: {
+        version: 2,
+        structure: { nodes: [], truncated: false },
+        data: {
+          nodes: [dataNode('2:20', 'dataset', 'Orders')],
+          truncated: false,
+        },
+      },
+      authoring: {
+        ...snapshot.authoring,
+        datasets: [{ id: '2:20', name: 'Orders', fields: [] }],
+      },
+    });
+    await settle();
+    const component = fixture.componentInstance;
+    component.select(0);
+    await settle();
+    const toggle = element.querySelector<HTMLElement>('.left-access')!;
+    expect(toggle.getAttribute('aria-description')).toBe(
+      'Compact designer navigation fallback with components, report structure and local data. Supports HTML drag insertion.',
+    );
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    component.panelAccess('left');
+    await settle();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(
+      element.querySelector<HTMLButtonElement>('[data-card="Textbox"]')!
+        .draggable,
+    ).toBe(true);
+    component.showTab('structure');
+    await settle();
+    const structure = element.querySelector<HTMLElement>('#structure-panel')!;
+    expect(structure.hidden).toBe(false);
+    expect(structure.textContent).toContain('Orders');
+    expect(element.querySelector('#properties-panel')?.textContent).toContain(
+      'Bind selected textbox to Orders field',
+    );
+    // Compact fallback keeps data access through the Data projection.
+    const definition =
+      structure.querySelector<HTMLElement>('[data-node="2:20"]');
+    expect(definition).toBeTruthy();
+    definition!.click();
+    await settle();
+    expect(component.selectedDataset()?.name).toBe('Orders');
+    expect(component.selected()).toBeNull();
+    expect(component.view().scrollTop).toBe(0);
+    expect(component.view().scrollLeft).toBe(0);
+  });
+  it('defers an elective fallback toggle until the active gesture ends', async () => {
+    const { fixture, host, element, settle } = mount(false);
+    host.ingest(directSnapshot());
+    await settle();
+    const component = fixture.componentInstance;
+    component.select(0);
+    await settle();
+    const canvas = element.querySelector<HTMLElement>('.viewport')!;
+    canvas.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
+    );
+    expect(component.nudge()).not.toBeNull();
+    const sent = host.sent().length;
+    component.panelAccess('left');
+    await settle();
+    expect(component.view().leftVisible).toBe(false);
+    expect(component.panelShown('left')).toBe(false);
+    canvas.dispatchEvent(
+      new KeyboardEvent('keyup', { key: 'ArrowRight', bubbles: true }),
+    );
+    await settle();
+    expect(component.view().leftVisible).toBe(true);
+    expect(component.panelShown('left')).toBe(true);
+    // Only the deferred nudge move is sent; toggling the panel sends nothing.
+    expect(host.sent()).toHaveLength(sent + 1);
+  });
   it('accepts native selection and properties once without creating an edit', async () => {
     const { fixture, host, settle } = mount();
     host.ingest({
@@ -172,6 +380,261 @@ describe('editor surface', () => {
     expect(
       host.sent().some((message) => validateMessage(message)?.kind === 'edit'),
     ).toBe(false);
+  });
+
+  it('routes the native Properties action to the first inspector field', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest({
+      ...snapshotMessage({}),
+      viewBinding: {
+        viewId: 'view-1',
+        documentLifetimeId: 'document-1',
+        contextGeneration: 1,
+      },
+    });
+    await settle();
+    fixture.componentInstance.select(0);
+    await settle();
+    const inspector = element.querySelector('.inspector');
+    const name = element.querySelector<HTMLInputElement>(
+      '[data-property="name"]',
+    )!;
+    name.focus();
+    name.setSelectionRange(0, name.value.length);
+    host.ingest({
+      protocol: 2,
+      kind: 'nativeAction',
+      uri: 'file:///report.rdlc',
+      viewId: 'view-1',
+      documentLifetimeId: 'document-1',
+      contextGeneration: 1,
+      baseVersion: 2,
+      targetIds: ['2:3'],
+      requestId: 'properties-native',
+      action: 'properties',
+      capability: 'properties',
+    });
+    await settle();
+    // The keyboard-reached command routes to the existing inspector and focuses
+    // its first field; the panel chrome never takes focus away from the field.
+    expect(element.querySelector('.inspector')).toBe(inspector);
+    expect(document.activeElement).toBe(name);
+    expect(name.value).toBe('Title');
+    expect(name.selectionStart).toBe(0);
+    expect(name.selectionEnd).toBe(name.value.length);
+  });
+
+  it('Escape leaves a revealed overlay field, restores it and returns to the canvas', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest({
+      ...snapshotMessage({}),
+      viewBinding: {
+        viewId: 'view-1',
+        documentLifetimeId: 'document-1',
+        contextGeneration: 1,
+      },
+    });
+    await settle();
+    // Compact workspace: both side panels are overlays (FR-028).
+    fixture.componentInstance.workspaceResize(640, 480);
+    await settle();
+    fixture.componentInstance.select(0);
+    await settle();
+    // The native Properties command reveals the panel without a toolbar
+    // invoker, so no control exists to restore focus to on dismissal.
+    host.ingest({
+      protocol: 2,
+      kind: 'nativeAction',
+      uri: 'file:///report.rdlc',
+      viewId: 'view-1',
+      documentLifetimeId: 'document-1',
+      contextGeneration: 1,
+      baseVersion: 2,
+      targetIds: ['2:3'],
+      requestId: 'properties-native',
+      action: 'properties',
+      capability: 'properties',
+    });
+    await settle();
+    expect(fixture.componentInstance.overlay()).toBe('right');
+    const name = element.querySelector<HTMLInputElement>(
+      '[data-property="name"]',
+    )!;
+    expect(document.activeElement).toBe(name);
+    name.value = 'Draft';
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
+    name.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    await settle();
+    // The field restores the accepted value, the editor still receives the
+    // Escape (the overlay closes), and focus lands on a usable control.
+    expect(name.value).toBe('Title');
+    expect(fixture.componentInstance.overlay()).toBeNull();
+    expect(document.activeElement).toBe(
+      element.querySelector<HTMLElement>('.viewport'),
+    );
+    expect(
+      host.sent().some((message) => validateMessage(message)?.kind === 'edit'),
+    ).toBe(false);
+  });
+
+  it('restores the inspector control a pending refusal disabled, unless focus moved', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest({
+      ...snapshotMessage({}),
+      viewBinding: {
+        viewId: 'view-1',
+        documentLifetimeId: 'document-1',
+        contextGeneration: 1,
+      },
+    });
+    await settle();
+    fixture.componentInstance.select(0);
+    await settle();
+    const name = element.querySelector<HTMLInputElement>(
+      '[data-property="name"]',
+    )!;
+    const fieldset = element.querySelector('fieldset')!;
+    const viewport = element.querySelector<HTMLElement>('.viewport')!;
+
+    // The user moved focus away while the edit was pending: keep it.
+    name.focus();
+    fixture.componentInstance.commit({ property: 'name', value: 'Title2' });
+    await settle();
+    expect(fieldset.disabled).toBe(true);
+    viewport.focus();
+    const moved = host.sent().at(-1) as { requestId: string };
+    host.ingest({
+      protocol: 2,
+      kind: 'editResult',
+      requestId: moved.requestId,
+      baseVersion: 2,
+      version: 2,
+      changed: false,
+      accepted: false,
+      mappings: [],
+      reason: 'Refused while focus moved',
+      diagnostics: [],
+    });
+    await settle();
+    expect(document.activeElement).toBe(viewport);
+
+    // Focus stayed in the field: the disabled fieldset blurred it, and the
+    // refusal settle must hand the still-usable control its focus back.
+    name.focus();
+    expect(document.activeElement).toBe(name);
+    fixture.componentInstance.commit({ property: 'name', value: '9 invalid!' });
+    await settle();
+    expect(fieldset.disabled).toBe(true);
+    // jsdom does not re-run focus fixups when a fieldset disables; drop focus
+    // to the document exactly as a browser does with an unfocusable control.
+    document.documentElement.focus();
+    expect(document.activeElement).toBe(document.body);
+    const refused = host.sent().at(-1) as { requestId: string };
+    host.ingest({
+      protocol: 2,
+      kind: 'editResult',
+      requestId: refused.requestId,
+      baseVersion: 2,
+      version: 2,
+      changed: false,
+      accepted: false,
+      mappings: [],
+      reason: 'Use a unique name',
+      diagnostics: [],
+    });
+    await settle();
+    expect(fieldset.disabled).toBe(false);
+    expect(document.activeElement).toBe(name);
+    // The restored control still accepts typing (real input, not a set value).
+    name.value = 'Draft';
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
+    expect(fixture.componentInstance.draft()).not.toBeNull();
+    expect(fixture.componentInstance.selected()?.name).toBe('Title');
+  });
+
+  it('returns to the canvas when the settled control is connected but hidden', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest({
+      ...snapshotMessage({}),
+      viewBinding: {
+        viewId: 'view-1',
+        documentLifetimeId: 'document-1',
+        contextGeneration: 1,
+      },
+    });
+    await settle();
+    fixture.componentInstance.select(0);
+    await settle();
+    const name = element.querySelector<HTMLInputElement>(
+      '[data-property="name"]',
+    )!;
+    const viewport = element.querySelector<HTMLElement>('.viewport')!;
+    name.focus();
+    fixture.componentInstance.commit({ property: 'name', value: '9 invalid!' });
+    await settle();
+    expect(element.querySelector('fieldset')!.disabled).toBe(true);
+    // jsdom does not re-run focus fixups when a fieldset disables; drop focus
+    // to the document exactly as a browser does with an unfocusable control.
+    document.documentElement.focus();
+    expect(document.activeElement).toBe(document.body);
+    // The compact workspace closes the inspector while the edit is in flight:
+    // the field stays connected but hidden, so a browser ignores its focus().
+    fixture.componentInstance.workspaceResize(640, 480);
+    await settle();
+    expect(fixture.componentInstance.panelShown('right')).toBe(false);
+    expect(name.isConnected).toBe(true);
+    // jsdom has no layout, so model that browser no-op with a silent spy; the
+    // observable requirement is only where focus ends up.
+    vi.spyOn(name, 'focus').mockImplementation(() => {});
+    const refused = host.sent().at(-1) as { requestId: string };
+    host.ingest({
+      protocol: 2,
+      kind: 'editResult',
+      requestId: refused.requestId,
+      baseVersion: 2,
+      version: 2,
+      changed: false,
+      accepted: false,
+      mappings: [],
+      reason: 'Use a unique name',
+      diagnostics: [],
+    });
+    await settle();
+    expect(document.activeElement).toBe(viewport);
+  });
+
+  it('drops a field commit emitted for an item of an older version', async () => {
+    const { fixture, host, settle } = mount();
+    host.ingest(snapshotMessage({ version: 2, id: '2:3', name: 'Front' }));
+    await settle();
+    fixture.componentInstance.select(0);
+    await settle();
+    // A reload rebuilds the inspector for the mapped item; Chromium fires the
+    // removed dirty field's change with the previous version's target.
+    host.ingest(snapshotMessage({ version: 3, id: '3:3', name: 'Front' }));
+    await settle();
+    fixture.componentInstance.select(0);
+    await settle();
+    fixture.componentInstance.commit({
+      property: 'name',
+      value: 'DraftBeforeReload',
+      targetId: '2:3',
+    });
+    expect(
+      host.sent().some((message) => validateMessage(message)?.kind === 'edit'),
+    ).toBe(false);
+    fixture.componentInstance.commit({
+      property: 'name',
+      value: 'Renamed',
+      targetId: '3:3',
+    });
+    expect(
+      host.sent().some((message) => validateMessage(message)?.kind === 'edit'),
+    ).toBe(true);
   });
 
   it('ends a held native action on Cancel and never replays its captured selection', async () => {
@@ -255,6 +718,36 @@ describe('editor surface', () => {
       expect(host.sent()).toEqual([]);
       fixture.destroy();
     });
+  it('inspects real Data definitions in the source-only empty state', async () => {
+    const { fixture, host, element, settle } = mount();
+    const message = snapshotMessage({});
+    if (message.kind !== 'snapshot') throw new Error('Expected snapshot');
+    host.ingest({
+      ...message,
+      projection: { ...message.projection, status: 'source-only' },
+      scene: null,
+      navigation: {
+        version: 2,
+        structure: { nodes: [], truncated: false },
+        data: {
+          nodes: [dataNode('2:20', 'dataset', 'Orders')],
+          truncated: false,
+        },
+      },
+    });
+    await settle();
+    const tree = element.querySelector('.empty-state rdlc-structure-tree')!;
+    const definition = tree.querySelector<HTMLElement>('[data-node="2:20"]');
+    expect(definition).not.toBeNull();
+    definition!.click();
+    await settle();
+    expect(
+      fixture.componentInstance.acceptedSelection().structureTargetId,
+    ).toBe('2:20');
+    expect(fixture.componentInstance.structureNode()?.kind).toBe('dataset');
+    expect(host.sent()).toEqual([]);
+    fixture.destroy();
+  });
   it('synchronizes Structure/body/data selections and uses view-only context menus', async () => {
     const { fixture, host, element, settle } = mount();
     const message = snapshotMessage({});
@@ -282,16 +775,15 @@ describe('editor surface', () => {
             range: { start: 0, end: 0 },
             preservedReason: null,
           },
-          {
-            id: '2:8',
-            parentId: '2:1',
-            kind: 'dataset',
-            name: 'Sales',
-            label: 'Sales',
-            range: { start: 0, end: 0 },
-            preservedReason: null,
-          },
         ],
+      },
+      navigation: {
+        version: 2,
+        structure: { nodes: [], truncated: false },
+        data: {
+          nodes: [dataNode('2:8', 'dataset', 'Sales')],
+          truncated: false,
+        },
       },
     });
     await settle();
@@ -371,17 +863,16 @@ describe('editor surface', () => {
             range: { start: 0, end: 0 },
             preservedReason: null,
           },
-          {
-            id: '2:20',
-            parentId: '2:1',
-            kind: 'dataset',
-            label: 'DataSet: Orders',
-            name: 'Orders',
-            range: { start: 0, end: 0 },
-            preservedReason: null,
-          },
         ],
         truncated: false,
+      },
+      navigation: {
+        version: 2,
+        structure: { nodes: [], truncated: false },
+        data: {
+          nodes: [dataNode('2:20', 'dataset', 'Orders')],
+          truncated: false,
+        },
       },
       authoring: {
         ...snapshot.authoring,
@@ -415,23 +906,76 @@ describe('editor surface', () => {
     expect(component.contextMenu()).toBeNull();
   });
   it('selects an accepted dataset definition without a geometry selection', async () => {
-    const { fixture, host, settle } = mount();
-    host.ingest(directSnapshot());
+    for (const snapshotFirst of [true, false]) {
+      TestBed.resetTestingModule();
+      const { fixture, host, element, settle } = mount();
+      host.ingest(directSnapshot());
+      await settle();
+      fixture.componentInstance.create('dataset');
+      const request = host.sent().at(-1) as {
+        requestId: string;
+        payload: unknown;
+      };
+      expect(request.payload).toEqual({ action: 'createDataset' });
+      const next = directSnapshot(3, '3:4');
+      const accepted = {
+        ...next,
+        authoring: {
+          ...next.authoring,
+          datasets: [{ id: '3:20', name: 'Orders', fields: [] }],
+        },
+        navigation: {
+          version: 3,
+          structure: { nodes: [], truncated: false },
+          data: {
+            nodes: [dataNode('3:20', 'dataset', 'Orders')],
+            truncated: false,
+          },
+        },
+      };
+      const result = {
+        protocol: 2,
+        kind: 'editResult',
+        requestId: request.requestId,
+        baseVersion: 2,
+        version: 3,
+        changed: true,
+        accepted: true,
+        mappings: [],
+        reason: 'APPLIED',
+        diagnostics: [],
+        created: { id: '3:20', name: 'Orders' },
+      };
+      host.ingest(snapshotFirst ? accepted : result);
+      await settle();
+      host.ingest(snapshotFirst ? result : accepted);
+      await settle();
+      const order = snapshotFirst ? 'snapshot first' : 'result first';
+      expect(fixture.componentInstance.selectedDataset()?.name, order).toBe(
+        'Orders',
+      );
+      expect(
+        fixture.componentInstance.acceptedSelection().structureTargetId,
+        order,
+      ).toBe('3:20');
+      expect(fixture.componentInstance.selectedIds(), order).toEqual([]);
+      expect(fixture.componentInstance.selected(), order).toBeNull();
+      // A data definition never scrolls the canvas or claims a rectangle.
+      expect(fixture.componentInstance.view().scrollTop, order).toBe(0);
+      expect(fixture.componentInstance.view().scrollLeft, order).toBe(0);
+      expect(element.textContent, order).toContain('Dataset: Orders');
+      expect(host.sent(), order).toHaveLength(1);
+    }
+  });
+  it('claims no Data target that only authoring carries and keeps later versions clear', async () => {
+    const { fixture, host, element, settle } = mount();
+    const component = fixture.componentInstance;
+    host.ingest(authoringOnly(2, []));
     await settle();
-    fixture.componentInstance.create('dataset');
-    const request = host.sent().at(-1) as {
-      requestId: string;
-      payload: unknown;
-    };
-    expect(request.payload).toEqual({ action: 'createDataset' });
-    const next = directSnapshot(3, '3:4');
-    host.ingest({
-      ...next,
-      authoring: {
-        ...next.authoring,
-        datasets: [{ id: '3:20', name: 'Orders', fields: [] }],
-      },
-    });
+    component.create('dataset');
+    const request = host.sent().at(-1) as { requestId: string };
+    host.ingest(authoringOnly(3, [{ id: '3:20', name: 'Orders', fields: [] }]));
+    await settle();
     host.ingest({
       protocol: 2,
       kind: 'editResult',
@@ -446,11 +990,230 @@ describe('editor surface', () => {
       created: { id: '3:20', name: 'Orders' },
     });
     await settle();
-    expect(fixture.componentInstance.selectedDataset()?.name).toBe('Orders');
-    expect(fixture.componentInstance.selectedIds()).toEqual([]);
-    expect(fixture.componentInstance.selected()).toBeNull();
+    // Authoring names the definition, but no projection carries a target identity.
+    expect(component.acceptedSelection().structureTargetId ?? null).toBeNull();
+    expect(component.selectionLost()).toBe(false);
+    expect(element.textContent).toContain('Created Orders.');
+    // Ambiguous and deleted definitions in later versions still claim nothing.
+    host.ingest(
+      authoringOnly(4, [
+        { id: '4:20', name: 'Orders', fields: [] },
+        { id: '4:21', name: 'Orders', fields: [] },
+      ]),
+    );
+    await settle();
+    expect(component.acceptedSelection().structureTargetId ?? null).toBeNull();
+    expect(component.selectionLost()).toBe(false);
+    host.ingest(authoringOnly(5, []));
+    await settle();
+    expect(component.acceptedSelection().structureTargetId ?? null).toBeNull();
+    expect(component.selectionLost()).toBe(false);
+    expect(element.textContent).not.toContain('Selection cleared');
     expect(host.sent()).toHaveLength(1);
+    fixture.destroy();
   });
+  it('clears a Data selection when the next snapshot carries no navigation', async () => {
+    const { fixture, host, element, settle } = mount();
+    const component = fixture.componentInstance;
+    host.ingest(dataSnapshot(2, [dataNode('2:20', 'dataset', 'Orders')]));
+    await settle();
+    component.selectTree({ id: '2:20', additive: false });
+    await settle();
+    expect(component.acceptedSelection().structureTargetId).toBe('2:20');
+    // Ambiguous authoring proves no correspondence: clear with feedback.
+    host.ingest(
+      authoringOnly(3, [
+        { id: '3:20', name: 'Orders', fields: [] },
+        { id: '3:21', name: 'Orders', fields: [] },
+      ]),
+    );
+    await settle();
+    expect(component.acceptedSelection().structureTargetId ?? null).toBeNull();
+    expect(component.selectionLost()).toBe(true);
+    expect(element.textContent).toContain('Selection cleared');
+    // A deleted definition clears the same way instead of guessing.
+    host.ingest(dataSnapshot(4, [dataNode('4:20', 'dataset', 'Orders')]));
+    await settle();
+    component.selectTree({ id: '4:20', additive: false });
+    await settle();
+    expect(component.acceptedSelection().structureTargetId).toBe('4:20');
+    host.ingest(authoringOnly(5, []));
+    await settle();
+    expect(component.acceptedSelection().structureTargetId ?? null).toBeNull();
+    expect(component.selectionLost()).toBe(true);
+    expect(element.textContent).toContain('Selection cleared');
+    fixture.destroy();
+  });
+  it('accepts native Data selection while Structure carries no dataset branch', async () => {
+    const { fixture, host, element, settle } = mount();
+    const message = directSnapshot();
+    host.ingest({
+      ...message,
+      structure: {
+        nodes: [
+          {
+            id: '2:1',
+            parentId: null,
+            kind: 'report',
+            name: null,
+            label: 'Report',
+            range: { start: 0, end: 0 },
+            preservedReason: null,
+          },
+        ],
+        truncated: false,
+      },
+      navigation: {
+        version: 2,
+        structure: { nodes: [], truncated: false },
+        data: {
+          nodes: [
+            dataNode('2:20', 'dataset', 'Orders'),
+            dataNode('2:21', 'field', 'Label', '2:20'),
+          ],
+          truncated: false,
+        },
+      },
+      authoring: {
+        ...message.authoring,
+        datasets: [
+          {
+            id: '2:20',
+            name: 'Orders',
+            fields: [
+              {
+                id: '2:21',
+                name: 'Label',
+                type: 'text',
+              },
+            ],
+          },
+        ],
+      },
+      viewBinding: {
+        viewId: 'view-1',
+        documentLifetimeId: 'document-1',
+        contextGeneration: 1,
+      },
+    });
+    await settle();
+    const component = fixture.componentInstance;
+    host.ingest({
+      protocol: 2,
+      kind: 'nativeAction',
+      requestId: 'native-data',
+      uri: 'file:///report.rdlc',
+      viewId: 'view-1',
+      documentLifetimeId: 'document-1',
+      contextGeneration: 1,
+      baseVersion: 2,
+      targetIds: ['2:21'],
+      action: 'select',
+      capability: 'select',
+      primaryId: '2:21',
+      additive: false,
+    });
+    await settle();
+    expect(component.acceptedSelection().structureTargetId).toBe('2:21');
+    expect(component.structureNode()).toMatchObject({
+      id: '2:21',
+      kind: 'field',
+    });
+    expect(component.selectedDataset()?.name).toBe('Orders');
+    expect(component.selected()).toBeNull();
+    expect(component.selectedIds()).toEqual([]);
+    expect(component.view().scrollTop).toBe(0);
+    expect(component.view().scrollLeft).toBe(0);
+    expect(element.textContent).toContain('Dataset: Orders');
+    expect(
+      host
+        .sent()
+        .map(validateMessage)
+        .filter((sent) => sent?.kind === 'acceptedSelection')
+        .at(-1),
+    ).toMatchObject({
+      selection: { mode: 'structure', targetId: '2:21' },
+    });
+    expect(
+      host
+        .sent()
+        .map(validateMessage)
+        .filter(
+          (sent) =>
+            sent?.kind === 'actionOutcome' && sent.requestId === 'native-data',
+        ),
+    ).toHaveLength(1);
+  });
+
+  it('keeps a uniquely named Data target, clears a deleted, ambiguous or retyped one with feedback', async () => {
+    const { fixture, host, element, settle } = mount();
+    const version = (value: number, datasets: readonly NavigationNode[]) => ({
+      ...directSnapshot(value, `${value}:4`),
+      navigation: {
+        version: value,
+        structure: { nodes: [], truncated: false },
+        data: { nodes: [...datasets], truncated: false },
+      },
+      authoring: {
+        ...directSnapshot(value, `${value}:4`).authoring,
+        datasets: datasets
+          .filter((node) => node.kind === 'dataset')
+          .map((node) => ({ id: node.id, name: node.name!, fields: [] })),
+      },
+    });
+    const component = fixture.componentInstance;
+    host.ingest(version(2, [dataNode('2:20', 'dataset', 'Orders')]));
+    await settle();
+    component.selectTree({ id: '2:20', additive: false });
+    await settle();
+    expect(component.acceptedSelection().structureTargetId).toBe('2:20');
+    expect(component.selectionLost()).toBe(false);
+    // Unique named ancestry keeps the definition across an independent version.
+    host.ingest(version(3, [dataNode('3:20', 'dataset', 'Orders')]));
+    await settle();
+    expect(component.acceptedSelection().structureTargetId).toBe('3:20');
+    expect(component.selectionLost()).toBe(false);
+    // Two datasets with the same identity are ambiguous: clear and say so.
+    host.ingest(
+      version(4, [
+        dataNode('4:20', 'dataset', 'Orders'),
+        dataNode('4:21', 'dataset', 'Orders'),
+      ]),
+    );
+    await settle();
+    expect(component.acceptedSelection().structureTargetId ?? null).toBeNull();
+    expect(component.selectionLost()).toBe(true);
+    expect(element.textContent).toContain('Selection cleared');
+    // Deleting the remaining definition also clears instead of guessing.
+    host.ingest(version(5, [dataNode('5:20', 'dataset', 'Orders')]));
+    await settle();
+    component.selectTree({ id: '5:20', additive: false });
+    await settle();
+    host.ingest(version(6, []));
+    await settle();
+    expect(component.acceptedSelection().structureTargetId ?? null).toBeNull();
+    expect(component.selectionLost()).toBe(true);
+    // A changed expanded type is a different definition, same kind and name.
+    host.ingest(
+      version(7, [
+        dataNode('7:20', 'opaque', 'Thing', null, '{urn:one}Widget'),
+      ]),
+    );
+    await settle();
+    component.selectTree({ id: '7:20', additive: false });
+    await settle();
+    expect(component.acceptedSelection().structureTargetId).toBe('7:20');
+    host.ingest(
+      version(8, [
+        dataNode('8:20', 'opaque', 'Thing', null, '{urn:two}Widget'),
+      ]),
+    );
+    await settle();
+    expect(component.acceptedSelection().structureTargetId ?? null).toBeNull();
+    expect(component.selectionLost()).toBe(true);
+    expect(element.textContent).toContain('Selection cleared');
+  });
+
   it('preserves raw expressions/colors on initialization and expansion and associates refusal with accepted fields', async () => {
     const { fixture, host, element, settle } = mount();
     const snapshot = directSnapshot();
@@ -625,6 +1388,7 @@ describe('editor surface', () => {
     host.ingest({
       ...blank,
       version: 3,
+      navigation: { ...blank.navigation, version: 3 },
       scene: {
         ...blank.scene,
         version: 3,
@@ -765,6 +1529,38 @@ describe('editor surface', () => {
             ]),
           ),
         })),
+      },
+    };
+  }
+
+  /** A validated snapshot from a host that publishes authoring without navigation. */
+  function authoringOnly(
+    version: number,
+    datasets: AuthoringState['datasets'],
+  ): Record<string, unknown> {
+    const message: Record<string, unknown> = {
+      ...directSnapshot(version, `${version}:4`),
+    };
+    delete message['navigation'];
+    message['authoring'] = { ...(message['authoring'] as object), datasets };
+    return message;
+  }
+
+  /** A snapshot whose Data projection carries the given definitions. */
+  function dataSnapshot(version: number, datasets: readonly NavigationNode[]) {
+    const direct = directSnapshot(version, `${version}:4`);
+    return {
+      ...direct,
+      navigation: {
+        version,
+        structure: { nodes: [], truncated: false },
+        data: { nodes: [...datasets], truncated: false },
+      },
+      authoring: {
+        ...direct.authoring,
+        datasets: datasets
+          .filter((node) => node.kind === 'dataset')
+          .map((node) => ({ id: node.id, name: node.name!, fields: [] })),
       },
     };
   }
@@ -1057,6 +1853,7 @@ describe('editor surface', () => {
       const next = {
         ...initial,
         version: 3,
+        navigation: { ...initial.navigation, version: 3 },
         scene: {
           ...initial.scene,
           version: 3,
@@ -1324,6 +2121,7 @@ describe('editor surface', () => {
     host.ingest({
       ...initial,
       version: 3,
+      navigation: { ...initial.navigation, version: 3 },
       scene: {
         ...initial.scene,
         version: 3,
@@ -1342,6 +2140,7 @@ describe('editor surface', () => {
     host.ingest({
       ...initial,
       version: 4,
+      navigation: { ...initial.navigation, version: 4 },
       scene: { ...initial.scene, version: 4, items: [{ ...b, id: '4:1' }] },
     });
     await settle();

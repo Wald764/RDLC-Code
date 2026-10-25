@@ -464,6 +464,7 @@
         <div class="pane-body">
           <rdlc-structure-tree
             [structure]="host.snapshot()?.structure ?? null"
+            [data]="host.snapshot()?.navigation?.data ?? null"
             [autoExpand]="5"
             [selectedIds]="treeSelectedIds()"
             [editableIds]="treeEditableIds()"
@@ -939,6 +940,7 @@
         />
         <rdlc-structure-tree
           [structure]="snapshot.structure ?? null"
+          [data]="snapshot.navigation?.data ?? null"
           [selectedIds]="treeSelectedIds()"
           (select)="selectTree($event)"
           (source)="openSource()"

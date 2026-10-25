@@ -253,6 +253,7 @@ describe('per-view state restore', () => {
       gridSnap: 'yes',
       guidesVisible: true,
       guidesSnap: false,
+      leftVisible: true,
     });
     expect(restored.state).toEqual({
       ...defaultViewState,
@@ -261,6 +262,8 @@ describe('per-view state restore', () => {
       unit: 'mm',
       gridVisible: false,
       guidesSnap: false,
+      // An explicit fallback preference survives the compact default.
+      leftVisible: true,
     });
     expect(restored.invalid).toEqual([
       'scrollTop',

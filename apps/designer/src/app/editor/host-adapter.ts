@@ -9,6 +9,7 @@ import {
   type ClipboardRequestMessage,
   type NavigationSelection,
   type NativeActionMessage,
+  type NavigationProjection,
   type ReportStructure,
   type ViewIdentity,
 } from '@rdlc/report-model/protocol';
@@ -88,6 +89,8 @@ export class HostAdapter {
   /** The scene replaced by the latest snapshot, for structural selection reconciliation only. */
   readonly previousScene = signal<DesignScene | null>(null);
   readonly previousStructure = signal<ReportStructure | null>(null);
+  /** The Data projection replaced by the latest snapshot, for data-target reconciliation. */
+  readonly previousData = signal<NavigationProjection | null>(null);
   readonly sent = signal<readonly unknown[]>([]);
   readonly notice = signal('');
   readonly pending = signal<{
@@ -197,6 +200,7 @@ export class HostAdapter {
       }
       this.previousScene.set(previous?.scene ?? null);
       this.previousStructure.set(previous?.structure ?? null);
+      this.previousData.set(previous?.navigation?.data ?? null);
       this.snapshot.set({
         version: message.version,
         status: message.projection.status,

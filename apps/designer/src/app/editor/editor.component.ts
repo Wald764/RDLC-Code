@@ -409,6 +409,8 @@ export class EditorComponent {
   private pointerGuard = false;
   private submitted: EventTarget | null = null;
   private focusedControl: HTMLElement | null = null;
+  /** Control that owned focus when a pending edit started; `undefined` = no cycle. */
+  private pendingFocus: HTMLElement | null | undefined = undefined;
   private refusedForm: { requestId: string; form: HTMLFormElement } | null =
     null;
   private readonly reconciled = computed(() => {
@@ -441,12 +443,25 @@ export class EditorComponent {
     const empty = { selection: emptySelection(version ?? 0), lost: false };
     const previous = this.host.previousScene();
     if (selection.structureTargetId && !this.host.pending() && snapshot) {
-      const next = reconcileStructureSelection(
-        selection,
-        this.host.previousStructure()?.nodes ?? [],
-        snapshot.structure?.nodes ?? [],
-        snapshot.version,
-      );
+      // Data definitions reconcile against Data; structural targets against Structure.
+      const target = selection.structureTargetId;
+      const beforeData = this.host.previousData()?.nodes ?? [];
+      const afterData = snapshot.navigation?.data.nodes ?? [];
+      const next =
+        beforeData.some((node) => node.id === target) ||
+        afterData.some((node) => node.id === target)
+          ? reconcileStructureSelection(
+              selection,
+              beforeData,
+              afterData,
+              snapshot.version,
+            )
+          : reconcileStructureSelection(
+              selection,
+              this.host.previousStructure()?.nodes ?? [],
+              snapshot.structure?.nodes ?? [],
+              snapshot.version,
+            );
       return next ? { selection: next, lost: false } : { ...empty, lost: true };
     }
     // Own pending results resolve through their mapping; never guess by name meanwhile.
@@ -476,14 +491,31 @@ export class EditorComponent {
             ),
         ) ?? null,
   );
-  readonly structureNode = computed(
-    () =>
-      this.host
-        .snapshot()
-        ?.structure?.nodes.find(
-          (node) => node.id === this.acceptedSelection().structureTargetId,
-        ) ?? null,
-  );
+  /** Selected target facts for the native inspector; Data resolves first and never adds bounds. */
+  readonly structureNode = computed(() => {
+    const target = this.acceptedSelection().structureTargetId;
+    const snapshot = this.host.snapshot();
+    if (!target || !snapshot) return null;
+    const data = snapshot.navigation?.data.nodes.find(
+      (node) => node.id === target,
+    );
+    if (data)
+      return {
+        id: data.id,
+        kind: data.kind,
+        label: data.label,
+        preservedReason: data.opaqueReason,
+      };
+    const node = snapshot.structure?.nodes.find((node) => node.id === target);
+    return node
+      ? {
+          id: node.id,
+          kind: node.kind,
+          label: node.label,
+          preservedReason: node.preservedReason,
+        }
+      : null;
+  });
   readonly treeSelectedIds = computed(() => {
     const selection = this.acceptedSelection();
     return selection.structureTargetId
@@ -667,9 +699,32 @@ export class EditorComponent {
     effect(() => {
       this.scene();
       this.host.snapshot();
+      const pending = this.host.pending();
+      // A pending edit disables the inspector fieldset, so the browser drops
+      // focus to the body; remember who owned it while the edit is in flight.
+      if (pending && this.pendingFocus === undefined) {
+        const active = document.activeElement;
+        this.pendingFocus =
+          active instanceof HTMLElement && root.contains(active)
+            ? active
+            : null;
+      }
+      const settled = !pending ? this.pendingFocus : undefined;
+      if (!pending) this.pendingFocus = undefined;
       afterNextRender(
         () => {
           this.configureToolbar();
+          if (
+            settled &&
+            document.activeElement === document.body &&
+            settled.isConnected &&
+            !settled.matches(':disabled')
+          ) {
+            settled.focus({ preventScroll: true });
+            // A hidden control ignores focus(); never leave focus on the body.
+            if (document.activeElement === document.body)
+              this.viewport()?.nativeElement.focus({ preventScroll: true });
+          }
           const previous = this.focusedControl;
           if (
             previous &&
@@ -753,10 +808,9 @@ export class EditorComponent {
       const index =
         snapshot.scene?.items.findIndex((item) => item.id === created.id) ?? -1;
       if (index >= 0) this.select(index);
+      // Authoring alone never claims a target reconciliation cannot re-resolve.
       else if (
-        snapshot.authoring?.datasets.some(
-          (dataset) => dataset.id === created.id,
-        )
+        snapshot.navigation?.data.nodes.some((node) => node.id === created.id)
       ) {
         this.selection.set({
           ...emptySelection(snapshot.version),
@@ -1151,10 +1205,10 @@ export class EditorComponent {
 
   selectTree(target: { id: string; additive: boolean }): void {
     if (this.host.pending() || this.held(() => this.selectTree(target))) return;
+    const snapshot = this.host.snapshot();
     if (
-      !this.host
-        .snapshot()
-        ?.structure?.nodes.some((node) => node.id === target.id)
+      !snapshot?.structure?.nodes.some((node) => node.id === target.id) &&
+      !snapshot?.navigation?.data.nodes.some((node) => node.id === target.id)
     )
       return;
     this.cancelNativeProperties();
@@ -1165,7 +1219,7 @@ export class EditorComponent {
         target.id,
         this.scene()?.items ?? [],
         target.additive,
-        this.host.snapshot()?.structure?.nodes ?? [],
+        snapshot.structure?.nodes ?? [],
       ),
     );
     // Data and structural targets have no canvas geometry to reveal.
@@ -1217,7 +1271,7 @@ export class EditorComponent {
     else this.viewport()?.nativeElement.focus({ preventScroll: true });
   }
 
-  /** Delete entries for a dataset or field targeted in Structure, using the existing guarded actions. */
+  /** Delete entries for a dataset or field targeted in Data, using the existing guarded actions. */
   private dataDeletion(
     busy: string,
   ): { label: string; reason: string; run: () => void }[] {
@@ -1306,10 +1360,17 @@ export class EditorComponent {
   ): void {
     this.revealPanel('right');
     afterNextRender(
-      () =>
-        this.element.nativeElement
-          .querySelector<HTMLElement>(selector)
-          ?.focus(),
+      () => {
+        // Document order puts the panel chrome before the fields, so the first
+        // field has to win; otherwise the panel button steals focus from it.
+        const matches = [
+          ...this.element.nativeElement.querySelectorAll<HTMLElement>(selector),
+        ];
+        const target =
+          matches.find((element) => element.matches('input:not(:disabled)')) ??
+          matches[0];
+        target?.focus();
+      },
       { injector: this.injector },
     );
   }
@@ -1879,7 +1940,9 @@ export class EditorComponent {
       }
       if (this.overlay()) {
         this.overlay.set(null);
-        this.overlayInvoker?.focus({ preventScroll: true });
+        const invoker = this.overlayInvoker;
+        if (invoker?.isConnected) invoker.focus({ preventScroll: true });
+        else this.viewport()?.nativeElement.focus({ preventScroll: true });
         return;
       }
       if (this.conflict()) this.cancelConflict();
@@ -2740,6 +2803,10 @@ export class EditorComponent {
   /** Property-field commit (Enter/change); never while a draft decision or pointer action is pending. */
   commit(edit: TextboxCommit): void {
     if (this.conflict() || this.pointerGuard) return;
+    // A field of an older version's item (Chromium fires `change` when a dirty
+    // focused field is removed by a rebuild) never edits its successor.
+    if (edit.targetId !== undefined && edit.targetId !== this.selected()?.id)
+      return;
     this.sendCommit(edit);
   }
 

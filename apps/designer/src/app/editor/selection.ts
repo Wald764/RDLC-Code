@@ -42,6 +42,33 @@ export function selectItem(
   };
 }
 
+/** Identity shared by Structure rows and Data definition rows. */
+export interface MappableNode {
+  readonly id: string;
+  readonly parentId: string | null;
+  readonly kind: string;
+  readonly name: string | null;
+  /** Expanded XML type (`{namespace}Local`) when the projection provides it. */
+  readonly expandedName?: string;
+}
+
+/**
+ * The expanded type a row identifies as: Data rows carry the real XML name, so a
+ * namespace or element change is a different definition. Legacy Structure rows
+ * carry only their kind, and a preserved/opaque row without an expanded type has
+ * no trustworthy type at all — it never maps rather than guessing from the name.
+ */
+function expandedType(node: MappableNode): string | null {
+  if (node.expandedName) return node.expandedName;
+  return node.kind === 'preserved' || node.kind === 'opaque' ? null : node.kind;
+}
+
+/**
+ * The unnamed structural spine named by the Data Model: report, sections,
+ * section and body may keep tree expansion. Content and Data kinds never do.
+ */
+const expandableUnnamed = new Set(['report', 'sections', 'section', 'body']);
+
 export function selectStructure(
   selection: Selection,
   id: string,
@@ -71,28 +98,35 @@ export function selectStructure(
     : { ...emptySelection(selection.version), structureTargetId: id };
 }
 
-/** Named ancestry must be unique in both versions; unnamed ancestors contribute type only. */
+/**
+ * Expanded type, declared name and ancestry must be unique in both versions;
+ * unnamed ancestors contribute type only.
+ */
 export function structureMappings(
-  from: readonly StructureNode[],
-  to: readonly StructureNode[],
+  from: readonly MappableNode[],
+  to: readonly MappableNode[],
   /**
    * View state only (tree expansion): also map unnamed nodes whose kind and
-   * ancestry are unique, e.g. Report/ReportSections/Body. Never for selection.
+   * ancestry are unique, but only for the unnamed structural spine. Never for
+   * selection.
    */
   unnamed = false,
 ): TargetMapping[] {
-  const identities = (nodes: readonly StructureNode[]) => {
+  const identities = (nodes: readonly MappableNode[]) => {
     const byId = new Map(nodes.map((node) => [node.id, node]));
     const keys = new Map<string, string>();
     const unique = new Map<string, string | null>();
     for (const node of nodes) {
+      const type = expandedType(node);
+      // No expanded type: no identity, and its descendants are pruned below.
+      if (type === null) continue;
       const ancestors: string[] = [];
       let parent = node.parentId ? byId.get(node.parentId) : undefined;
       while (parent) {
-        ancestors.unshift(`${parent.kind}:${parent.name ?? ''}`);
+        ancestors.unshift(`${expandedType(parent) ?? ''}:${parent.name ?? ''}`);
         parent = parent.parentId ? byId.get(parent.parentId) : undefined;
       }
-      const key = JSON.stringify([ancestors, node.kind, node.name]);
+      const key = JSON.stringify([ancestors, type, node.name]);
       keys.set(node.id, key);
       unique.set(key, unique.has(key) ? null : node.id);
     }
@@ -111,7 +145,9 @@ export function structureMappings(
   return from.map((node) => {
     const key = before.keys.get(node.id);
     const resultId =
-      key && (node.name || unnamed) && before.unique.get(key)
+      key &&
+      (node.name || (unnamed && expandableUnnamed.has(node.kind))) &&
+      before.unique.get(key)
         ? (after.unique.get(key) ?? null)
         : null;
     return {
@@ -123,8 +159,8 @@ export function structureMappings(
 
 export function reconcileStructureSelection(
   selection: Selection,
-  from: readonly StructureNode[],
-  to: readonly StructureNode[],
+  from: readonly MappableNode[],
+  to: readonly MappableNode[],
   version: number,
 ): Selection | null {
   const result = structureMappings(from, to).find(
@@ -222,7 +258,9 @@ export function hitTest(
 
 /** Structural identity for independent versions: name, kind and parent; never an ordinal or ID. */
 function identity(item: DesignSceneItem, scene: DesignScene): string | null {
-  if (!item.name) return null;
+  // The scene carries no expanded type for preserved content, so kind and name
+  // never prove that two versions hold the same element.
+  if (!item.name || item.kind === 'preserved') return null;
   const parent = item.parentTableId
     ? scene.items.find((i) => i.id === item.parentTableId)?.name
     : '';

@@ -1,8 +1,13 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  ElementRef,
+  computed,
+  effect,
+  inject,
   input,
   output,
+  untracked,
 } from '@angular/core';
 import type { TextboxProperty } from '@rdlc/report-model/editing';
 import type { DesignSceneItem, SceneTextStyle } from '@rdlc/report-model/scene';
@@ -11,6 +16,8 @@ import type { InspectorSection } from '../editor/viewport';
 export interface TextboxCommit {
   readonly property: TextboxProperty;
   readonly value: string;
+  /** The version-local item the field belonged to when it emitted. */
+  readonly targetId?: string;
 }
 interface Field {
   readonly property: TextboxProperty;
@@ -43,6 +50,32 @@ export class TextboxPropertiesComponent {
   /** Per-view section expansion; absent sections default open. */
   readonly expanded = input<Partial<Record<InspectorSection, boolean>>>({});
   readonly expand = output<{ section: InspectorSection; open: boolean }>();
+
+  /** Accepted identity and values; a re-emitted equal item is not new. */
+  private readonly accepted = computed(() =>
+    JSON.stringify([
+      this.item().id,
+      ...this.fields.map((field) => this.current(field.property)),
+    ]),
+  );
+
+  constructor() {
+    // A newer accepted item supersedes typed text: `[value]` rewrites a control
+    // only when its bound value changes, so a reload keeping that value would
+    // otherwise leave the obsolete draft in place for its next blur to commit.
+    const host = inject<ElementRef<HTMLElement>>(ElementRef);
+    effect(() => {
+      this.accepted();
+      untracked(() => {
+        for (const control of host.nativeElement.querySelectorAll<
+          HTMLInputElement | HTMLSelectElement
+        >('[data-property]'))
+          control.value = this.current(
+            control.dataset['property'] as TextboxProperty,
+          );
+      });
+    });
+  }
 
   readonly fields: readonly Field[] = [
     { property: 'name', label: 'Name', kind: 'text', options: none },
@@ -143,7 +176,7 @@ export class TextboxPropertiesComponent {
   submit(property: TextboxProperty, event: Event): void {
     const value = (event.target as HTMLInputElement | HTMLSelectElement).value;
     if (value === this.current(property)) return;
-    this.commit.emit({ property, value });
+    this.commit.emit({ property, value, targetId: this.item().id });
   }
 
   cancel(property: TextboxProperty, event: Event): void {

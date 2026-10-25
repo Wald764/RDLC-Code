@@ -1,7 +1,10 @@
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { StructureTreeComponent } from './structure-tree.component';
-import type { StructureNode } from '@rdlc/report-model/protocol';
+import type {
+  NavigationNode,
+  StructureNode,
+} from '@rdlc/report-model/protocol';
 
 const node = (
   id: string,
@@ -32,6 +35,35 @@ const nested: StructureNode[] = [
   node('1:c', 'cell', null, '1:tb'),
   node('1:p', 'preserved', null, '1:r', 'Chart is opaque'),
 ];
+
+/** Data projection row rendered through the same tree view. */
+const dataNode = (
+  id: string,
+  kind: NavigationNode['kind'],
+  name: string | null,
+  parentId: string | null = null,
+  expandedName?: string,
+): NavigationNode => {
+  const expanded =
+    expandedName ??
+    `{urn:rdlc-code:report}${kind === 'dataset' ? 'DataSet' : kind === 'field' ? 'Field' : kind}`;
+  const local = expanded.split('}').at(-1)!;
+  return {
+    id,
+    parentId,
+    sourceOrder: 0,
+    range: { start: 0, end: 0 },
+    expandedName: expanded,
+    name,
+    kind,
+    label: name ? `${local}: ${name}` : local,
+    opaqueReason: null,
+    capabilities: [
+      { operation: 'inspect', eligible: true, reason: null },
+      { operation: 'select', eligible: true, reason: null },
+    ],
+  };
+};
 
 describe('Structure keyboard navigation', () => {
   it('uses one roving stop, expands ancestors, navigates and selects without mutation', () => {
@@ -257,9 +289,8 @@ describe('Structure keyboard navigation', () => {
     expect(selections).toEqual([]);
   });
   it('keeps unnamed section ancestors expanded across a version that removes a dataset', () => {
-    const version = (v: number, withDataset: boolean): StructureNode[] => [
+    const version = (v: number): StructureNode[] => [
       node(`${v}:1`, 'report', null, null),
-      ...(withDataset ? [node(`${v}:2`, 'dataset', 'Orders', `${v}:1`)] : []),
       node(`${v}:3`, 'sections', null, `${v}:1`),
       node(`${v}:4`, 'section', null, `${v}:3`),
       node(`${v}:5`, 'body', null, `${v}:4`),
@@ -267,7 +298,11 @@ describe('Structure keyboard navigation', () => {
     ];
     const fixture = TestBed.createComponent(StructureTreeComponent);
     fixture.componentRef.setInput('structure', {
-      nodes: version(1, true),
+      nodes: version(1),
+      truncated: false,
+    });
+    fixture.componentRef.setInput('data', {
+      nodes: [dataNode('1:2', 'dataset', 'Orders', '1:1')],
       truncated: false,
     });
     fixture.componentRef.setInput('autoExpand', 5);
@@ -278,11 +313,84 @@ describe('Structure keyboard navigation', () => {
         n.getAttribute('data-node'),
       );
     expect(visible()).toContain('1:6');
+    expect(visible()).toContain('1:2');
     fixture.componentRef.setInput('structure', {
-      nodes: version(2, false),
+      nodes: version(2),
+      truncated: false,
+    });
+    fixture.componentRef.setInput('data', { nodes: [], truncated: false });
+    fixture.detectChanges();
+    expect(visible()).toEqual(['2:1', '2:3', '2:4', '2:5', '2:6']);
+  });
+  it('renders Data definitions beside Structure rows with honest status and selection', () => {
+    const fixture = TestBed.createComponent(StructureTreeComponent);
+    fixture.componentRef.setInput('structure', { nodes, truncated: false });
+    fixture.componentRef.setInput('data', {
+      nodes: [
+        dataNode('1:d', 'dataset', 'Orders'),
+        dataNode('1:f', 'field', 'Label', '1:d'),
+      ],
+      truncated: false,
+    });
+    fixture.componentRef.setInput('autoExpand', 5);
+    fixture.componentRef.setInput('editableIds', ['1:d', '1:f']);
+    fixture.componentRef.setInput('selectedIds', ['1:d']);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const rows = () => [
+      ...root.querySelectorAll<HTMLElement>('[role=treeitem]'),
+    ];
+    expect(rows()).toHaveLength(5);
+    expect(root.textContent).toContain('DataSet (Orders)');
+    expect(root.textContent).toContain('Supported editing available');
+    expect(root.textContent).not.toContain('not included');
+    expect(
+      root.querySelector('[data-node="1:d"]')?.getAttribute('aria-selected'),
+    ).toBe('true');
+    const selected: unknown[] = [];
+    fixture.componentInstance.select.subscribe((value) => selected.push(value));
+    root.querySelector<HTMLElement>('[data-node="1:d"]')!.click();
+    expect(selected).toEqual([{ id: '1:d', additive: false }]);
+    fixture.componentRef.setInput('data', {
+      nodes: [dataNode('1:d', 'dataset', 'Orders')],
+      truncated: true,
+    });
+    fixture.detectChanges();
+    expect(root.textContent).toContain('Data is incomplete');
+    fixture.destroy();
+  });
+  it('keys Data expansion by the expanded type, not by kind and name alone', () => {
+    const family = (v: number, namespace: string): NavigationNode[] => [
+      dataNode(`${v}:g`, 'opaque', 'Group', null, `{${namespace}}Group`),
+      dataNode(`${v}:c`, 'opaque', 'Item', `${v}:g`, '{urn:rdlc}Item'),
+    ];
+    const fixture = TestBed.createComponent(StructureTreeComponent);
+    fixture.componentRef.setInput('structure', { nodes: [], truncated: false });
+    fixture.componentRef.setInput('data', {
+      nodes: family(1, 'urn:one'),
+      truncated: false,
+    });
+    fixture.componentRef.setInput('autoExpand', 5);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const visible = () =>
+      [...root.querySelectorAll('[role=treeitem]')].map((row) =>
+        row.getAttribute('data-node'),
+      );
+    expect(visible()).toEqual(['1:g', '1:c']);
+    fixture.componentRef.setInput('data', {
+      nodes: family(2, 'urn:one'),
       truncated: false,
     });
     fixture.detectChanges();
-    expect(visible()).toEqual(['2:1', '2:3', '2:4', '2:5', '2:6']);
+    expect(visible()).toEqual(['2:g', '2:c']);
+    // Same kind and name but another element: no expansion carries over.
+    fixture.componentRef.setInput('data', {
+      nodes: family(3, 'urn:two'),
+      truncated: false,
+    });
+    fixture.detectChanges();
+    expect(visible()).toEqual(['3:g']);
+    fixture.destroy();
   });
 });

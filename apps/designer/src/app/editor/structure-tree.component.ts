@@ -13,11 +13,23 @@ import {
   untracked,
 } from '@angular/core';
 import type {
+  NavigationProjection,
   ReportStructure,
-  StructureNode,
 } from '@rdlc/report-model/protocol';
 import { structureMappings } from './selection';
 import { IconComponent, iconFor } from './icon.component';
+
+/** One tree row, shared by Structure entries and adapted Data definitions. */
+interface TreeRow {
+  readonly id: string;
+  readonly parentId: string | null;
+  readonly kind: string;
+  readonly label: string;
+  readonly name: string | null;
+  readonly preservedReason: string | null;
+  /** Retained from Data so expansion/focus keeps the same identity honesty. */
+  readonly expandedName?: string;
+}
 
 @Component({
   selector: 'rdlc-structure-tree',
@@ -95,6 +107,11 @@ import { IconComponent, iconFor } from './icon.component';
         Structure is incomplete. Use Code XML for the complete report.
       </p>
     }
+    @if (data()?.truncated) {
+      <p class="note">
+        Data is incomplete. Use Code XML for the complete definitions.
+      </p>
+    }
     @if (omitted()) {
       <p class="note">
         The selected target is not included in Structure. Selection is retained;
@@ -164,6 +181,8 @@ import { IconComponent, iconFor } from './icon.component';
 })
 export class StructureTreeComponent {
   readonly structure = input<ReportStructure | null>(null);
+  /** Data definitions shown beside Structure through the same row view. */
+  readonly data = input<NavigationProjection | null>(null);
   readonly selectedIds = input<readonly string[]>([]);
   readonly editableIds = input<readonly string[]>([]);
   /** Levels opened when a report first loads; later expansion is the author's. */
@@ -176,14 +195,28 @@ export class StructureTreeComponent {
   readonly focused = signal<string | null>(null);
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly injector = inject(Injector);
-  private previous: readonly StructureNode[] = [];
+  private previous: readonly TreeRow[] = [];
+  /** Structure rows first, then Data definitions parent-before-child. */
+  readonly rows = computed<readonly TreeRow[]>(() => {
+    const data = this.data()?.nodes ?? [];
+    return [
+      ...(this.structure()?.nodes ?? []),
+      ...data.map((node) => ({
+        id: node.id,
+        parentId: node.parentId,
+        kind: node.kind,
+        label: node.label,
+        name: node.name,
+        preservedReason: node.opaqueReason,
+        expandedName: node.expandedName,
+      })),
+    ];
+  });
   readonly omitted = computed(() =>
-    this.selectedIds().some(
-      (id) => !this.structure()?.nodes.some((node) => node.id === id),
-    ),
+    this.selectedIds().some((id) => !this.rows().some((row) => row.id === id)),
   );
   readonly visible = computed(() => {
-    const nodes = this.structure()?.nodes ?? [];
+    const nodes = this.rows();
     const visible = new Set<string>();
     return nodes.filter((node) => {
       const show =
@@ -195,7 +228,7 @@ export class StructureTreeComponent {
   });
   constructor() {
     effect(() => {
-      const nodes = this.structure()?.nodes ?? [];
+      const nodes = this.rows();
       const selected = this.selectedIds();
       untracked(() => {
         let expanded = new Set(this.expanded());
@@ -254,17 +287,17 @@ export class StructureTreeComponent {
     return iconFor(kind);
   }
   /** "Textbox (Title)" for named nodes, the structural label otherwise. */
-  display(node: StructureNode): string {
+  display(node: TreeRow): string {
     const kind = node.label.split(': ')[0]!;
     return node.name ? `${kind} (${node.name})` : node.label;
   }
   hasChildren(id: string): boolean {
-    return !!this.structure()?.nodes.some((node) => node.parentId === id);
+    return !!this.rows().some((row) => row.parentId === id);
   }
-  /** Parents precede children in structure order, as `visible` already relies on. */
+  /** Parents precede children in row order, as `visible` already relies on. */
   readonly levels = computed(() => {
     const levels = new Map<string, number>();
-    for (const node of this.structure()?.nodes ?? [])
+    for (const node of this.rows())
       levels.set(node.id, (levels.get(node.parentId ?? '') ?? 0) + 1);
     return levels;
   });

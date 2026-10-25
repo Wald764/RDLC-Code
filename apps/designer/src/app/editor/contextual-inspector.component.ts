@@ -5,10 +5,7 @@ import {
   output,
 } from '@angular/core';
 import type { DesignScene, DesignSceneItem } from '@rdlc/report-model/scene';
-import type {
-  AuthoringState,
-  StructureNode,
-} from '@rdlc/report-model/protocol';
+import type { AuthoringState } from '@rdlc/report-model/protocol';
 import type { AuthoringRequest } from '@rdlc/report-model/editing';
 import type { InspectorSection } from './viewport';
 import { DatasetsComponent } from '../datasets/datasets.component';
@@ -17,6 +14,14 @@ import {
   TextboxPropertiesComponent,
   type TextboxCommit,
 } from '../properties/textbox-properties.component';
+
+/** Selected Data or Structure target; data/structural targets never carry scene bounds. */
+export interface SelectedTarget {
+  readonly id: string;
+  readonly kind: string;
+  readonly label: string;
+  readonly preservedReason: string | null;
+}
 
 @Component({
   selector: 'rdlc-contextual-inspector',
@@ -140,7 +145,7 @@ export class ContextualInspectorComponent {
   readonly count = input(0);
   readonly refusal = input('');
   readonly dataset = input<AuthoringState['datasets'][number] | null>(null);
-  readonly structureNode = input<StructureNode | null>(null);
+  readonly structureNode = input<SelectedTarget | null>(null);
   readonly expanded = input<Partial<Record<InspectorSection, boolean>>>({});
   readonly commit = output<TextboxCommit>();
   readonly expand = output<{ section: InspectorSection; open: boolean }>();

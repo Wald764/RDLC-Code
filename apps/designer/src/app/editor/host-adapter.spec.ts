@@ -58,6 +58,20 @@ const item: DesignSceneItem = {
   bounds: { left: 0, top: 0, width: 10, height: 10 },
 };
 
+/** Authoritative Data row accepted as a known structural/data target. */
+const dataRow = (id: string, kind: 'dataset' | 'field', name: string) => ({
+  id,
+  parentId: null,
+  sourceOrder: 0,
+  range: { start: 0, end: 1 },
+  expandedName: '{urn:report}DataSet',
+  name,
+  kind,
+  label: `DataSet: ${name}`,
+  opaqueReason: null,
+  capabilities: [{ operation: 'select', eligible: true, reason: null }],
+});
+
 function outcomes(host: HostAdapter) {
   return host
     .sent()
@@ -126,6 +140,38 @@ describe('native action ingestion', () => {
         .sent()
         .some((message) => (message as { kind: string }).kind === 'edit'),
     ).toBe(false);
+  });
+  it('treats a Data definition as a known structural target and tracks it for reconciliation', () => {
+    const host = TestBed.inject(HostAdapter);
+    host.bindView('view-1', 'life-1', 0);
+    host.ingest({
+      ...snapshot(2),
+      navigation: {
+        version: 2,
+        structure: { nodes: [], truncated: false },
+        data: {
+          nodes: [dataRow('2:20', 'dataset', 'Orders')],
+          truncated: false,
+        },
+      },
+    });
+    expect(
+      host.publishSelection({
+        ...emptySelection(2),
+        structureTargetId: '2:20',
+      }),
+    ).toBe(true);
+    expect(host.sent().at(-1)).toMatchObject({
+      kind: 'acceptedSelection',
+      selection: { mode: 'structure', targetId: '2:20' },
+    });
+    host.ingest({ ...nativeAction, targetIds: ['2:20'], primaryId: '2:20' });
+    expect(host.nativeAction()?.requestId).toBe('native-1');
+    host.ingest(snapshot(3));
+    expect(host.previousData()?.nodes.map((node) => node.id)).toEqual(['2:20']);
+    expect(host.previousStructure()?.nodes.map((node) => node.id)).toEqual([
+      '2:1',
+    ]);
   });
   it('host cancellation ends only its captured action and never replays it', () => {
     const host = setup();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DesignSceneItem } from '@rdlc/report-model/scene';
+import type { DesignScene, DesignSceneItem } from '@rdlc/report-model/scene';
 import {
   emptySelection,
   selectItem,
@@ -7,10 +7,15 @@ import {
   marqueeSelection,
   mapSelection,
   hitTest,
+  reconcileSelection,
   selectStructure,
   reconcileStructureSelection,
+  structureMappings,
 } from './selection';
-import type { StructureNode } from '@rdlc/report-model/protocol';
+import type {
+  NavigationNode,
+  StructureNode,
+} from '@rdlc/report-model/protocol';
 
 const node = (
   id: string,
@@ -25,6 +30,21 @@ const node = (
   label: name ?? kind,
   range: { start: 0, end: 0 },
   preservedReason: null,
+});
+
+/** Data projection rows carry only the identity reconciliation needs. */
+const dataRow = (
+  id: string,
+  kind: NavigationNode['kind'],
+  name: string | null,
+  parentId: string | null = null,
+  expandedName?: string,
+) => ({
+  id,
+  kind,
+  name,
+  parentId,
+  ...(expandedName ? { expandedName } : {}),
 });
 
 describe('version-scoped structural selection', () => {
@@ -45,32 +65,32 @@ describe('version-scoped structural selection', () => {
       '1:4',
     );
   });
-  it('retains only unique dataset/field identities in both versions, never IDs or positions', () => {
+  it('retains only unique dataset/field identities from Data in both versions, never IDs or positions', () => {
     const before = [
-      node('1:d', 'dataset', 'Sales'),
-      node('1:f', 'field', 'Amount', '1:d'),
+      dataRow('1:d', 'dataset', 'Sales'),
+      dataRow('1:f', 'field', 'Amount', '1:d'),
     ];
     const after = [
-      node('2:d', 'dataset', 'Sales'),
-      node('2:f', 'field', 'Amount', '2:d'),
+      dataRow('2:d', 'dataset', 'Sales'),
+      dataRow('2:f', 'field', 'Amount', '2:d'),
     ];
     const selection = selectStructure(emptySelection(1), '1:f', [], false);
-    expect(
-      reconcileStructureSelection(selection, before, after, 2)
-        ?.structureTargetId,
-    ).toBe('2:f');
+    const reconciled = reconcileStructureSelection(selection, before, after, 2);
+    expect(reconciled?.structureTargetId).toBe('2:f');
+    expect(reconciled?.bodyItemIds).toEqual([]);
+    expect(reconciled?.cellTargetId).toBeNull();
     expect(
       reconcileStructureSelection(
         selection,
         before,
-        [...after, node('2:x', 'field', 'Amount', '2:d')],
+        [...after, dataRow('2:x', 'field', 'Amount', '2:d')],
         2,
       ),
     ).toBeNull();
     expect(
       reconcileStructureSelection(
         selection,
-        [...before, node('1:x', 'dataset', 'Sales')],
+        [...before, dataRow('1:x', 'dataset', 'Sales')],
         after,
         2,
       ),
@@ -87,6 +107,122 @@ describe('version-scoped structural selection', () => {
       mapSelection(selection, 2, [{ sourceId: '1:f', resultId: '2:f' }])
         .structureTargetId,
     ).toBe('2:f');
+  });
+  it('preserves expansion for unnamed report/sections/section/body only, never other unnamed kinds', () => {
+    const version = (v: number): StructureNode[] => [
+      node(`${v}:r`, 'report', null),
+      node(`${v}:c`, 'sections', null, `${v}:r`),
+      node(`${v}:s`, 'section', null, `${v}:c`),
+      node(`${v}:b`, 'body', null, `${v}:s`),
+      node(`${v}:t`, 'textbox', null, `${v}:b`),
+      node(`${v}:x`, 'container', null, `${v}:b`),
+    ];
+    const expansion = new Map(
+      structureMappings(version(1), version(2), true).map(
+        (mapping) => [mapping.sourceId, mapping.resultId] as const,
+      ),
+    );
+    expect(expansion.get('1:r')).toBe('2:r');
+    expect(expansion.get('1:c')).toBe('2:c');
+    expect(expansion.get('1:s')).toBe('2:s');
+    expect(expansion.get('1:b')).toBe('2:b');
+    expect(expansion.get('1:t')).toBeNull();
+    expect(expansion.get('1:x')).toBeNull();
+    // Selection mapping never follows an unnamed identity at all.
+    const selection = new Map(
+      structureMappings(version(1), version(2)).map(
+        (mapping) => [mapping.sourceId, mapping.resultId] as const,
+      ),
+    );
+    expect([...selection.values()].filter(Boolean)).toEqual([]);
+  });
+  it('corresponds Data definitions by expanded type, name and ancestry — never by name alone', () => {
+    const widget = (id: string, namespace: string) =>
+      dataRow(id, 'opaque', 'Thing', null, `{${namespace}}Widget`);
+    const selection = selectStructure(emptySelection(1), '1:w', [], false);
+    // Same expanded type, name and ancestry: the same definition in both versions.
+    expect(
+      reconcileStructureSelection(
+        selection,
+        [widget('1:w', 'urn:one')],
+        [widget('2:w', 'urn:one')],
+        2,
+      )?.structureTargetId,
+    ).toBe('2:w');
+    // Same kind and name, different element: never map selection onto it.
+    expect(
+      reconcileStructureSelection(
+        selection,
+        [widget('1:w', 'urn:one')],
+        [widget('2:w', 'urn:two')],
+        2,
+      ),
+    ).toBeNull();
+    // Without an expanded type, kind and name alone are not an identity.
+    expect(
+      reconcileStructureSelection(
+        selectStructure(emptySelection(1), '1:o', [], false),
+        [dataRow('1:o', 'opaque', 'Thing')],
+        [dataRow('2:o', 'opaque', 'Thing')],
+        2,
+      ),
+    ).toBeNull();
+    // An ancestor whose expanded type changed invalidates its named descendant.
+    const family = (v: number, namespace: string) => [
+      dataRow(`${v}:d`, 'dataset', 'Sales', null, `{${namespace}}DataSet`),
+      dataRow(`${v}:f`, 'field', 'Amount', `${v}:d`, '{urn:rdlc}Field'),
+    ];
+    expect(
+      reconcileStructureSelection(
+        selectStructure(emptySelection(1), '1:f', [], false),
+        family(1, 'urn:one'),
+        family(2, 'urn:two'),
+        2,
+      ),
+    ).toBeNull();
+    expect(
+      reconcileStructureSelection(
+        selectStructure(emptySelection(1), '1:f', [], false),
+        family(1, 'urn:one'),
+        family(2, 'urn:one'),
+        2,
+      )?.structureTargetId,
+    ).toBe('2:f');
+  });
+  it('keeps known legacy Structure kinds mappable and fails closed without an expanded type', () => {
+    // Legacy rows carry no expanded XML name; a recognized kind stays its own type.
+    expect(
+      reconcileStructureSelection(
+        selectStructure(emptySelection(1), '1:t', [], false),
+        [node('1:t', 'textbox', 'Title')],
+        [node('2:t', 'textbox', 'Title')],
+        2,
+      )?.structureTargetId,
+    ).toBe('2:t');
+    // A preserved row exposes no expanded type, so name and kind must not decide.
+    expect(
+      reconcileStructureSelection(
+        selectStructure(emptySelection(1), '1:w', [], false),
+        [node('1:w', 'preserved', 'Widget')],
+        [node('2:w', 'preserved', 'Widget')],
+        2,
+      ),
+    ).toBeNull();
+    // A row under a type-less ancestor is equally unidentifiable.
+    expect(
+      reconcileStructureSelection(
+        selectStructure(emptySelection(1), '1:c', [], false),
+        [
+          node('1:w', 'preserved', 'Widget'),
+          node('1:c', 'preserved', 'Inner', '1:w'),
+        ],
+        [
+          node('2:w', 'preserved', 'Widget'),
+          node('2:c', 'preserved', 'Inner', '2:w'),
+        ],
+        2,
+      ),
+    ).toBeNull();
   });
 });
 
@@ -185,5 +321,55 @@ describe('ordered body selection', () => {
       '1:2',
     );
     expect(hitTest(items, 100, 100)).toBeNull();
+  });
+});
+
+describe('scene selection reconciliation', () => {
+  const frame = { left: 0, top: 0, width: 600, height: 800 };
+  const scene = (
+    version: number,
+    items: readonly DesignSceneItem[],
+  ): DesignScene => ({ version, page: frame, body: frame, items });
+  const item = (
+    id: string,
+    kind: NonNullable<DesignSceneItem['kind']>,
+    name: string | null,
+  ): DesignSceneItem => ({
+    id,
+    kind,
+    name,
+    label: name ?? kind,
+    placeholder: kind === 'preserved',
+    bounds: null,
+    sourceOrder: 0,
+  });
+
+  it('never maps a preserved item by kind and name alone, while recognized names correspond', () => {
+    const selection = selectItem(
+      emptySelection(1),
+      item('1:5', 'preserved', 'Rectangle'),
+      false,
+    );
+    // The scene carries no expanded type for preserved content, so kind and name
+    // cannot prove that two versions hold the same element.
+    expect(
+      reconcileSelection(
+        selection,
+        scene(1, [item('1:5', 'preserved', 'Rectangle')]),
+        scene(2, [item('2:5', 'preserved', 'Rectangle')]),
+      ),
+    ).toBeNull();
+    const named = selectItem(
+      emptySelection(1),
+      item('1:6', 'textbox', 'Title'),
+      false,
+    );
+    expect(
+      reconcileSelection(
+        named,
+        scene(1, [item('1:6', 'textbox', 'Title')]),
+        scene(2, [item('2:6', 'textbox', 'Title')]),
+      )?.bodyItemIds,
+    ).toEqual(['2:6']);
   });
 });
