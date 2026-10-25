@@ -34,6 +34,11 @@ the default is stable. Installed VSIX tests use an isolated profile.
 
 ### Native sidebar Desktop checks
 
+`tests/desktop/coverage.spec.ts` checks that every coverage reference names a
+nonempty executable test declaration. Comments, skipped tests and placeholder
+IDs are not assertions. Keep a row's independent oracle and fixture references
+when correcting its test titles; resolving a title is not evidence that it passed.
+
 Feature 005 adds `pnpm test:e2e` and `pnpm test:visual`. Build before running them.
 They fail closed for missing mandatory suites, references, observer capabilities
 or same-candidate evidence. A successful targeted test does not certify the full
@@ -50,10 +55,16 @@ Set `RDLC_DESKTOP_PACKAGED=true` to test the installed VSIX and
 `VSCODE_VERSION=1.142.0` or the desired stable version explicitly. The tests launch
 real Desktop profiles and use native input; screenshots and timing samples are
 diagnostics until all required comparison/coverage gates pass. The Structure
-test retains its 95/100 selections within 200ms assertion; current Windows
-measurements fail that gate. The separate native-drag probe records unavailable
-custom-MIME delivery on Windows; native activation and compact HTML drag remain
-independent functional requirements.
+test retains its 95/100 selections within 200ms assertion, sampling alternating
+native/canvas operations spaced past the host's 200ms TreeView event
+coalescing. The separate native-drag probe records unavailable custom-MIME
+delivery on Windows; native activation and compact HTML drag remain independent
+functional requirements.
+
+The full installed run takes well over an hour, opens real windows that take
+focus and is timing-sensitive, so avoid using the machine meanwhile. CI splits
+it into parallel jobs: set `RDLC_DESKTOP_GROUP` to `core`, `authoring` or
+`context` to run one disjoint slice locally; unset runs every suite.
 
 Follow the [quickstart scenarios](specs/001-rdlc-vscode-editor/quickstart.md)
 and [acceptance measurement procedure](docs/validation/acceptance.md). Record

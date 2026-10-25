@@ -1,0 +1,218 @@
+{
+  "feature": "005-native-sidebar-integration",
+  "story": "US3",
+  "recordKind": "test-first-implementation-diagnostics",
+  "eligibleForAcceptance": false,
+  "featureComplete": false,
+  "candidateInputFingerprint": null,
+  "fixtures": [
+    "sidebar-data",
+    "sidebar-data-source-only",
+    "sidebar-data-empty",
+    "sidebar-data-opaque"
+  ],
+  "oracle": "tests/fixtures/sidebar/data.expected.json",
+  "registrationVerification": {
+    "command": "node --test dist/tests/compatibility/manifest.test.js dist/tests/desktop/evidence.test.js",
+    "passed": 27,
+    "failed": 0,
+    "limitation": "These compiled tests read the newly registered manifest and fixtures but use the existing compiled parser/renderer. They do not certify the pending Data projector changes."
+  },
+  "initialProjectionTests": {
+    "verification": "Delegated source-isolated renderer test run",
+    "passed": 2,
+    "failed": 4,
+    "genuineIssuesUnderCorrection": [
+      "Absent DataField or field Name is incorrectly classified as mapped.",
+      "Foreign root data collections disappear without an incomplete inventory indication.",
+      "Known typed mapped fields cannot open Properties even though the existing guarded field workflow supports them."
+    ],
+    "testContractCorrection": "The test originally required data.categories on the wire, which the normative contract does not require. Preserve fixed synthetic presentation categories without XML authority; test their actual host-side grouping rather than widening the protocol solely for this assertion."
+  },
+  "pending": [
+    "Extract and verify the bounded read-only Data projector and sanitized metadata",
+    "Verify calculated/unsupported direct-mutation refusal against the existing guarded authoring pipeline",
+    "Integrate finite native Data actions with existing inspector forms and captured authority",
+    "Run fresh compiled, host and installed Desktop Data suites",
+    "Collect applicable inertness/security, preservation/history and visual evidence for the same candidate"
+  ],
+  "nativeActionHelpers": {
+    "command": "node --experimental-transform-types --import file:///C:/Users/Alexandre/AppData/Local/Temp/opencode/us1-ts-hooks.mjs --test apps/vscode-extension/src/sidebar-actions.test.ts tests/package/sidebar.test.ts",
+    "passed": 19,
+    "failed": 0,
+    "implemented": "Finite Data edit/add-field/rename/delete routes open the existing form; dataset creation uses the existing automatic creation intent. All five manifest commands are scoped to Report Data. No mutation or acknowledgement payload is introduced.",
+    "redBeforeCorrection": "Extending the computed-capability regression to add-field reveals that an ineligible field could borrow its eligible parent dataset form. The command now checks both the captured node and its resolved target; the full 19-test action/manifest run passes.",
+    "limitation": "All five commands are now registered in views.ts. The wiring regression also checks the real Extension Host command registry after activation; that strengthened host test has not executed yet. The Angular migration remains under integration, so T040 is not complete on helper/manifest checks alone."
+  },
+  "projectorIntegration": {
+    "implemented": "Data is extracted into its own bounded read-only projector. Missing binding/name facts classify as unsupported, typed mapped fields retain the existing guarded editing workflow, foreign collections mark incomplete inventory, and typed calculated field mutation requests are refused by the shared host engine. No new wire category or runtime dependency is introduced.",
+    "parentSourceCommand": "node --import file:///C:/Users/Alexandre/AppData/Local/Temp/opencode/us3-ts-hooks.mjs --test apps/vscode-extension/src/navigation-budget.test.ts packages/renderer/src/structure-hierarchy.test.ts apps/vscode-extension/src/sidebar-actions.test.ts apps/vscode-extension/src/edit-controller.test.ts",
+    "passed": 23,
+    "failed": 0,
+    "resolver": "Scratch alias points renderer imports at current source rather than stale dist. The remaining workspace packages still use their compiled exports.",
+    "migrationAdjustments": "Budget regressions now expect legacy Structure to contain only actual report hierarchy: the data-heavy snapshot totals 2004 entries before transport trimming. The hierarchy regression explicitly excludes dataset/field duplicates.",
+    "reviewFollowUp": "Opaque root definitions now use their actual owning syntax collection. A regression proves a foreign ReportParameter inside DataSets remains in Datasets/Fields, and an arbitrary foreign Widget inside DataSources remains in Data Sources. The helper consumes the accepted syntax; no wire category is introduced.",
+    "limitation": "Fresh compiled, live-host and installed Desktop checks remain pending."
+  },
+  "angularDataMigration": {
+    "command": "$env:VITEST_MAX_WORKERS = '1'; pnpm --filter @rdlc/designer test",
+    "parentExecuted": true,
+    "filesPassed": 15,
+    "passed": 232,
+    "failed": 0,
+    "implemented": "Native and compact-fallback data selection now use navigation.data. The adapter retains previousData for version-local reconciliation; created datasets resolve in either snapshot/result order without canvas geometry, and deleted or ambiguous definitions clear selection with feedback. Legacy Structure excludes datasets and fields.",
+    "structuralExpansion": "Unnamed expansion is limited to the structural spine, including the unique ReportSections container needed to reach its section/body. This is presentation state only: it never preserves unnamed selection or grants target authority.",
+    "compatibility": "Legacy dataset/field wire enum values remain accepted for protocol compatibility, but current Structure projectors no longer emit them. The stale migration comment is corrected without changing the protocol shape.",
+    "review": "Independent review corrections are implemented. The second source-only fallback tree now receives Data. A created Data target must belong to navigation.data: authoring alone never claims an out-of-inventory or navigation-absent target. Preserved scene items without proven expanded-type identity fail closed instead of mapping by kind/name alone. The expanded-type Data mapping correction is preserved.",
+    "delegatedPostReviewTests": {
+      "filesPassed": 15,
+      "passed": 239,
+      "failed": 0,
+      "redBeforeChecks": "Removing the source-only Data binding, restoring authoring-only creation selection, or restoring preserved-item name-only reconciliation each fails its targeted regression.",
+      "authorityDecision": "Current host publish always carries navigation alongside authoring. Inventory caps can omit a created definition; leaving that target unselected is preferable to fabricating projection membership or a second remembered authority mechanism."
+    },
+    "parentPostReviewTests": {
+      "command": "$env:VITEST_MAX_WORKERS = '1'; pnpm --filter @rdlc/designer test",
+      "filesPassed": 15,
+      "passed": 239,
+      "failed": 0,
+      "exitCode": 0,
+      "log": ".vscode-test/angular-post-review.log",
+      "sha256": "3ce30b8bf771c70e34b02337019e487f300ba16e7f4d9b711cf939a09459b5f7"
+    },
+    "pending": "The roundtrip helper now uses Data and passes the earlier fresh compiled aggregate. The latest Angular review fixes need the next serialized build and host/installed regression run."
+  },
+  "installedDataDiagnostics": {
+    "platform": "win32",
+    "vscodeVersion": "1.142.0",
+    "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+    "initialRun": {
+      "passed": ["US3.3-inspect-only"],
+      "failed": ["US3.1-category-contents"],
+      "exitCode": 1,
+      "report": ".vscode-test/desktop-artifacts/data-inventory-report.json",
+      "reportSha256": "a2a10cc2eda49dc6bed83f551cf00ec99d4af725a02c39f3d73de25eec30d79b",
+      "observed": "The test clicked the category to focus it, which collapsed Datasets / Fields. Its contiguous-window comparison also retained host-added trailing spaces on category labels."
+    },
+    "actionRun": {
+      "passed": ["US3.5-selection-agreement", "FR-010-data-actions"],
+      "failed": ["US3.4-reference-refusal"],
+      "exitCode": 1,
+      "report": ".vscode-test/desktop-artifacts/data-actions-report.json",
+      "reportSha256": "842ddee8971d14c2087c137f798a4656c8aedb171f1101e915eac129a4de7f20",
+      "observed": "US3.4 stops before deletion: the Existing dataset form does not become visible after the native Delete menu interaction. The failure screenshot still shows the context menu open. The reference-protection assertion has not executed.",
+      "followUp": "The Data owner proves from traces and pinned VS Code source that menu mouseup handlers are armed 100ms after render. The failed Data click starts 21ms after right-click, unlike the successful Structure Delete at 124ms. activateMenu now holds a single pointer gesture for 250ms and requires menu dismissal; it does not retry or substitute keyboard activation. The exact deletion, one-step history and reference refusal assertions remain required. A fresh rerun is in progress."
+    },
+    "menuArmingRerun": {
+      "assertion": "US3.4-reference-refusal",
+      "vsixSha256": "26c182ded94160679f9cdb24507f9b153a5e62379fbe0442d74900e5ab583021",
+      "report": ".vscode-test/desktop-artifacts/menu-arming-report.json",
+      "reportSha256": "439d1d7179f4353dd01c68e568bc54e8d84ef055d249224313126d0c52b6f8c5",
+      "passed": 0,
+      "failed": 1,
+      "observed": "The native Delete menu now opens its real form and deletion succeeds. The independent expected XML incorrectly retained an empty DataSets container; the existing serializer removes the empty wrapper when its last dataset is deleted, preserving surrounding bytes.",
+      "correction": "The expected string removes the whole single-dataset container. Existing serializer behavior is verified in packages/xml-serializer/src/datasets.ts; the outside-container exact-byte and Undo assertions remain required.",
+      "rerun": "In progress with separate menu-oracles artifacts; reference refusal is not yet declared passed."
+    },
+    "referenceOracleRerun": {
+      "vsixSha256": "26c182ded94160679f9cdb24507f9b153a5e62379fbe0442d74900e5ab583021",
+      "report": ".vscode-test/desktop-artifacts/menu-oracles-report.json",
+      "reportSha256": "8a7fd0727dca5e0574a5461dc250c4ab11005935fee805c5e0904b6cd7a5bfca",
+      "passed": 0,
+      "failed": 1,
+      "observed": "The exact safe deletion and one-step Undo pass. Referenced deletion also refuses with the expected message, but substring REFERENCE_IN_USE matches both the form refusal and the separate diagnostics panel.",
+      "correction": "Require the exact form text (REFERENCE_IN_USE), avoiding the diagnostics duplicate. The unchanged source, no-dirty and surviving-reference checks remain mandatory in the rerun."
+    },
+    "referenceLiteralFollowUp": {
+      "report": ".vscode-test/desktop-artifacts/menu-final-assertions-report.json",
+      "reportSha256": "bd99bf012bf8a6d9ffb5503dba7d8cf41b96e8a2167654af828b64c53e7ef3d6",
+      "passed": 0,
+      "failed": 1,
+      "observed": "The refusal, unchanged full source and no-dirty assertions pass. The final reference substring check incorrectly uses raw quotes while the fixture lexically preserves &quot; entities.",
+      "correction": "Require the exact entity-encoded reference present in the independent fixture. Full-source byte equality remains unchanged. The source-visible-capture rerun is in progress."
+    },
+    "installedReferenceRefusalPassed": {
+      "assertion": "US3.4-reference-refusal",
+      "platform": "win32",
+      "vscodeVersion": "1.142.0",
+      "vsixSha256": "26c182ded94160679f9cdb24507f9b153a5e62379fbe0442d74900e5ab583021",
+      "passed": 1,
+      "failed": 0,
+      "aggregateExitCode": 0,
+      "report": ".vscode-test/desktop-artifacts/source-visible-capture-report.json",
+      "reportSha256": "f24126a864645a7e1048d990f2bc05c6241cc2a75d1489d3ae73f0788b754acf",
+      "scope": "Unreferenced dataset deletion produces exact expected source and one Undo restores it. Referenced deletion refuses with the product's reason and code; full source, dirty state, native row and entity-encoded reference remain unchanged."
+    },
+    "installedCompleteDataSuitePassed": {
+      "vsixSha256": "d533f2fa0bb8d0bde715bf2ac0463a9a378f948ba710b9f1844b58fec90d05e2",
+      "report": ".vscode-test/desktop-artifacts/data-components-same-candidate-report.json",
+      "reportSha256": "94130a8462b2964af437615558b486247c215302ecbbacdabfdc58efead9c6f7",
+      "dataPassed": 6,
+      "componentsPassed": 12,
+      "aggregatePassed": 18,
+      "aggregateFailed": 0,
+      "exitCode": 0,
+      "durationMinutes": 7.7,
+      "scope": "All Data inventory, seven-type CRUD, inspect-only, reference refusal, selection agreement and scoped-action journeys pass together with all Components journeys on one installed diagnostic candidate.",
+      "limitation": "This is Windows functional evidence. Cross-platform, visual/reference identity, timing and remaining context acceptance stay open."
+    },
+    "focusHeaderCandidateDataPassed": {
+      "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+      "report": ".vscode-test/desktop-artifacts/data-components-keyboard-focus-header-report.json",
+      "reportSha256": "4a2fd1f77b344a4ca0f80a4f856e9f5ee8b69382e7f08f6a91f30f3e42308dd1",
+      "dataPassed": 6,
+      "dataFailed": 0,
+      "aggregatePassed": 23,
+      "aggregateFailed": 1,
+      "aggregateExitCode": 1,
+      "scope": "All six Data scenarios pass alongside twelve Components and five accessibility scenarios on this candidate. The sole aggregate failure is the theme command-palette helper."
+    },
+    "installedCrudPassed": {
+      "assertion": "US3.2-add-edit-delete",
+      "vsixSha256": "d533f2fa0bb8d0bde715bf2ac0463a9a378f948ba710b9f1844b58fec90d05e2",
+      "report": ".vscode-test/desktop-artifacts/native-row-publication-report.json",
+      "reportSha256": "e466426fe090afc4f601d3c396a1e9fac50c023db65e226940cc1f2b683d8416",
+      "passed": 1,
+      "failed": 0,
+      "aggregateExitCode": 1,
+      "scope": "Complete seven-field-type creation, rename, deletion, type edit, exact saved bytes, one-step Undo/Redo and save/reopen pass. Byte-derived field inventory counts gate the accepted native projection before subsequent activations.",
+      "limitation": "The readiness gate does not repair the product's silent stale-row selection guard during native repaint. All Data scenarios still need one same-candidate run."
+    },
+    "installedCrudInitialRun": {
+      "assertion": "US3.2-add-edit-delete",
+      "vsixSha256": "a32f2aa5bc29cc9728dc303ecfede75ca09dcf6bce21320d6c764a4f33120394",
+      "passed": 0,
+      "failed": 1,
+      "exitCode": 1,
+      "report": ".vscode-test/desktop-artifacts/keyboard-native-expansion-report.json",
+      "reportSha256": "58c8bf8b51fcbcf6ccbfdd66c8672e2854458342e6ad1a0199b10f9af3341ca3",
+      "observed": "After field creation, Field: Label receives native focus/selection but never the accepted Selected cue. activateMenu stops at its acceptance gate before opening the next form.",
+      "followUp": "The Data owner is checking projection/action ordering and the retained trace. Native aria-selected is not substituted for accepted selection; all seven field types, exact history and save/reopen remain required."
+    },
+    "inventoryRerun": {
+      "assertion": "US3.1-category-contents",
+      "passed": 1,
+      "failed": 0,
+      "exitCode": 0,
+      "durationSeconds": 23.2,
+      "report": ".vscode-test/desktop-artifacts/data-inventory-focus-report.json",
+      "reportSha256": "cf70a7ed68c60cbfb02532714f62303cb5e7d64a6c4e7f189cbf7488aae15b8c",
+      "correction": "Use the already-focused Data tree and Home rather than toggling a category; normalize presentation whitespace; exclude sticky ancestor clones from actual list rows.",
+      "scope": "All thirty oracle rows and inert-metadata assertions remain required. This is Windows installed inventory evidence, not completion of Data authoring or the whole story."
+    }
+  },
+  "freshCompiledIntegration": {
+    "build": "pnpm build passes",
+    "nodeUnitTestsPassed": 247,
+    "nodeUnitTestsFailed": 0,
+    "roundtripCompatibilityReleaseDesktopInfrastructurePassed": 166,
+    "roundtripCompatibilityReleaseDesktopInfrastructureFailed": 0,
+    "developmentHostSuitesPassed": 12,
+    "developmentHostExitCode": 0,
+    "packageTestsPassed": 15,
+    "packageTestsFailed": 0,
+    "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+    "hostEvidence": "See us5.json for retained development and installed host logs, digests, and the PowerShell wrapper limitation.",
+    "scope": "T036/T037 are complete implementation tasks. The story and same-candidate installed Desktop acceptance remain open."
+  }
+}

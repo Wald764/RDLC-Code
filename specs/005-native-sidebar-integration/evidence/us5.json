@@ -1,0 +1,379 @@
+{
+  "feature": "005-native-sidebar-integration",
+  "story": "US5",
+  "recordKind": "partial-implementation-diagnostics",
+  "eligibleForAcceptance": false,
+  "featureComplete": false,
+  "candidateInputFingerprint": null,
+  "preservation": {
+    "fixtureCount": 23,
+    "editableFixtureCount": 18,
+    "sourceOnlyOrMalformedFixtureCount": 5,
+    "oracle": "The roundtrip test independently checks outside-container bytes, unrelated parent content and namespace declarations, then re-reads every fixture to verify disk equality. Source-only fixtures must refuse rather than pretend to accept a no-op.",
+    "compiledRun": "node --test dist/tests/roundtrip/*.test.js dist/tests/compatibility/*.test.js dist/tests/release/*.test.js dist/tests/desktop/*.test.js",
+    "aggregatePassed": 166,
+    "aggregateFailed": 0
+  },
+  "developmentHost": {
+    "command": "$env:VSCODE_VERSION = '1.142.0'; pnpm test:vscode",
+    "exitCode": 0,
+    "suitesPassed": 12,
+    "history": "sidebar-history.test.cjs executes twenty accepted changed operations, twenty individual native Undos to exact recorded states and twenty Redos, saving the final exact state. The inert battery checks refusal, cancellation, no-op and navigation without extra document history.",
+    "includedSuites": ["sidebar-data.test.cjs", "sidebar-history.test.cjs", "sidebar-loading.test.cjs", "navigation-budget.test.cjs"],
+    "artifact": ".vscode-test/host-integration.log",
+    "sha256": "6f9d8a98e39585f7a21161e95dd2c0aae4fc2441763f3406d2360d62c0c1f7bc",
+    "inertBatteryLimit": "The filter/expand messages deliberately exercise invalid-protocol refusal, not actual native filter or expansion interactions. Those two UI/history requirements remain open; the twenty-step history execution does not by itself close T054."
+  },
+  "installedHostDiagnostic": {
+    "command": "node dist/tests/vscode/run-tests.js --packaged",
+    "vscodeVersion": "1.142.0",
+    "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+    "electronReportedExitCode": 0,
+    "suitesReportedPassed": 12,
+    "shellToolExitCode": 1,
+    "limitation": "PowerShell native stderr redirection emitted NativeCommandError while the runner reports Exit code 0. Preserve both outcomes; rerun with explicit native exit propagation before treating the aggregate command as passed.",
+    "artifact": ".vscode-test/host-packaged-integration.log",
+    "sha256": "e24cbea064231eedb60e896a0c71a5b8621d8b4420493167c1f8a7494e92b929"
+  },
+  "desktopContext": {
+    "implementedTests": 17,
+    "executedTests": 3,
+    "installedNoReport": {
+      "assertion": "US5.7-no-report",
+      "platform": "win32",
+      "vscodeVersion": "1.142.0",
+      "packaged": true,
+      "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+      "passed": 1,
+      "failed": 0,
+      "exitCode": 0,
+      "durationSeconds": 30.8,
+      "report": ".vscode-test/desktop-artifacts/context-no-report-report.json",
+      "reportSha256": "7483690dd397de49f1e9b21f0a1882cd90a3bccefa5b2bae9891d6cd54f36af2",
+      "scope": "Only the installed no-report context journey is executed here; switch, draft and race scenarios remain unvalidated."
+    },
+    "installedSwitchAndFocus": {
+      "report": ".vscode-test/desktop-artifacts/context-switches-report.json",
+      "reportSha256": "1fbd69fd1f8333bf4958f30ef2ebd39bb3e510efbadcbb3bdb15a654c73e6c50",
+      "platform": "win32",
+      "vscodeVersion": "1.142.0",
+      "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+      "passed": ["US5.2-sidebar-focus"],
+      "failed": ["US5.1-switches"],
+      "exitCode": 1,
+      "observed": "US5.1 stops at switch index 3 (designer a.rdlc): normal activation emits This report item is stale. Activate its current row and try again. The hundred-switch oracle has not completed.",
+      "followUp": "The real trace shows new title IPC before the old rows leave: switch 3 tab click at 33439ms, title observed at 33627ms, row click at 33695ms. The unchanged-message write opened a 200ms debounce ahead of row refresh. The provider now avoids unchanged message/description writes; its stale guard remains enforced. This needs a fresh bundled rerun. Header-only readiness still does not prove the new row projection has arrived."
+    },
+    "implementedOpeningRaceScenarios": 10,
+    "requiredRaceCount": 50,
+    "limitation": "Real Desktop opening races do not cover delayed outcomes, duplicate transport deliveries or readiness timeouts. No count is padded with repeated unrelated interactions."
+  },
+  "installedHostConfirmation": {
+    "command": "node dist/tests/vscode/run-tests.js --packaged; exit $LASTEXITCODE",
+    "vscodeVersion": "1.142.0",
+    "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+    "nativeRunnerExitCode": 0,
+    "shellExitCode": 0,
+    "suitesPassed": 12,
+    "artifact": ".vscode-test/host-packaged-confirmation.log",
+    "sha256": "13313e56b241810434571c80dbf0c23547347c133840135e319e94465ac922cb",
+    "limitation": "Certifies these host suites against the recorded VSIX bytes. Ongoing source changes and the remaining Desktop/platform/security/visual gates are not certified by this run."
+  },
+  "installedSwitchesPostReview": {
+    "assertion": "US5.1-switches",
+    "platform": "win32",
+    "vscodeVersion": "1.142.0",
+    "vsixSha256": "26c182ded94160679f9cdb24507f9b153a5e62379fbe0442d74900e5ab583021",
+    "passed": 0,
+    "failed": 1,
+    "exitCode": 1,
+    "stoppedAtSwitchIndex": 0,
+    "observed": "Notifications report Actual command not found, wanted to execute rdlcCode.sidebar.activate /262, /218 and /176. This is a different failure from the original captured-row stale warning; the hundred-switch oracle has not completed.",
+    "report": ".vscode-test/desktop-artifacts/context-switches-post-review-report.json",
+    "reportSha256": "5f6797e42357297a246a1d871761edc12e4d09456519cd5531d30c4979991c42",
+    "followUp": "The sidebar owner is checking whether selection-triggered refresh disposes a TreeItem command delegate before its invocation reaches the extension host. Public routing, truthful pending and captured-target guards remain required. No warning is filtered or outcome retried to manufacture a pass."
+  },
+  "postReviewIntegration": {
+    "build": "pnpm build passes",
+    "compiledRegression": {
+      "command": "node --test packages/*/dist/*.test.js dist/apps/vscode-extension/src/*.test.js dist/scripts/*.test.js dist/tests/desktop/*.test.js dist/tests/roundtrip/*.test.js dist/tests/compatibility/*.test.js dist/tests/release/*.test.js",
+      "passed": 353,
+      "failed": 0,
+      "exitCode": 0,
+      "log": ".vscode-test/compiled-post-review.log",
+      "sha256": "cb43f23caa00daa1d55a310394deebf8c7496c58c9b4a132305b47a97f00d51f"
+    },
+    "developmentHost": {
+      "exitCode": 1,
+      "log": ".vscode-test/host-post-review.log",
+      "sha256": "b62488d386d560e1bf1d305721a1d4d30a3a4d2a2b991387531348fdcc9ab974",
+      "observed": "After the first three suites pass, lifecycle.sourceOnlyOpening fails in rmSync with Windows EPERM while a VS Code file watcher still references notes.txt. Cleanup may mask the journey result, so the new suite is not declared passed.",
+      "followUp": "The lifecycle owner is closing owned editors before bounded temporary-directory removal and preserving scenario plus cleanup failures. A fresh serialized build and real host rerun are required."
+    },
+    "limitation": "The 353 tests are a fresh compiled aggregate, not additional independent counts to sum with earlier overlapping aggregates. Ongoing source edits and the next VSIX are not certified."
+  },
+  "hostRaceFollowUpImplementation": {
+    "sourceContextTestsPassed": 18,
+    "sourceContextTestsFailed": 0,
+    "verification": "Delegated isolated temporary build, with no shared dist writes.",
+    "hostScenariosAuthored": 53,
+    "matrix": "Four actions times eleven disturbances, plus nine standalone ordering/capture/duplicate cases. Exact terminal counts, document text, registry state and unchanged report B are asserted.",
+    "cleanupCorrection": "Lifecycle and synchronization tests now close all owned custom/text editors, bound document-close waits, remove temporary directories with standard filesystem retries, and preserve journey plus cleanup failures together.",
+    "execution": "The 53 scenarios and corrected cleanup require the next real Electron run; typecheck/lint and isolated model tests do not execute them.",
+    "limitation": "Host-injected scenarios do not satisfy the fifty real Desktop race cases. T053 remains open."
+  },
+  "nativeDuplicateCorrection": {
+    "rootCause": "The shared native clipboard helper omitted unit for Duplicate, so the real nativeAction validator rejected the envelope before mutation.",
+    "fix": "Duplicate supplies the existing point-unit default; Copy and Cut retain their original envelopes and membership/capability guards.",
+    "regression": "A complete captured envelope from clipboardIntent is passed through validateMessage. Duplicate fails before the correction and passes afterward; all ten action tests pass in the source run.",
+    "passed": 10,
+    "failed": 0,
+    "limitation": "Fresh compilation and actual installed Duplicate remain unverified."
+  },
+  "routingAndHostDiagnosticFollowUp": {
+    "build": "Fresh pnpm build passes. An intermediate build invocation timed out at 120 seconds; its terminated process was checked before a serialized retry passed.",
+    "vsixSha256": "700a9f415364ef4c0b48e65887d9bac64ac9b5ce784efd133351840d74b3eea5",
+    "previousVsixRetained": ".vscode-test/desktop-artifacts/rdlc-code-26c182ded94160679f9cdb24507f9b153a5e62379fbe0442d74900e5ab583021.vsix",
+    "nativeRouting": "Cue changes now emit one whole-view refresh instead of per-row events. Pinned SDK source shows that per-row refresh disposes the converted command delegate immediately, while whole-view refresh defers clearing. The owning view supplies selection; command activation and stale guards remain enforced.",
+    "compiledChecks": {
+      "passed": 368,
+      "failed": 0,
+      "exitCode": 0,
+      "scope": "Compiled Node unit, roundtrip, compatibility, release, Desktop infrastructure and package assertions. This overlaps earlier counts and is not additional acceptance evidence.",
+      "log": ".vscode-test/routing-compiled-checks.log",
+      "sha256": "01e59408f91a657d42abf2cc72a82e428112268324cf67e1217a41453551ed53"
+    },
+    "developmentHost": {
+      "exitCode": 1,
+      "log": ".vscode-test/host-full-diagnostics.log",
+      "sha256": "e76c1f32b2ccf468e93cb686b079cd98a1cc6299a97e6d1f15727856761371b6",
+      "diagnosticCorrection": "The suite runner now prints inspected errors, including AggregateError children, before rethrowing the original failure.",
+      "errors": [
+        "sourceOnlyOpening: the explicit action opens the designer once assertion fails",
+        "cleanup: a.rdlc is still open after close",
+        "cleanup: temporary directory removal fails with EBUSY"
+      ],
+      "followUp": "The lifecycle owner is verifying the test provider's viewType against the real hardcoded designer opening route and closing the actual owned panels/documents. No timeout or cleanup failure is swallowed."
+    },
+    "installedSwitches": "US5.1 is running with separate context-command-lifetime artifacts against this VSIX; no passing result is claimed yet.",
+    "latency": "The SDK's shared leading/trailing 200ms debounce remains a mandatory gap. Avoiding per-row disposal does not remove the truthful Pending-to-accepted event pair or certify SC-003."
+  },
+  "installedCommandLifetimeRun": {
+    "assertion": "US5.1-switches",
+    "vsixSha256": "700a9f415364ef4c0b48e65887d9bac64ac9b5ce784efd133351840d74b3eea5",
+    "exitCode": 1,
+    "report": ".vscode-test/desktop-artifacts/context-command-lifetime-report.json",
+    "reportSha256": "8ea532361d9f3f888fefe907d8f61802a45543b839b5b44100807238b4aff503",
+    "functionalJourney": "All hundred switches, no unexpected notifications, exact document preservation, one edit and one Undo complete. The terminal race log is written only after those assertions pass.",
+    "raceLog": ".vscode-test/desktop-artifacts/context-command-lifetime/context/race-log-us5-1-switches.json",
+    "raceLogSha256": "506c8471110081f08ff1356b033374625cdcbbee79c62bf9e8895cbc7d345518",
+    "failure": "Trace export exceeds the 15-second timeout. Electron then closes cleanly with exit 0, but the approximately 430MB trace archive is incomplete and Python ZipFile rejects it. The scenario is not declared passed.",
+    "correction": "Keep trace startup bounded at 15 seconds; allow trace export 120 seconds before closing Electron so the measured large archive can finish. No journey timeout, assertion or trace error is removed.",
+    "firstExportRerun": "Command exits 9 with an empty log and no report before test startup. No test process remains. Node/pnpm version checks and available disk space are normal.",
+    "secondExportRerun": "The separate context-trace-export-retry launch also exits 9 before producing output or a report. Neither attempt runs the hundred-switch oracle.",
+    "environmentBlocker": "A subsequent scoped ESLint process aborts with V8 CALL_AND_RETRY_LAST allocation failure at approximately 13MB heap. Windows reports only 420608 KiB free virtual memory out of 134096504 KiB total despite 11463404 KiB free physical memory. System commit exhaustion is observed; the exact cause of the earlier exit-9 launches is not proven. No test-owned Electron remains, and the large visible Code processes belong to the user's normal installed profile.",
+    "verification": "Prettier check of driver.ts, suite.ts and this evidence file passes. ESLint aborts and is not counted as passed; the shell's later successful formatting command does not override that failure. Further heavy checks await restored system commit capacity."
+  },
+  "restoredMemoryContinuation": {
+    "memory": "Windows reports approximately 56 GiB free virtual memory after the earlier commit exhaustion; checks can run again.",
+    "installedSwitches": {
+      "vsixSha256": "700a9f415364ef4c0b48e65887d9bac64ac9b5ce784efd133351840d74b3eea5",
+      "exitCode": 1,
+      "report": ".vscode-test/desktop-artifacts/context-trace-restored-memory-report.json",
+      "reportSha256": "cc2c294621052e72bcfb3282e22d7a3f94712ce1404b4a4e9c9864a9f8463495",
+      "stoppedAtSwitchIndex": 9,
+      "observed": "The stale-item refusal returns during the designer B step. The previous hundred-switch functional completion was not sufficient to prove reliability. The captured-row guard remains in force and the sidebar owner is diagnosing the retained trace."
+    },
+    "developmentHost": {
+      "exitCode": 1,
+      "log": ".vscode-test/host-properties-lifecycle-fix.log",
+      "sha256": "5d55bd266bfc53b7fce791874bc228825e30b7dcfdaf477975639e66f28391df",
+      "observed": "Cleanup now finishes without the previous AggregateError/EBUSY. The source-only test's command interception records no opening request and fails its exact expected-request assertion; the host suite is not passed.",
+      "followUp": "Verify per-extension API ownership and replace unobservable cross-extension interception with a truthful test of the shared production opening path. No production hook or registered-viewType takeover is permitted."
+    },
+    "freshBuild": "pnpm typecheck and pnpm build pass",
+    "packageSha256": "3619d426ec38a12b98926d01f5d4de182cb9a571881271247f22b19738b27496",
+    "limitation": "This next diagnostic package includes the Properties focus correction; it does not close routing, host or same-candidate acceptance."
+  },
+  "restoredMemoryDriverChecks": {
+    "sourceRun": "13 passed, 1 failed: the compiled-layout-only trust test resolves its fixture outside the repo when run directly from source. This source-hook run is not a valid substitute for the compiled suite.",
+    "compiledCommand": "node --test dist/tests/desktop/driver.test.js",
+    "compiledPassed": 14,
+    "compiledFailed": 0,
+    "exitCode": 0,
+    "log": ".vscode-test/driver-compiled-restored-memory-tests.log",
+    "limitation": "Driver checks do not certify long trace-export completion or the hundred-switch journey."
+  },
+  "lifecycleApiOwnershipCorrection": {
+    "rootCause": "VS Code supplies separate API objects to each extension. Patching the test extension's commands object cannot intercept executeCommand calls made inside the production extension's command handler.",
+    "testCorrection": "Lifecycle journeys call the actual exported openActiveDesigner implementation bundled into the test extension, assert A is its active source, and narrowly redirect that document's requested designer viewType to the test-owned provider. They still require exactly one request for rdlcCode.designer and one provider resolution.",
+    "scope": "This exercises the shared production opening implementation and real host/provider lifecycle, not registration or invocation of the production extension's public command. Installed Desktop journeys retain responsibility for that public path.",
+    "delegatedChecks": "TypeScript, scoped lint and formatting pass; eighteen isolated sidebar-context tests pass.",
+    "execution": "Fresh compilation and real Electron execution are still pending. Cleanup retains bounded closure and reports scenario plus cleanup errors."
+  },
+  "hostLifecycleAndRacesPassed": {
+    "command": "VSCODE_VERSION=1.142.0 pnpm test:vscode",
+    "exitCode": 0,
+    "electronExitCode": 0,
+    "log": ".vscode-test/host-delivery-reasons.log",
+    "sha256": "1ab0105af35edda138fca59ef85b380d9ded49d3f1bcac0373cec203b9e55680",
+    "scope": "All twelve development Extension Host suites pass, including both new lifecycle journeys, cleanup and all fifty-three synchronization race cases.",
+    "corrections": [
+      "Contribute the two test-owned custom editor viewTypes in tests/vscode/harness/package.json, as required for VS Code to resolve their registered providers",
+      "Inject and expect the disturbance newline using the TextDocument EOL; retain exact original XML bytes",
+      "Require the actual delivery-refusal reason for postMessage false/throw, distinct from context-changed refusal"
+    ],
+    "retainedFailures": [
+      { "log": ".vscode-test/host-api-ownership.log", "sha256": "3bb0b55d32dfca59cea79a0c9f1796b23f0ebf7eca2b646e865edaddbbc2901a" },
+      { "log": ".vscode-test/host-owned-editor-contributions.log", "sha256": "d4eaaebe4ddee94ca7da383cef2aa7554575f2b8819bc7a4f7b3fc22fe0c7a5f" },
+      { "log": ".vscode-test/host-race-eol.log", "sha256": "16826068c51dc4dc65a7caad348a1c939014c1b8dce3bbb66c40188341d1efe1" }
+    ],
+    "limitation": "Development-host evidence only. This does not close installed same-candidate, the fifty Desktop opening races, the hundred reliable switches or latency acceptance."
+  },
+  "overlayFocusCandidate": {
+    "vsixSha256": "a32f2aa5bc29cc9728dc303ecfede75ca09dcf6bce21320d6c764a4f33120394",
+    "build": "pnpm build passes",
+    "package": "pnpm package passes",
+    "compiledPassed": 368,
+    "compiledFailed": 0,
+    "compiledExitCode": 0,
+    "compiledLog": ".vscode-test/overlay-focus-compiled-tests.log",
+    "compiledLogSha256": "46f7ff8357df24a894888a23985934afe6ea823e9ef53c42034848d80659226f",
+    "limitation": "The development host passed before this last overlay-focus rebuild. Installed host and full same-candidate Desktop certification remain required."
+  },
+  "desktopRaceCountFollowUp": {
+    "file": "tests/desktop/context.spec.ts",
+    "assertion": "SC-005-switch-races",
+    "implementation": "The opening-window phase now drives fifty uniquely identified real input cases, cycling its six existing edit/context-switch and select/properties/create combinations, and asserts fifty results before writing its log.",
+    "execution": "The first extended run fails its source-only precondition after completing the hundred-switch phase. Fifty opening cases have not yet executed; previously retained evidence still contains only ten genuine opening-window races.",
+    "firstRun": {
+      "vsixSha256": "a32f2aa5bc29cc9728dc303ecfede75ca09dcf6bce21320d6c764a4f33120394",
+      "exitCode": 1,
+      "report": ".vscode-test/desktop-artifacts/fifty-opening-races-report.json",
+      "reportSha256": "8062616431a389292e23ef24d5b62ee50fb41db73d4b477c3ceab754719e93d0",
+      "observed": "Quick Open restores the last-used designer for A/B after the switch phase, so the first race sees two designers instead of source-only A.",
+      "correction": "Use the public Reopen Editor With / Text Editor choice when needed and verify source focus before capturing. Reset only the previous independently verified injected marker between cases. Context-menu activation retains one held pointer gesture past the SDK arming window.",
+      "runtime": "The extended scenario alone has a fifteen-minute bound; the global thirty-minute limit is unchanged. The previous hundred-switch journey took four minutes, leaving insufficient room for fifty real openings under the old five-minute per-test bound.",
+      "rerun": "Running with separate fifty-opening-source-editors artifacts."
+    },
+    "sourceEditorRerun": {
+      "exitCode": 1,
+      "report": ".vscode-test/desktop-artifacts/fifty-opening-source-editors-report.json",
+      "reportSha256": "8bcedc8a6b2af79f4428e7a83a5b13badc225c19941d7d879597e9bbfe0de12f",
+      "observed": "Reopen Editor With executes and displays Select editor for b.rdlc. The generic no-follow-up-command helper waits for every quick-input to disappear, so it times out on the legitimate follow-up picker.",
+      "correction": "Use the existing command-plus-picks helper for Text Editor and let actual picker option visibility gate the transition, without its old fixed sleep. The fifty-opening-editor-picker rerun is in progress."
+    },
+    "editorPickerRerun": {
+      "exitCode": 1,
+      "report": ".vscode-test/desktop-artifacts/fifty-opening-editor-picker-report.json",
+      "reportSha256": "5b47cea6453dd2a2dff8ec15d0f571b4321b93a7f21f36ccf6b845bcc105b694",
+      "observed": "Source-only setup passes. The first edit/select opening attempt produces no refusal within thirty seconds. The screenshot shows Front accepted as Primary and subsequent external-change feedback, consistent with the disturbance arriving after acceptance; pending-at-disturbance is not proven.",
+      "interpretation": "No race success is claimed. A new designer tab alone proves opening, not that readiness remains pending. The helper comment now states that distinction, and the mandatory refusal assertion is retained.",
+      "nextRequirement": "A genuine controllable opening window or equivalent observable evidence is required before fifty attempts can certify fifty in-flight races. No product delay hook, synthetic refusal, ignored warning or successful-action relabeling is introduced."
+    },
+    "limitation": "Repeating observable opening races does not create duplicate-transport, delayed-result or disposal injections that the public Desktop UI cannot expose. Host cases remain complementary; coverage of all mandatory race families and acceptance stay open."
+  },
+  "installedOverlayHostPassed": {
+    "vsixSha256": "a32f2aa5bc29cc9728dc303ecfede75ca09dcf6bce21320d6c764a4f33120394",
+    "command": "VSCODE_VERSION=1.142.0 pnpm test:vscode --packaged",
+    "suitesPassed": 12,
+    "electronExitCode": 0,
+    "commandExitCode": 0,
+    "log": ".vscode-test/host-overlay-installed.log",
+    "sha256": "be152738fbcb4144b5625214afb5d5d9ca899d0ad7d448ac31f819eb2339ae51",
+    "scope": "Full installed host suite, including the fifty-three injected host races and corrected lifecycle/cleanup journeys, passes against this diagnostic package.",
+    "limitation": "The lifecycle opening implementation is bundled in the harness with an owned provider; it does not substitute for the production public-command Desktop path. Same-candidate Desktop reliability and latency remain open."
+  },
+  "nativeRowPublicationCandidate": {
+    "vsixSha256": "d533f2fa0bb8d0bde715bf2ac0463a9a378f948ba710b9f1844b58fec90d05e2",
+    "changes": "Publish the pending view description when serving its rows. Preserve context-independent Components rows across document edits, updating their authority and genuine availability cues without rebuilding the toolbox.",
+    "developmentHost": "Fresh build and all twelve development Extension Host suites pass, including the row/header publication regression and stale context-bound row refusal.",
+    "hostLog": ".vscode-test/host-native-row-publication.log",
+    "compiledChecks": {
+      "passed": 368,
+      "failed": 0,
+      "exitCode": 0,
+      "log": ".vscode-test/native-row-publication-compiled-tests.log",
+      "sha256": "fe950754ab7d318db2eaa74d3b0d4696fc2c0921641fa5494c854a1d48e3a999"
+    },
+    "desktopExecution": "FR-027, successive component activation and Data CRUD are running in native-row-publication with separate reports. No installed result is claimed yet.",
+    "limitation": "The SDK does not expose paint completion. Serving rows before publishing their header reduces the observed lead but does not prove the native renderer has painted them. Context-bound Data/Structure still rebuild after edits and retain their stale guards."
+  },
+  "nativeRowPublicationSwitchFailure": {
+    "assertion": "US5.1-switches",
+    "vsixSha256": "d533f2fa0bb8d0bde715bf2ac0463a9a378f948ba710b9f1844b58fec90d05e2",
+    "exitCode": 1,
+    "report": ".vscode-test/desktop-artifacts/context-row-publication-report.json",
+    "reportSha256": "2e77a9c12e46818f2c58d23a5fc39d6378e55c450b60c657fe76f1a4737b9053",
+    "observed": "Components description remains b.rdlc after returning to a.rdlc. Stable toolbox rows no longer trigger getChildren, where the deferred description was published, so its header never advances.",
+    "traceIntegrity": "The retained Playwright trace.zip opens with Python ZipFile; all five entries pass CRC validation. This is failure diagnostics, not successful hundred-switch evidence.",
+    "followUp": "Publish the description for unchanged context-independent toolbox content without republishing its rows; retain deferred descriptions for context-bound Structure/Data. Require a regression without an artificial getChildren call."
+  },
+  "focusAndHeaderDevelopmentFollowUp": {
+    "build": "pnpm build passes",
+    "hostExitCode": 1,
+    "log": ".vscode-test/host-focus-header.log",
+    "sha256": "c2c0aa7ae89a2d6ab451f64f8218bf29d0fa23ccb73ed0e058f5ffc7fc89d302",
+    "observed": "sidebar-loading fails components: an unchanged description must not be rewritten (one write rather than zero). The initial title was deferred on the first row build and then published on a later unchanged refresh.",
+    "followUp": "The sidebar owner is correcting initial Components title publication while retaining the unchanged-description assertion. The pending-focus product change is built but not yet packaged or verified in Desktop."
+  },
+  "focusAndInitialHeaderCandidate": {
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "build": "pnpm build passes",
+    "developmentHost": "All twelve suites pass with command exit 0, including stable Components identity, current authority and title publication without a child fetch.",
+    "hostLog": ".vscode-test/host-focus-header-initial.log",
+    "correction": "Flush the Components description after either refresh branch, including initial construction. Structure/Data still publish descriptions when serving their context-bound rows.",
+    "staticChecks": "Root typecheck and lint pass",
+    "desktop": "FR-027 and US5.1 are running in focus-header-initial. Runtime success is not yet claimed."
+  },
+  "installedHundredSwitchesPassed": {
+    "assertion": "US5.1-switches",
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "passed": 1,
+    "failed": 0,
+    "aggregateExitCode": 1,
+    "report": ".vscode-test/desktop-artifacts/focus-header-initial-report.json",
+    "reportSha256": "5d531b27c9d78db4ac2aa8b4cd91056234458c9852827fb7da0231197e2f48d6",
+    "trace": ".vscode-test/desktop-artifacts/focus-header-initial/context/trace-63816-1792938018709.zip",
+    "traceSha256": "6442553fd4c9241d3a8467676355a0c1c849441e440262ec62559b17ba67d450",
+    "traceIntegrity": "Python ZipFile opens the exported archive; all 5018 entries pass CRC validation.",
+    "scope": "All hundred source/sidebar/designer switches with identical item names pass, including report headers, exact target selection, no unexpected notifications, source preservation, one edit/one Undo and completed trace export.",
+    "limitation": "This is one passing diagnostic run. The combined command exits 1 on separate FR-027 follow-up assertions. Fifty proven in-flight Desktop races, latency and cross-platform acceptance remain open."
+  },
+  "installedRemainingContextInitialRun": {
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "report": ".vscode-test/desktop-artifacts/context-remaining-focus-header-report.json",
+    "reportSha256": "75bf521909486e81ff45bd850434ad279b5e5cb948ac073544fb619a25f2c617",
+    "passed": ["US5.2-sidebar-focus", "US5.5-draft-guard", "US5.7-no-report", "FR-019-authoritative"],
+    "failed": ["US5.3-two-views", "US5.4-disposal", "US5.6-external-changes", "FR-020-context", "FR-021-view-local", "FR-023-orders", "FR-026-draft", "EDGE-01-identity", "EDGE-08-pending", "EDGE-09-rejected", "EDGE-11-readonly-conflict"],
+    "exitCode": 1,
+    "observed": "Failures include counting editor parts instead of groups, hovering the intentionally covered Front item, counting source/designer dirty tabs as one, an unrelated Git parent-repository notification, and unresolved selection/context or opening-race conditions.",
+    "followUp": "The context owner is checking each retained trace and correcting genuine test preconditions. Silent stale-selection and missing in-flight refusal evidence are not treated as successful actions or bypassed. The fifty-race requirement stays open."
+  },
+  "focusHeaderInstalledHostPassed": {
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "command": "VSCODE_VERSION=1.142.0 pnpm test:vscode --packaged",
+    "suitesPassed": 12,
+    "commandExitCode": 0,
+    "electronExitCode": 0,
+    "log": ".vscode-test/host-focus-header-installed.log",
+    "sha256": "46ef8a4ad121215ba69dfd94054c67576ec9fba1f3b485415d4fd401aed35f1d",
+    "scope": "The installed package passes the title-initialization, stable-toolbox, authority, lifecycle and fifty-three injected synchronization race checks. Desktop context failures and acceptance limits remain open."
+  },
+  "hiddenFocusInstalledHostPassed": {
+    "vsixSha256": "983ddfbf7c6996f59bb34eb3754342cbb571cf5c2f08c6be4164f5c6703aa9a5",
+    "command": "VSCODE_VERSION=1.142.0 pnpm test:vscode --packaged",
+    "suitesPassed": 12,
+    "commandExitCode": 0,
+    "electronExitCode": 0,
+    "log": ".vscode-test/host-hidden-focus-installed.log",
+    "sha256": "f408ca7cef1d227b84760afb05bee3a782735de8f16d377a76bb78ec29cf3164",
+    "limitation": "Installed host success does not replace the unresolved Desktop context scenarios or prove fifty in-flight opening races."
+  },
+  "pending": [
+    "Verify the completed source-only and navigation-absent Data selection corrections in the next installed VSIX; 239 parent Angular tests pass and the new compiled build passes",
+    "Execute installed context journeys and investigate their original failures",
+    "Cover and execute the remaining required fifty-race oracle",
+    "Record same-candidate provenance and complete all US5.1–7 acceptance evidence"
+  ]
+}

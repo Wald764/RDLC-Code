@@ -1,0 +1,35 @@
+{
+  "feature": "005-native-sidebar-integration",
+  "task": "T044",
+  "recordKind": "capability-probe",
+  "eligibleForAcceptance": false,
+  "status": "unavailable-with-evidence",
+  "validated": false,
+  "reason": "Public TreeView handleDrag ran, but the custom MIME did not reach an Angular drop.",
+  "decision": "T049: no native drag controller or affordance; the native Components view advertises activation, and the compact designer fallback keeps the existing 004 HTML drag (FR-018 passes).",
+  "probe": {
+    "assertion": "tests/desktop/native-drag.spec.ts::native drag: observe public TreeView custom MIME delivery and cancellation",
+    "outcome": "passed",
+    "mime": "application/vnd.rdlc-code.native-drag-probe",
+    "privateApis": false,
+    "uriSmuggling": false,
+    "cancellationCreatedDrop": false,
+    "reportBytesUnchanged": true
+  },
+  "environment": {
+    "platform": "win32",
+    "osRelease": "10.0.26300",
+    "vscodeVersion": "1.142.0",
+    "vscodeBuild": "6d62b1d5dace93a33b3a6d3eca1317bd5e15bcb1",
+    "executableSha256": "5ca701a1facb91fec1ac6bbae11fc837821a1da34ddebb91a0bad7e87ab88144",
+    "driver": "playwright@1.64.1",
+    "packaged": true
+  },
+  "vsixSha256": "e67aba5384539e01cd953deb611fec116578380eb731e5c628bd40379f7183d1",
+  "report": ".vscode-test/desktop-artifacts/final-native-drag/native-drag/probe.json",
+  "reportSha256": "19fca50950129632ff190ff06e104973b2654384790f047e4f3d401ac8f0019a",
+  "limitations": [
+    "Windows only; Linux and macOS delivery remain unprobed until the CI matrix runs.",
+    "The probed VSIX predates later designer corrections; delivery depends on the workbench, not on those changes, but same-candidate evidence still requires a rerun."
+  ]
+}

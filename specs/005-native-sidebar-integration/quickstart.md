@@ -35,6 +35,12 @@ On Linux, prefix each Desktop invocation with `VSCODE_VERSION=1.142.0 xvfb-run -
 
 ## Desktop foundation commands
 
+Coverage references use `relative/test-file.spec.ts::exact test title` (or the
+exported `run` entry point for the official Extension Host harness). The required
+`coverage.spec.ts` suite checks current source declarations and fails for missing
+files, invented titles, empty tests and skipped declarations. Static discovery
+does not replace execution, independent oracles or same-candidate evidence.
+
 After full build/package, these commands invoke the initial runner. They currently fail closed on missing mandatory suites or reference images; they do not certify the native sidebar. Their implementation must conform to [desktop-validation.md](contracts/desktop-validation.md):
 
 ```powershell
@@ -48,7 +54,7 @@ pnpm test:e2e
 pnpm test:e2e -- --packaged
 ```
 
-Repeat functional/package runs on each supported OS; fixed-reference visual comparison runs only in its reference environment. A missing command, binary, observer, required assertion or baseline is a failure, not a skip/pass. Provision first, then block runtime networking. Separate real trusted/restricted profiles must verify actual host trust state.
+`RDLC_DESKTOP_GROUP=core|authoring|context` narrows the functional run to one disjoint slice (the CI matrix runs all three in parallel per OS/version); unset runs every suite. Repeat functional/package runs on each supported OS; fixed-reference visual comparison runs only in its reference environment. A missing command, binary, observer, required assertion or baseline is a failure, not a skip/pass. Provision first, then block runtime networking. Separate real trusted/restricted profiles must verify actual host trust state.
 
 Each invocation retains its own directory under `.vscode-test/desktop-artifacts/run-*/`,
 including the Playwright JSON report and per-capability bootstrap results. The

@@ -4,6 +4,238 @@
   "status": "FAIL",
   "featureComplete": false,
   "eligibleForAcceptance": false,
+  "trustObservationContinuation": {
+    "date": "2026-10-24",
+    "recordKind": "targeted-workspace-trust-diagnostics",
+    "eligibleForAcceptance": false,
+    "command": "node C:\\Users\\Alexandre\\AppData\\Local\\Temp\\opencode\\trust-observation.mjs",
+    "exitCode": 0,
+    "hostTrustBefore": false,
+    "uiGrant": "completed once through real Workspace Trust controls",
+    "hostTrustAfter": true,
+    "failures": [],
+    "durationSeconds": 11.1,
+    "vsixSha256": "ac31a68c81adb828723c43ee9eaeaf6aec384256140575bb7ca5caf1a64ded36",
+    "interpretation": "The earlier trust-confirmation timeout did not reproduce in this single observation. Its cause remains undetermined; no driver or product change was made on the basis of an unproven mechanism.",
+    "artifacts": [
+      {
+        "path": ".vscode-test/desktop-artifacts/trust-obs-1792870024660/trust-observation.json",
+        "sha256": "323a3f0c975b39d6e0b0ed287c7c7de3e9d0bdf6a79aa081c732440329dc193a"
+      }
+    ]
+  },
+  "latestExecution": {
+    "date": "2026-10-24",
+    "recordKind": "local-foundation-diagnostics-after-discovery-timeout-fix",
+    "eligibleForAcceptance": false,
+    "command": "VSCODE_VERSION=1.142.0 pnpm test:e2e -- --probe --packaged",
+    "exitCode": 1,
+    "playwrightTests": { "passed": 1, "failed": 2 },
+    "infrastructureUnitTests": { "passed": 67, "failed": 0 },
+    "driverIndependentReview": "pass",
+    "driverScopedLint": "passed",
+    "driverScopedFormat": "passed",
+    "outcomes": {
+      "bootstrap": "failed waiting for the Workspace Trust editor confirmation text before journey execution",
+      "nativeDragDelivery": "unavailable-with-evidence",
+      "restrictedHostTrustState": "passed",
+      "trustedHostTrustState": "passed",
+      "webviewPositiveControlsBothProfiles": "passed",
+      "nativeHostCapture": "unsupported",
+      "hostOutboundBlocking": "unsupported",
+      "referencePixels": "unrun",
+      "crossPlatformMatrix": "unrun"
+    },
+    "priorInterruptedRun": {
+      "artifactDirectory": ".vscode-test/desktop-artifacts/run-b941cef8-e6e6-43fa-9b95-6178e3f62c50",
+      "outcome": "interrupted after the bootstrap and teardown timeouts; the external shell limit of 900 seconds expired before a final runner report",
+      "traceFinding": "Pending workbenchLocation locator.count() ignored the surrounding discovery deadline; the shared Electron/CDP discovery now bounds this call with the existing timeout helper.",
+      "cleanup": "No Code.exe processes matching this run's exact two disposable profile identities remained.",
+      "artifacts": [
+        {
+          "path": ".vscode-test/desktop-artifacts/run-b941cef8-e6e6-43fa-9b95-6178e3f62c50/playwright/bootstrap-bootstrap-real-D-7c37e-e-Undo-semantics-and-pixels/trace.zip",
+          "sha256": "211eef23b176030e3f94a23033330b314ba740ad05ccb78dae61693f62d6daf5"
+        }
+      ]
+    },
+    "artifacts": [
+      {
+        "path": ".vscode-test/desktop-artifacts/run-e104110c-7e4b-454d-a091-1525fe8024c2/runner-status.json",
+        "sha256": "521084f6ef462b939587114cf943ea86d8a6efdf2279729d97e6529e0bd221e4"
+      },
+      {
+        "path": ".vscode-test/desktop-artifacts/run-e104110c-7e4b-454d-a091-1525fe8024c2/playwright-report.json",
+        "sha256": "0e498294284dbbf12a90dd72ced1b560199ac4dd9cc8cc4607d3be3bb50cb2c6"
+      },
+      {
+        "path": ".vscode-test/desktop-artifacts/run-e104110c-7e4b-454d-a091-1525fe8024c2/bootstrap/probe.json",
+        "sha256": "7d4c0e6360bb1d774ec40456f55d676824e1f6e2dbe34a594e8bb1382730867a"
+      },
+      {
+        "path": ".vscode-test/desktop-artifacts/run-e104110c-7e4b-454d-a091-1525fe8024c2/security-observer/probe.json",
+        "sha256": "304d7ff5cda860becc76ddb4049212af85d6d667c9a1704f9bcd32a4afc6c7a7"
+      },
+      {
+        "path": ".vscode-test/desktop-artifacts/run-e104110c-7e4b-454d-a091-1525fe8024c2/native-drag/probe.json",
+        "sha256": "92b96ae5574c008843599b76d26f6c5bce58b4d064b7af47b7fced4da51374a3"
+      }
+    ]
+  },
+  "windowsSecurityContinuation": {
+    "date": "2026-10-24",
+    "recordKind": "local-security-diagnostics",
+    "eligibleForAcceptance": false,
+    "status": "blocked",
+    "blockingTask": "T010",
+    "implemented": "Specific fail-closed Windows capture and blocking diagnostics; no Windows observation or blocking backend is implemented.",
+    "missingCapabilities": [
+      "Elevated ETW capture with a bounded ETL consumer and positive controls.",
+      "Administrator-scoped Windows Filtering Platform blocking with a positive control proving effectiveness."
+    ],
+    "subagentReportedEnvironmentProbes": {
+      "recordKind": "reported-diagnostics-not-acceptance-evidence",
+      "etwKernelSession": "Denied: run as administrator; subagent reports no residual collector.",
+      "firewallRule": "Denied: elevation required; subagent reports no rule was created.",
+      "ubuntuReference": "No provisioned local Ubuntu reference environment or baseline PNGs were found."
+    },
+    "checks": {
+      "infrastructureUnitTests": { "passed": 65, "failed": 0 },
+      "typecheck": "passed after serial retry following an allocation failure",
+      "lint": "passed",
+      "format": "passed after serial retry following an allocation failure"
+    },
+    "independentReview": {
+      "verdict": "pass",
+      "criticalFindings": 0,
+      "highFindings": 0,
+      "mediumFindings": 0,
+      "limitation": "Read-only review; test commands were not independently re-executed by the reviewer."
+    },
+    "failedInstalledRun": {
+      "artifactDirectory": ".vscode-test/desktop-artifacts/run-bad8d2b6-150e-4b6d-b6be-7a30173d31ba",
+      "exitCode": 1,
+      "failedTests": 3,
+      "reason": "VS Code CLI crashed while installing the VSIX before the functional journeys; Windows native capture also remains unsupported. TypeScript and Prettier reported allocation failures during the same verification batch."
+    }
+  },
+  "bootstrapGeometryContinuation": {
+    "date": "2026-10-24",
+    "recordKind": "local-bootstrap-geometry-diagnostics",
+    "eligibleForAcceptance": false,
+    "eligibilityReason": "Targeted functional bootstrap only; security, pinned reference pixels, matrix execution and execution-time candidate freezing remain incomplete.",
+    "command": "VSCODE_VERSION=1.142.0 RDLC_DESKTOP_PACKAGED=true pnpm exec playwright test --config tests/desktop/playwright.config.ts bootstrap.spec.ts",
+    "exitCode": 0,
+    "reviewedRun": {
+      "exitCode": 0,
+      "durationSeconds": 29.6,
+      "independentReview": {
+        "verdict": "pass-with-warnings",
+        "criticalFindings": 0,
+        "highFindings": 0,
+        "mediumFindingsResolved": 2,
+        "limitation": "Read-only targeted review; the reviewer did not independently re-execute the test commands."
+      },
+      "changes": [
+        "Assert the actual page transform is 100% before measuring geometry.",
+        "Import the runner's required capability list in its unit tests instead of mirroring it."
+      ],
+      "runnerUnitTests": { "passed": 9, "failed": 0 },
+      "scopedLint": "passed",
+      "scopedFormat": "passed",
+      "artifacts": [
+        {
+          "path": ".vscode-test/desktop-artifacts/bootstrap-geometry-reviewed-78e92b77-0fb2-4b84-8519-0599a745a79b/bootstrap/probe.json",
+          "sha256": "7f32f877ca7bc9a5592a2656bad84b7b68dd15399ebb901b150f8066b0ebe656"
+        },
+        {
+          "path": ".vscode-test/desktop-artifacts/bootstrap-geometry-reviewed-78e92b77-0fb2-4b84-8519-0599a745a79b/bootstrap/inserted-geometry.json",
+          "sha256": "02c11be9c53797c34ffccbe1b1124a3ba425bd11a99b8b157573e04282541039"
+        }
+      ]
+    },
+    "priorAttempt": {
+      "outcome": "interrupted",
+      "reason": "External shell timeout of 180 seconds expired before a final probe report.",
+      "artifactDirectory": ".vscode-test/desktop-artifacts/bootstrap-geometry-dc6d150d-38dd-40d0-a5ec-27eb89452f0c"
+    },
+    "checks": {
+      "runnerUnitTestsBeforeGate": { "passed": 7, "failed": 2 },
+      "runnerUnitTestsAfterGate": { "passed": 9, "failed": 0 },
+      "installedBootstrap": "passed",
+      "geometry": "passed",
+      "source": "passed",
+      "undo": "passed",
+      "accessibility": "passed",
+      "cleanup": "passed",
+      "screenshotComparison": "unrun",
+      "scopedLint": "passed",
+      "repositoryFormat": "passed"
+    },
+    "artifacts": [
+      {
+        "path": ".vscode-test/desktop-artifacts/bootstrap-geometry-96600324-18f9-4769-ad7b-403f06fc45d9/bootstrap/probe.json",
+        "sha256": "c8dcbe7b9b66d111fbc4465905da6b2086c2f2b9ead76dd746059ad09ce91a24"
+      },
+      {
+        "path": ".vscode-test/desktop-artifacts/bootstrap-geometry-96600324-18f9-4769-ad7b-403f06fc45d9/bootstrap/inserted-geometry.json",
+        "sha256": "02c11be9c53797c34ffccbe1b1124a3ba425bd11a99b8b157573e04282541039"
+      }
+    ]
+  },
+  "latestContinuation": {
+    "date": "2026-10-24",
+    "recordKind": "local-foundation-diagnostics",
+    "provenanceCommit": "8ddea1a494c6a95e8f2965157a119b4dc4dd179d",
+    "eligibleForAcceptance": false,
+    "eligibilityReason": "Windows host-tree observation and host outbound blocking are unsupported; reference visual comparison and the cross-platform matrix are unrun. This diagnostic run has no execution-time frozen input manifest and does not certify feature acceptance.",
+    "command": "VSCODE_VERSION=1.142.0 pnpm test:e2e -- --probe --packaged",
+    "exitCode": 1,
+    "vsixSha256": "ac31a68c81adb828723c43ee9eaeaf6aec384256140575bb7ca5caf1a64ded36",
+    "checks": {
+      "build": "passed",
+      "package": "passed",
+      "typecheck": "passed",
+      "lint": "passed",
+      "desktopInfrastructureUnitTests": { "passed": 64, "failed": 0 },
+      "packageAssertions": { "passed": 11, "failed": 0 },
+      "bootstrapFunctional": "passed",
+      "referenceVisualComparison": "unrun",
+      "restrictedHostTrustState": "passed",
+      "trustedHostTrustState": "passed",
+      "webviewPositiveControlsBothProfiles": "passed",
+      "nativeHostCapture": "unsupported",
+      "hostOutboundBlocking": "unsupported",
+      "nativeDragDelivery": "unavailable-with-evidence",
+      "crossPlatformCI": "unrun"
+    },
+    "subagents": {
+      "securityObserver": "failed before execution: Go usage limit exceeded",
+      "bootstrapAndCI": "failed before execution: Go usage limit exceeded"
+    },
+    "blockingTasks": ["T010", "T011", "T012"],
+    "artifacts": [
+      {
+        "path": ".vscode-test/desktop-artifacts/run-44bfa807-c709-4902-be42-e1352636ec90/runner-status.json",
+        "sha256": "1624848dac1baf9260ab3c1af2f036c12b1d20ec11d408d69655a68141d97f2f"
+      },
+      {
+        "path": ".vscode-test/desktop-artifacts/run-44bfa807-c709-4902-be42-e1352636ec90/playwright-report.json",
+        "sha256": "e30e48ab28c62aeca186b3f0ed9244a84a4ba18cbf5f8d1168533e909bcaf50d"
+      },
+      {
+        "path": ".vscode-test/desktop-artifacts/run-44bfa807-c709-4902-be42-e1352636ec90/bootstrap/probe.json",
+        "sha256": "d49ae8f39cf7bedaf1073664a3bbc1848aa9778570d6f7ca5ea5c315d67f8a9d"
+      },
+      {
+        "path": ".vscode-test/desktop-artifacts/run-44bfa807-c709-4902-be42-e1352636ec90/security-observer/probe.json",
+        "sha256": "f937883c7f9473bfc627009f00e1e4c01ddcae51de0be00793e51949dc98f045"
+      },
+      {
+        "path": ".vscode-test/desktop-artifacts/run-44bfa807-c709-4902-be42-e1352636ec90/native-drag/probe.json",
+        "sha256": "a9ba5e59db98be7ad46e60e3ef5749b9a6f5233ba2b5e8c21fc003e29fc4405a"
+      }
+    ]
+  },
   "eligibilityReason": "Mandatory visual/security/drag assertions have not passed; before/after input freezing is not yet integrated into execution. Recording-time identity cannot retroactively bind these historical observations.",
   "recordingTimeCandidate": {
     "provenanceCommit": "a9998ad5d097ce32498da33cb627dcdf1677536f",

@@ -1,0 +1,148 @@
+{
+  "feature": "005-native-sidebar-integration",
+  "story": "US4",
+  "recordKind": "partial-implementation-diagnostics",
+  "eligibleForAcceptance": false,
+  "featureComplete": false,
+  "candidateInputFingerprint": null,
+  "authoredDesktopAssertions": {
+    "file": "tests/desktop/components.spec.ts",
+    "count": 12,
+    "titles": [
+      "US4.2-insert-once",
+      "US4.2-table-defaults",
+      "US4.3-dataset-insert",
+      "US4.4-filtering",
+      "US4.5-unavailable-kinds",
+      "US4.5-refusals",
+      "US4.6-activation-fallback",
+      "FR-016-create",
+      "FR-017-keyboard",
+      "FR-018-fallback",
+      "SC-004-insert-history",
+      "REG-04-creation"
+    ],
+    "verification": "Scoped lint, formatting and TypeScript checks pass in the delegated run. Static coverage references resolve. Real installed execution is still being established.",
+    "oracle": "Expected creation XML is hand-written independently of production serialization. Tests require actual native activation, guarded source changes, exact one-step history, focus/selection and the existing compact HTML drag route."
+  },
+  "installedCreationRun": {
+    "platform": "win32",
+    "vscodeVersion": "1.142.0",
+    "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+    "assertions": ["US4.2-insert-once", "US4.2-table-defaults"],
+    "report": ".vscode-test/desktop-artifacts/components-creation-report.json",
+    "reportSha256": "65ba3df9d890744a51a99ba3f4e5f99b7f778779547a4f05883a88dd464d9807",
+    "passed": 2,
+    "failed": 0,
+    "exitCode": 0,
+    "durationSeconds": 51.0,
+    "outcome": "Both installed journeys pass. Exact creation source, focus/selection and one-step Undo/Redo assertions are executed; the remaining story assertions and latest source integration are not certified."
+  },
+  "installedDatasetAndRefusalRun": {
+    "platform": "win32",
+    "vscodeVersion": "1.142.0",
+    "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+    "passed": 0,
+    "failed": ["US4.3-dataset-insert", "US4.5-unavailable-kinds", "US4.5-refusals"],
+    "exitCode": 1,
+    "report": ".vscode-test/desktop-artifacts/components-data-refusals-report.json",
+    "reportSha256": "d96e0eb998a0282e98ba3d4d17cc9797679e7dc6049901566b2ef91fe403f978",
+    "observed": "Dataset is outside the currently rendered Components window; simultaneous DOM counts see two Insert rows rather than three. The source-only/invalid refusal test stops earlier because the focus helper cannot observe a focused tree.",
+    "followUp": "The Components owner fixes the trace-proven selector/readiness issue: substring Components matched the Explorer workspace name sidebar-components; pane titles now match exactly and visibility gates explicit container opening. Inventory uses real keyboard traversal and pointer targets are scrolled into view without activating them. Focus, all eleven kinds and eight unavailable reasons remain required. The three installed cases are rerunning in menu-oracles; no success is claimed yet."
+  },
+  "correctedComponentsRun": {
+    "vsixSha256": "26c182ded94160679f9cdb24507f9b153a5e62379fbe0442d74900e5ab583021",
+    "report": ".vscode-test/desktop-artifacts/menu-oracles-report.json",
+    "reportSha256": "8a7fd0727dca5e0574a5461dc250c4ab11005935fee805c5e0904b6cd7a5bfca",
+    "passed": ["US4.5-unavailable-kinds", "US4.5-refusals"],
+    "failed": ["US4.3-dataset-insert"],
+    "aggregateExitCode": 1,
+    "datasetProgress": "Dataset creation, focus, native selection and the initial Undo/Redo byte polls pass. The final Undo saves asynchronously; the helper reads disk immediately before the last save completes.",
+    "correction": "The shared expectSource helper now polls for the exact expected bytes before requiring a clean tab. No expected source value or history-step count changes. Dataset is rerunning separately."
+  },
+  "installedDatasetRerun": {
+    "assertion": "US4.3-dataset-insert",
+    "vsixSha256": "26c182ded94160679f9cdb24507f9b153a5e62379fbe0442d74900e5ab583021",
+    "passed": 1,
+    "failed": 0,
+    "report": ".vscode-test/desktop-artifacts/menu-final-assertions-report.json",
+    "reportSha256": "bd99bf012bf8a6d9ffb5503dba7d8cf41b96e8a2167654af828b64c53e7ef3d6",
+    "aggregateExitCode": 1,
+    "scope": "This Dataset scenario passes all exact source, focus, native selection and Undo/Redo/save checks. The aggregate command fails because its Data and Structure cases remain red."
+  },
+  "installedFilterAndCreationRun": {
+    "vsixSha256": "3619d426ec38a12b98926d01f5d4de182cb9a571881271247f22b19738b27496",
+    "report": ".vscode-test/desktop-artifacts/components-filter-fallback-create-report.json",
+    "reportSha256": "5771a7de1815ddef65c08849378f43d0cb76636b4731bd1e81e224355832e524",
+    "passed": ["US4.4-filtering", "FR-016-create"],
+    "failed": ["US4.6-activation-fallback"],
+    "exitCode": 1,
+    "observed": "Fallback helper opens the left panel but its persisted Structure tab remains selected; the Components cards are correctly hidden behind the other tab.",
+    "correction": "Open the compact panel only when needed, then explicitly select its visible Components tab. Card visibility remains mandatory. No panel preference or product code changes.",
+    "rerun": "The fallback case and the remaining keyboard/HTML-drag/history/creation journeys are running in components-keyboard-fallback-history."
+  },
+  "installedFallbackAndHistoryRun": {
+    "vsixSha256": "3619d426ec38a12b98926d01f5d4de182cb9a571881271247f22b19738b27496",
+    "report": ".vscode-test/desktop-artifacts/components-keyboard-fallback-history-report.json",
+    "reportSha256": "4d3957bdb9cf9d255df755f7a07790d4a1e47846031a0e7c9a94e08aa7be4c40",
+    "passed": ["FR-018-fallback", "SC-004-insert-history", "REG-04-creation"],
+    "failed": ["US4.6-activation-fallback", "FR-017-keyboard"],
+    "exitCode": 1,
+    "keyboardCorrection": "Space activates and dirties both source/designer tabs for one report. The capability probe now requires a positive dirty-tab count instead of exactly one tab; exact creation source and one-step history remain asserted.",
+    "fallbackInvestigation": "The second successive native component activation (Table after Textbox and Undo/save) produces no Created Table1 notice. Its current attached row is clicked without an actionability error. The proposed extra palette-focus plus keyboard-row-walk precondition was not retained: an ordinary post-Undo pointer click must work. The sidebar routing owner is investigating the lost invocation; no retry or success is claimed."
+  },
+  "installedKeyboardPassed": {
+    "assertion": "FR-017-keyboard",
+    "vsixSha256": "a32f2aa5bc29cc9728dc303ecfede75ca09dcf6bce21320d6c764a4f33120394",
+    "passed": 1,
+    "failed": 0,
+    "report": ".vscode-test/desktop-artifacts/keyboard-overlay-focus-report.json",
+    "reportSha256": "2f2c09e565bd8bbfb6093a97b9ec56eaee67b93143f644022fe50636210a42b8",
+    "aggregateExitCode": 1,
+    "scope": "Enter and the observed Space activation, exact creation source, one-step history, native field focus and Dataset keyboard creation pass. The aggregate failed on a separate accessibility helper assertion."
+  },
+  "installedSuccessiveActivationPassed": {
+    "assertion": "US4.6-activation-fallback",
+    "vsixSha256": "d533f2fa0bb8d0bde715bf2ac0463a9a378f948ba710b9f1844b58fec90d05e2",
+    "report": ".vscode-test/desktop-artifacts/native-row-publication-report.json",
+    "reportSha256": "e466426fe090afc4f601d3c396a1e9fac50c023db65e226940cc1f2b683d8416",
+    "passed": 1,
+    "failed": 0,
+    "aggregateExitCode": 1,
+    "scope": "Successive direct pointer activations after Undo/save and compact fallback pass. No palette-focus detour or activation retry was added. Components rows now survive document edits without unnecessary republishing.",
+    "limitation": "Other Components scenarios passed on earlier candidates; full same-candidate verification remains required."
+  },
+  "installedCompleteComponentsSuitePassed": {
+    "vsixSha256": "d533f2fa0bb8d0bde715bf2ac0463a9a378f948ba710b9f1844b58fec90d05e2",
+    "report": ".vscode-test/desktop-artifacts/data-components-same-candidate-report.json",
+    "reportSha256": "94130a8462b2964af437615558b486247c215302ecbbacdabfdc58efead9c6f7",
+    "componentsPassed": 12,
+    "dataPassed": 6,
+    "aggregatePassed": 18,
+    "aggregateFailed": 0,
+    "exitCode": 0,
+    "durationMinutes": 7.7,
+    "scope": "All Components insertion/defaults, unavailable/refusal, filtering, activation/fallback, name collision, keyboard, HTML drag, history and creation regression journeys pass together with all Data journeys.",
+    "limitation": "The known Components header regression in the separate context-switch scenario remains open. These passing creation journeys do not certify whole-story or cross-platform acceptance."
+  },
+  "focusHeaderCandidateComponentsPassed": {
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "report": ".vscode-test/desktop-artifacts/data-components-keyboard-focus-header-report.json",
+    "reportSha256": "4a2fd1f77b344a4ca0f80a4f856e9f5ee8b69382e7f08f6a91f30f3e42308dd1",
+    "componentsPassed": 12,
+    "componentsFailed": 0,
+    "aggregatePassed": 23,
+    "aggregateFailed": 1,
+    "aggregateExitCode": 1,
+    "scope": "All twelve Components journeys pass alongside six Data and five accessibility scenarios. This candidate also passes the separately recorded hundred-switch context/header journey."
+  },
+  "openScope": [
+    "Execute all twelve installed journeys and fix real failures before claiming their assertions",
+    "Verify pending and captured stale-row states through genuine races rather than a direct-command substitute",
+    "Verify compact fallback with moved native views as well as hidden views",
+    "Keep Space support conditional on actual host behavior; Enter activation remains mandatory",
+    "Native custom-MIME drag remains unavailable and requires the separate probe plus passing activation/compact fallback evidence",
+    "Measure whole-suite runtime against the current global timeout before changing limits or run structure",
+    "Retain same-candidate platform, security and visual acceptance gates"
+  ]
+}

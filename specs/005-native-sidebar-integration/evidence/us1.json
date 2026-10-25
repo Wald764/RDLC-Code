@@ -1,0 +1,128 @@
+{
+  "feature": "005-native-sidebar-integration",
+  "story": "US1",
+  "recordKind": "partial-implementation-diagnostics",
+  "eligibleForAcceptance": false,
+  "focusHeaderInstalledWorkspaceRun": {
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "report": ".vscode-test/desktop-artifacts/workspace-structure-focus-header-report.json",
+    "reportSha256": "ffb66a8683a0c3695c4a4ae02f023425868501b50bbe45a30424fc8115f7bd3f",
+    "workspacePassed": 11,
+    "workspaceFailed": 0,
+    "aggregatePassed": 18,
+    "aggregateFailed": 5,
+    "aggregateExitCode": 1,
+    "scope": "All eleven Workspace scenarios pass against this installed package. The aggregate fails on five separate Structure assertions; global acceptance remains open."
+  },
+  "featureComplete": false,
+  "candidateInputFingerprint": null,
+  "reason": "The original installed run failed four tests and worker teardown; its evidence is retained. A fresh Windows installed rerun passes all eleven tests. Source integration continues; no same-candidate cross-platform, security or visual acceptance is claimed.",
+  "build": {
+    "command": "pnpm build",
+    "outcome": "passed after an initial invocation exceeded its 240-second command timeout"
+  },
+  "package": {
+    "command": "pnpm package",
+    "outcome": "passed",
+    "vsixSha256": "74477418d01cf24b42a9b57ec5552202165e46b4678f7a4ec3338f0e0a8ded0f",
+    "assertions": {
+      "command": "node --test dist/tests/package/sidebar.test.js dist/tests/package/contents.test.js",
+      "passed": 8,
+      "failed": 0
+    }
+  },
+  "compactFallback": {
+    "verification": "Delegated Angular suite with migration/default/fallback/gesture-deferral tests; source-default and relayout-guard mutations fail the new tests, then are reverted.",
+    "passed": 227,
+    "failed": 0,
+    "limitation": "Component tests do not certify installed HTML drag, native keyboard behavior or visual acceptance."
+  },
+  "installedDesktop": {
+    "platform": "win32",
+    "vscodeVersion": "1.142.0",
+    "packaged": true,
+    "command": "pnpm exec playwright test --config tests/desktop/playwright.config.ts workspace.spec.ts '--reporter=list,json'",
+    "environment": {
+      "RDLC_DESKTOP_PACKAGED": "true",
+      "VSCODE_VERSION": "1.142.0",
+      "RDLC_DESKTOP_ARTIFACT_DIR": ".vscode-test/desktop-artifacts/us1-7826ddb8-2636-4e0c-914c-6009044ffa18",
+      "PLAYWRIGHT_JSON_OUTPUT_NAME": ".vscode-test/desktop-artifacts/us1-7826ddb8-2636-4e0c-914c-6009044ffa18/playwright-report.json"
+    },
+    "exitCode": 1,
+    "passed": [
+      "US1.1-container-before-designer",
+      "US1.1-new-open-report",
+      "FR-001-activation",
+      "US1.2-active-report-labels",
+      "US1.3-view-placement",
+      "FR-002-view-movement",
+      "SC-001-clean-profile"
+    ],
+    "failed": [
+      {
+        "assertion": "US1.4-explorer-independent",
+        "reportedErrors": ["Trace write failed", "Electron close timed out after 15000ms"]
+      },
+      {
+        "assertion": "FR-003-state-coverage",
+        "reportedErrors": ["Trace stop: target page, context or browser has been closed"]
+      },
+      {
+        "assertion": "FR-004-fallback",
+        "reportedErrors": ["Electron close timed out after 15000ms"]
+      },
+      {
+        "assertion": "EDGE-08-disposal",
+        "reportedErrors": ["Test timeout of 300000ms exceeded"]
+      }
+    ],
+    "workerError": "Worker teardown timeout of 300000ms exceeded",
+    "durationMilliseconds": 1071614.691,
+    "skipped": 0,
+    "artifacts": [
+      {
+        "path": ".vscode-test/desktop-artifacts/us1-7826ddb8-2636-4e0c-914c-6009044ffa18/playwright-report.json",
+        "sha256": "6dced153e9eb33b3b9c0341aedbb766585ce36c99c125ccec82ad0d1a3905d14"
+      }
+    ],
+    "interpretation": "Cleanup exceptions masked earlier errors because session() awaited close in finally. The four cases remain failed; no retry or timeout waiver is applied.",
+    "retainedTraceDiagnosis": {
+      "US1.4-explorer-independent": "Electron trace stops after the second RDLC Activity Bar click; the trace write fails and the exact original journey error cannot be recovered.",
+      "FR-003-state-coverage": "After big.rdlc opens, the workbench page closes during typing of Focus on Report Structure View. The trace records TargetClosedError before cleanup replaces it.",
+      "FR-004-fallback": "Clicking the palette row for View: Toggle Primary Side Bar Visibility times out after 30000ms before Electron close also times out.",
+      "EDGE-08-disposal": "Launch trust hangs before the journey starts: the public trust-probe command's palette fails to hide, then keyboard.press('Escape') never returns. The test and worker eventually time out."
+    },
+    "cleanupCorrection": "workspace.spec.ts now collects the launch/journey error before closing, attempts temporary-workspace removal independently, and reports original plus cleanup errors together. Closure and trace failures still fail the test. Both command recovery and command-availability dismissal now bound Escape using the existing timeout helper and 30000ms command budget; failed recovery retains the original palette error as the first AggregateError cause. The corrected Desktop run is pending.",
+    "paletteRegression": {
+      "command": "node --experimental-transform-types --import file:///C:/Users/Alexandre/AppData/Local/Temp/opencode/us1-ts-hooks.mjs --test --test-name-pattern='command availability|command recovery|failed palette' tests/desktop/driver.test.ts",
+      "before": "The recovery and availability regressions each exceed their 10000ms test deadline with the original unbounded Escape; exit 1.",
+      "afterPassed": 4,
+      "afterFailed": 0,
+      "typecheck": "pnpm typecheck passes",
+      "lateRejectionReview": "The recovery test now rejects the previously hanging transport after its timeout, then yields to the next event-loop turn. All four targeted tests still pass without unhandled rejections: Promise.race already observes both participants, so no redundant rejection sink is added.",
+      "limitation": "Primitive transport tests prove driver termination and error preservation, not actual Desktop trust or the previously failed US1 assertions."
+    }
+  },
+  "installedRerun": {
+    "command": "pnpm exec playwright test --config tests/desktop/playwright.config.ts workspace.spec.ts '--reporter=list,json'",
+    "platform": "win32",
+    "vscodeVersion": "1.142.0",
+    "packaged": true,
+    "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+    "exitCode": 0,
+    "passed": 11,
+    "failed": 0,
+    "skipped": 0,
+    "reportedDuration": "6.6 minutes",
+    "previouslyFailingCasesNowPassed": ["US1.4-explorer-independent", "FR-003-state-coverage", "FR-004-fallback", "EDGE-08-disposal"],
+    "report": ".vscode-test/desktop-artifacts/workspace-integration.json",
+    "reportSha256": "b3cb0670aeacc188e67fd19938a1e1eef53ebe0e21a1b0e61bb92b8cc4e6a760",
+    "log": ".vscode-test/workspace-integration.log",
+    "interpretation": "No cleanup or worker timeout is reported in this rerun. This is diagnostic evidence for these eleven Windows installed journeys, not proof of all feature gates or a unique causal explanation of the historic freezes."
+  },
+  "pending": [
+    "Canonical host and installed checks after the later source changes",
+    "Pinned Ubuntu visual references and comparisons",
+    "Applicable cross-platform and security acceptance gates"
+  ]
+}

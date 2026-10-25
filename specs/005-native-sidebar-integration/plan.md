@@ -14,6 +14,18 @@ Require real Desktop functional, accessibility, visual, lifecycle, preservation 
 
 ## Technical Context
 
+### Approved implementation-order adjustment — 2026-10-25
+
+The user explicitly authorizes continuing US1–US6 implementation while the
+platform security and reference-environment gates T010–T012 remain open. Shared
+source contracts and routing prerequisites still apply. Implement and check each
+story in specification order, retaining its pending acceptance evidence instead
+of treating an external validation blocker as a ban on subsequent source work.
+This changes execution order only: no security, preservation, accessibility,
+visual, cross-platform, same-candidate or release requirement is waived. Do not
+declare a story or the feature validated while its mandatory checks are missing,
+failed or unrun. Earlier execution notes describe their historical checkpoints.
+
 **Language/Version**: TypeScript 6.0.3; Node `>=24.15.0 <25` (`.node-version` 24.22.0); pnpm 11.28.2; Angular 22.2.3.
 
 **Primary Dependencies**: Existing VS Code public APIs/types 1.110.0, Angular/RxJS 7.8.2 and workspace report-model/parser/validation/serializer/renderer. No new runtime dependency. Exact test-only `playwright@1.64.1` is the selected Electron-driver candidate, subject to mandatory capability bootstrap; retain `@vscode/test-electron@3.1.0` provisioning and host integration. Check required declarations against minimum runtime without broadening compatibility claims.

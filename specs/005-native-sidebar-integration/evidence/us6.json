@@ -1,0 +1,429 @@
+{
+  "feature": "005-native-sidebar-integration",
+  "story": "US6",
+  "recordKind": "partial-implementation-diagnostics",
+  "eligibleForAcceptance": false,
+  "featureComplete": false,
+  "candidateInputFingerprint": null,
+  "workflowIntegration": {
+    "implementation": "The existing six-entry OS/minimum/stable matrix now invokes functional and installed Desktop journeys; the required aggregate also depends on a separate minimum-version visual job. The canonical release job invokes installed, observer and visual checks before release-artifact.js.",
+    "initialDelegatedTests": {
+      "passed": 9,
+      "mutationVariantsDetected": 14,
+      "limitation": "These tests passed on the initial workflow change but did not detect that the canonical visual command omitted --packaged. They are not proof that visual checks certify the VSIX."
+    },
+    "reviewCorrectionsImplemented": [
+      "The canonical visual command requires --packaged; all three certifications are tested for installed-artifact mode.",
+      "Canonical Desktop diagnostics upload with always(), separately from the verified publication handoff.",
+      "Hosted Ubuntu and apt provisioning are described as a reference candidate, not a proven pinned image/font environment.",
+      "The bespoke YAML parser is replaced with repository-specific workflow regression checks."
+    ],
+    "correctedRegressionTests": {
+      "passed": 9,
+      "delegatedMutationVariantsDetected": 17,
+      "parentVerification": "All nine workflow tests pass in the fresh compiled 166-test aggregate.",
+      "taskScope": "T069 and T071 implementation is complete. T067/T070 and final same-candidate acceptance remain open; no CI execution is implied."
+    },
+    "typecheck": "pnpm typecheck passes after the initial workflow and Data helper integration",
+    "ciExecution": "not run",
+    "publication": "not requested or performed"
+  },
+  "coverageResolution": {
+    "unresolvedBeforeMapping": 89,
+    "unresolvedAfterMapping": 18,
+    "unresolvedAfterDataAndComponentsDeclarations": 0,
+    "parentConfirmed": true,
+    "coverageSpecExecution": {
+      "command": "pnpm exec playwright test --config tests/desktop/playwright.config.ts coverage.spec.ts --reporter=list",
+      "passed": 1,
+      "failed": 0,
+      "exitCode": 0,
+      "scope": "Executes the static assertion-resolution check. It proves current references identify executable declarations, not that the referenced Desktop journeys pass."
+    },
+    "diagnostic": ".vscode-test/desktop-artifacts/coverage-unresolved.json",
+    "scope": "Only assertion references and the corresponding native-drag exception probe reference are corrected. Oracles, fixtures and artifacts remain required. A later parent scan finds zero unresolved titles after Data/Components declarations land; their runtime results are still pending.",
+    "limitation": "Static title resolution is not runtime proof or complete coverage of every clause. T072 and same-candidate acceptance remain open."
+  },
+  "desktopCollection": {
+    "command": "pnpm exec playwright test --config tests/desktop/playwright.config.ts --list",
+    "exitCode": 0,
+    "files": 13,
+    "tests": 65,
+    "scope": "All currently authored Desktop suites collect, including context, accessibility, layout, offline, visual and coverage. Data/Components extensions are still being authored.",
+    "limitation": "Discovery only; collection is not execution or acceptance evidence."
+  },
+  "keyboardFilterInitialRun": {
+    "assertion": "US4.4-filter-clear",
+    "platform": "win32",
+    "vscodeVersion": "1.142.0",
+    "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+    "passed": 0,
+    "failed": 1,
+    "exitCode": 1,
+    "report": ".vscode-test/desktop-artifacts/keyboard-filter-report.json",
+    "observed": "The keyboard palette helper expects the entire quick-input widget to hide after invoking Filter Components, but the command opens its legitimate filter input in that widget. The test stops before typing the filter.",
+    "correction": "The local shared palette helper now waits for the selected command row to disappear, allowing the next input/picker to remain open. Normal commands must still remove their palette row. Theme commands use the same corrected semantics.",
+    "firstRerun": "The corrected palette reaches filtering/clearing but the test then assumes every component is simultaneously rendered in the virtualized tree; Rectangle is outside the rendered window. The keyboard-filter-input report retains that failure.",
+    "virtualizationCorrection": "The test focuses Components, uses the existing keyboard row walker to reach each expected kind, and asserts its actual accessible row is visible. The complete eleven-kind oracle is retained; simultaneous DOM presence is no longer assumed.",
+    "correctedRerun": {
+      "passed": 1,
+      "failed": 0,
+      "exitCode": 0,
+      "durationSeconds": 21.0,
+      "report": ".vscode-test/desktop-artifacts/keyboard-filter-navigation-report.json",
+      "reportSha256": "1646c44dc1bf0e4aac3a7e11d055c9b10597f3209f83cad97340842be1b9b19d",
+      "scope": "This installed Windows keyboard filter/clear journey passes. It is not a full theme, scale, creation or accessibility acceptance run."
+    }
+  },
+  "keyboardJourneyInitialRun": {
+    "assertion": "US6.1-keyboard-journey",
+    "platform": "win32",
+    "vscodeVersion": "1.142.0",
+    "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+    "passed": 0,
+    "failed": 1,
+    "exitCode": 1,
+    "report": ".vscode-test/desktop-artifacts/keyboard-journey-report.json",
+    "reportSha256": "90c2af2927058bea283083afae54b23a104dd3e77975399bd1cffb83af2d1db0",
+    "observed": "The native focus command focuses the tree container, but initially no row is active. The test reads a null active-row name before sending a navigation key.",
+    "correction": "After verifying tree focus, the test presses Home and waits for the real active row's accessible name before exercising arrows and Enter. No mouse or direct DOM focus is substituted.",
+    "homeRerun": {
+      "passed": 0,
+      "failed": 1,
+      "exitCode": 1,
+      "report": ".vscode-test/desktop-artifacts/keyboard-journey-home-report.json",
+      "reportSha256": "bc692f2b3b6ca969dc5884cce99f06317c95c84e4ff2f01edd4148411ebd8643",
+      "observed": "Focus, named-row navigation, activation and collapse/expand assertions now pass. End reaches the final Chart row in the retained screenshot, but the test reads scrollTop from Monaco's outer list, which stays zero for its custom scrolling.",
+      "correction": "Remove the outer-scrollTop helper. The test requires the known final row to start hidden, become visible through End, expose the active accessible name and fit geometrically within the sidebar. This measures the required reveal directly."
+    },
+    "revealRerun": {
+      "passed": 0,
+      "failed": 1,
+      "exitCode": 1,
+      "report": ".vscode-test/desktop-artifacts/keyboard-journey-reveal-report.json",
+      "reportSha256": "a6cf20196bd0820e06c9d2b75dd2a0ba4fda32814964992509be0a217b910694",
+      "observed": "The obscured final row reveal passes. The next failure is a global menuitem selector: after Escape dismisses the context menu, its first match is the permanent File menubar item, which correctly remains visible.",
+      "correction": "Scope context-menu readiness and dismissal to .context-view instead of all menuitem roles. The native keyboard interaction and focus restoration assertions stay required."
+    },
+    "menuRerun": {
+      "passed": 0,
+      "failed": 1,
+      "exitCode": 1,
+      "report": ".vscode-test/desktop-artifacts/keyboard-journey-menu-report.json",
+      "reportSha256": "0f803ea37cffe8b9d57825d09b4ef01c0604e0c2e34adb644ca91018878a8643",
+      "observed": "Context-menu Escape and focus return now pass. The first letter of the subsequent keyboard edit is lost: Name contains enamedByKeyboard rather than RenamedByKeyboard before commit.",
+      "followUp": "The editor owner is investigating focus/render/input ordering in the retained trace. No fill() or typed-value relaxation replaces the real keyboard edit."
+    },
+    "rerun": "Awaiting diagnosis of the lost first character; no complete keyboard journey passing outcome is claimed."
+  },
+  "nativePropertiesFocusCorrection": {
+    "rootCause": "The product's deferred focusProperties callback selected the inspector's Hide panel button before its Name input. A new Angular regression reproduces this wrong focus target. Browser-level first-key handoff is inferred from trace ordering rather than observed focus events.",
+    "fix": "Prefer the first enabled input among the existing selector matches, falling back to its first element. Preserve existing custom selectors and reuse the inspector node.",
+    "delegatedAngular": {
+      "before": "1 failed and 239 passed: activeElement is the Hide panel button instead of Name",
+      "after": "240 passed, including native Properties focus and preserved field selection"
+    },
+    "desktopReadiness": "The keyboard journey waits for the native action to focus Name; it no longer programmatically focuses that field before typing. Real keyboard input and exact expected name remain required.",
+    "vsixSha256": "3619d426ec38a12b98926d01f5d4de182cb9a571881271247f22b19738b27496",
+    "installedRun": {
+      "passed": 0,
+      "failed": 1,
+      "exitCode": 1,
+      "report": ".vscode-test/desktop-artifacts/keyboard-properties-focus-report.json",
+      "reportSha256": "3ce25d21fcf6338726ed9f5a5b8553d1c55c81f3c425f0eecbe19c458b982d5d",
+      "observed": "Native Name focus and the complete real keyboard string now pass. The next assertion incorrectly polls disk before the test's later explicit Save step, so it still reads the original source.",
+      "correction": "Save the accepted edit with the keyboard shortcut before the independent exact disk-byte comparison. Preserve the native focused-field gate, real typing and complete-source rename-only equality.",
+      "rerun": "Running with separate keyboard-accepted-save artifacts; complete journey success is not yet claimed."
+    }
+  },
+  "keyboardAcceptedSaveRun": {
+    "assertion": "US6.1-keyboard-journey",
+    "vsixSha256": "3619d426ec38a12b98926d01f5d4de182cb9a571881271247f22b19738b27496",
+    "passed": 0,
+    "failed": 1,
+    "exitCode": 1,
+    "report": ".vscode-test/desktop-artifacts/keyboard-accepted-save-report.json",
+    "reportSha256": "72ad5ae3368841610930345e349f5c383e6556d9626f227b1c287188d89eb840",
+    "observed": "Native Properties focuses Name, complete keyboard input arrives, save produces the exact rename-only source and native primary cues pass. The final Escape leaves document.activeElement on the body rather than the authoring viewport.",
+    "followUp": "The editor owner is checking Escape cancellation and focus-return semantics against the contract. The canvas-focus requirement remains asserted; no complete keyboard success is claimed."
+  },
+  "overlayEscapeFocusCorrection": {
+    "rootCause": "Native Properties reveals a compact overlay without a toolbar invoker. Escape dismissed it but only tried to focus that absent invoker, leaving browser focus on the body.",
+    "fix": "After dismissing the overlay, focus its connected invoker when present; otherwise focus the authoring viewport with preventScroll, matching the existing context-menu fallback.",
+    "delegatedRed": "1 failed and 240 passed: the revealed-overlay Escape regression does not focus the viewport",
+    "delegatedGreen": "241 passed across fifteen Angular files, including accepted input restoration, no edit, overlay dismissal, viewport focus and retained toolbar-invoker behavior",
+    "installedVerification": "Fresh build/package pass. The real keyboard journey is running against VSIX a32f2aa5bc29cc9728dc303ecfede75ca09dcf6bce21320d6c764a4f33120394 with separate keyboard-overlay-focus artifacts; no complete result is claimed yet."
+  },
+  "installedKeyboardJourneyPassed": {
+    "assertion": "US6.1-keyboard-journey",
+    "vsixSha256": "a32f2aa5bc29cc9728dc303ecfede75ca09dcf6bce21320d6c764a4f33120394",
+    "passed": 1,
+    "failed": 0,
+    "durationSeconds": 17.8,
+    "aggregateExitCode": 1,
+    "report": ".vscode-test/desktop-artifacts/keyboard-native-expansion-report.json",
+    "reportSha256": "58c8bf8b51fcbcf6ccbfdd66c8672e2854458342e6ad1a0199b10f9af3341ca3",
+    "scope": "Real keyboard tree entry, activation, collapse/expand, obscured-target reveal, context-menu dismissal/focus, native Properties field focus, complete typing, exact saved rename and final Escape viewport focus all pass with capture.",
+    "earlierSameCandidateRun": {
+      "report": ".vscode-test/desktop-artifacts/keyboard-overlay-focus-report.json",
+      "reportSha256": "2f2c09e565bd8bbfb6093a97b9ec56eaee67b93143f644022fe50636210a42b8",
+      "observed": "Immediate aria-expanded reads race native ArrowRight handling. Polls now require the unchanged exact collapsed and expanded states."
+    },
+    "limitation": "The aggregate run exits 1 because its separate Data CRUD scenario fails. Keyboard success does not certify visual, contrast, 200-percent or remaining US6 requirements."
+  },
+  "installedStateAndFieldKeyboardRun": {
+    "vsixSha256": "a32f2aa5bc29cc9728dc303ecfede75ca09dcf6bce21320d6c764a4f33120394",
+    "report": ".vscode-test/desktop-artifacts/keyboard-state-fields-labels-report.json",
+    "reportSha256": "9e722e7f9a6e3a79dbc18f940ea17eb868889a95944a60d3145c774142bf0497",
+    "passed": ["EDGE-10-long-labels"],
+    "failed": ["FR-003-state-labels", "FR-027-keyboard"],
+    "exitCode": 1,
+    "corrections": [
+      "FR-027 presses Home and waits for a real active row after container focus, as in the passing US6.1 journey",
+      "For the empty XML 1.1 source-only fixture, Structure stays empty while Report Data retains exactly four presentation-only categories plus four No definitions messages. Require that exact empty inventory instead of demanding zero presentation rows"
+    ],
+    "rerun": "The two failed assertions are running separately in keyboard-empty-data-focus. Original failures remain retained; no success is claimed yet."
+  },
+  "installedEmptyDataAndFieldFocusRun": {
+    "vsixSha256": "a32f2aa5bc29cc9728dc303ecfede75ca09dcf6bce21320d6c764a4f33120394",
+    "report": ".vscode-test/desktop-artifacts/keyboard-empty-data-focus-report.json",
+    "reportSha256": "7100d845af77e8071ade559dd632e044549278713c38168d871c9470636899ab",
+    "passed": ["FR-003-state-labels"],
+    "failed": ["FR-027-keyboard"],
+    "exitCode": 1,
+    "observed": "All state-label assertions pass. FR-027 now reaches visible-focus measurement but tests :focus-visible on an aria-activedescendant row instead of the actual focused tree container.",
+    "correction": "Read :focus-visible on the actual active element while retaining the focused-row computed background comparison. Exclude the focused row itself when finding an unfocused sibling. No CSS class alone certifies painting.",
+    "rerun": "Running in keyboard-focus-owner; no complete FR-027 result is claimed yet."
+  },
+  "installedFocusOwnerRun": {
+    "assertion": "FR-027-keyboard",
+    "vsixSha256": "a32f2aa5bc29cc9728dc303ecfede75ca09dcf6bce21320d6c764a4f33120394",
+    "exitCode": 1,
+    "passed": 0,
+    "failed": 1,
+    "report": ".vscode-test/desktop-artifacts/keyboard-focus-owner-report.json",
+    "reportSha256": "4b05df03a8c130f6f05a93cb06bc2f867a272c5e50fde90f54fbcb0c834fc862",
+    "observed": "Native focus-visible and distinct computed row painting now pass, as do selection and the invalid-name refusal. Resuming typing afterward loses the first D: raftThatNeverCommits rather than DraftThatNeverCommits.",
+    "followUp": "The editor owner is checking post-refusal browser/render focus ordering using the retained trace. Full exact keyboard input, Escape restoration, field shortcuts and no-trap assertions remain required; the successful US6.1 path is not substituted for this case."
+  },
+  "installedPostRefusalFocusGate": {
+    "assertion": "FR-027-keyboard",
+    "vsixSha256": "d533f2fa0bb8d0bde715bf2ac0463a9a378f948ba710b9f1844b58fec90d05e2",
+    "report": ".vscode-test/desktop-artifacts/native-row-publication-report.json",
+    "reportSha256": "e466426fe090afc4f601d3c396a1e9fac50c023db65e226940cc1f2b683d8416",
+    "passed": 0,
+    "failed": 1,
+    "exitCode": 1,
+    "observed": "The replacement focus assertion fails after the invalid-name refusal: Name remains inactive for fifteen seconds. The test stops before resuming typing, proving the previous DOM focus command concealed a missing focus precondition.",
+    "followUp": "Check the required post-refusal focus behavior and pending-fieldset blur; preserve deliberate user focus movement and the existing Escape/toolbar focus returns. No complete FR-027 success is claimed."
+  },
+  "installedInitialLayoutRun": {
+    "vsixSha256": "d533f2fa0bb8d0bde715bf2ac0463a9a378f948ba710b9f1844b58fec90d05e2",
+    "report": ".vscode-test/desktop-artifacts/layout-row-publication-report.json",
+    "reportSha256": "8f17180cd460643245ecf2207d82cf01d8e94a646084f2e49f9cf0ac93888222",
+    "passed": 0,
+    "failed": ["US6.2-interface-scaling", "US6.3-frame-stability", "FR-029-stability"],
+    "exitCode": 1,
+    "observed": "Scaling stops on a hidden status-text visibility requirement. Both stability cases stop on a pointer click aimed at Front, intentionally covered by LaterTie in the mixed fixture. No final stability or scaling measurement passes.",
+    "followUp": "The layout owner is checking the actual active frame and compact status contract, and replacing only the obscured pointer target with a genuinely reachable fixture item. Force clicks and fabricated visibility are not permitted."
+  },
+  "pendingInspectorFocusCorrection": {
+    "requirement": "FR-027 / T064 and layout-protocol require a rejected operation to return focus to a usable control.",
+    "rootCause": "Pending edits disable the inspector fieldset and the browser drops focus to the document body. Existing scene/snapshot recovery only restores disconnected controls, not a still-connected control that becomes enabled again.",
+    "fix": "Capture the active editor control at pending start; after pending settles, restore that connected enabled control only when focus is still on the body. Reuse the existing render focus-recovery effect and preserve deliberate focus movement.",
+    "delegatedRed": "1 failed and 241 passed: the stranded inspector control is not restored",
+    "delegatedGreen": "242 passed across fifteen Angular files, including usable restored input and preservation of focus moved by the user",
+    "runtime": "Parent source review completed; fresh build/package and installed FR-027 execution are pending the current serialized Data/Components run."
+  },
+  "installedPendingFocusRestored": {
+    "assertion": "FR-027-keyboard",
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "exitCode": 1,
+    "report": ".vscode-test/desktop-artifacts/focus-header-initial-report.json",
+    "reportSha256": "5d531b27c9d78db4ac2aa8b4cd91056234458c9852827fb7da0231197e2f48d6",
+    "observed": "Automatic Name focus after refusal and complete DraftThatNeverCommits keyboard input now pass. Escape then dismisses the compact overlay, so the default visible-role locator no longer finds its hidden field.",
+    "testCorrection": "Check the retained field's restored accepted value, reopen Properties with its real toolbar control when collapsed, then continue field-local shortcuts. Select the whole field again before Cut because the preceding caret assertion collapses its selection.",
+    "rerun": "Running separately in keyboard-reopen-overlay. Full FR-027 success is not claimed yet."
+  },
+  "installedReopenedOverlayKeyboardRun": {
+    "assertion": "FR-027-keyboard",
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "exitCode": 1,
+    "report": ".vscode-test/desktop-artifacts/keyboard-reopen-overlay-report.json",
+    "reportSha256": "d85e27d2c9d951de1696d3c8ae5a0ca92949a9c17f2fcbe6654a5032d3f840ce",
+    "observed": "Post-refusal focus, complete draft typing, Escape value restoration, reopening the overlay, caret and clipboard field shortcuts pass. The no-trap oracle samples only the workbench active tag, which stays iframe while focus moves inside the webview.",
+    "correction": "Record focused element identity in the workbench and designer document after each real Tab; require an actual focused control rather than body/html/iframe and movement among distinct identities.",
+    "rerun": "Running with separate keyboard-frame-focus artifacts."
+  },
+  "installedFieldKeyboardPassed": {
+    "assertion": "FR-027-keyboard",
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "passed": 1,
+    "failed": 0,
+    "exitCode": 0,
+    "durationSeconds": 25.7,
+    "report": ".vscode-test/desktop-artifacts/keyboard-frame-focus-report.json",
+    "reportSha256": "fa34c74f87bbbb6c5c32d434d6cdaf04dd8ddc19b6b03cb6651de83854971a9d",
+    "scope": "Native focus paint, selection, invalid-name refusal, automatic focus return, complete draft typing, Escape restoration, overlay reopening, field-local caret/cut/paste/Undo, unchanged source and ten real Tab steps across distinct focused controls pass with capture.",
+    "limitation": "This functional keyboard result does not replace contrast/focus-boundary measurements, 200-percent coverage, verified reference visuals or cross-platform runs."
+  },
+  "installedCombinedKeyboardRun": {
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "report": ".vscode-test/desktop-artifacts/data-components-keyboard-focus-header-report.json",
+    "reportSha256": "4a2fd1f77b344a4ca0f80a4f856e9f5ee8b69382e7f08f6a91f30f3e42308dd1",
+    "passed": 23,
+    "failed": 1,
+    "exitCode": 1,
+    "accessibilityPassed": ["US4.4-filter-clear", "US6.1-keyboard-journey", "FR-003-state-labels", "FR-027-keyboard", "EDGE-10-long-labels"],
+    "failedAssertion": "SC-006-keyboard-themes",
+    "observed": "The command palette ranks Browse Color Themes in Marketplace before Preferences: Color Theme. The helper incorrectly requires the requested command to be first rather than selecting its actual result.",
+    "correction": "Wait for the matching command and navigate with real ArrowDown presses until its actual aria-activedescendant is focused, then press Enter. No pointer activation or first-result assumption.",
+    "rerun": "SC-006 is running separately in keyboard-theme-command. Theme behavior is not yet passed."
+  },
+  "installedThemeCommandRerun": {
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "report": ".vscode-test/desktop-artifacts/keyboard-theme-command-report.json",
+    "reportSha256": "f13cac591301d514821b82765150da31552c819fc527a2b9ab42a27c21301af0",
+    "exitCode": 1,
+    "observed": "The corrected keyboard palette selection opens Color Theme and applies Light+. The next precondition wrongly assumes focusing an unvisited tree already activates a row.",
+    "correction": "Enter the tree with Home and wait for its real active descendant, matching the verified US6.1/FR-027 entry sequence. Theme movement, activation and painted focus assertions remain required.",
+    "rerun": "Running in keyboard-theme-row."
+  },
+  "installedThemeFocusStyleRun": {
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "report": ".vscode-test/desktop-artifacts/keyboard-theme-row-report.json",
+    "reportSha256": "3c9c62feb5a327cb9e351104d84878437ca1f7361426aa931c3d1a7ee5b67f40",
+    "exitCode": 1,
+    "observed": "Theme application and keyboard navigation reach High Contrast, whose focused row has a visible orange outline in the screenshot but the same transparent background as its sibling.",
+    "correction": "Allow a distinct computed row background or a positive-width non-hidden/nontransparent outline different from the sibling. Retain real focus-visible, theme propagation, activation and captured UI. This functional oracle does not certify pixel contrast or focus-boundary thresholds.",
+    "rerun": "Running in keyboard-theme-outline."
+  },
+  "installedThemeOutlineRerun": {
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "report": ".vscode-test/desktop-artifacts/keyboard-theme-outline-report.json",
+    "reportSha256": "6d99fcd642dd95fc9b54dba9106b78127918b0d03d6e7cda15d523a9eb6f0fa6",
+    "exitCode": 1,
+    "observed": "Earlier theme navigation/focus checks pass, including the High Contrast outline. High Contrast Light stops because Browse Additional Color Themes is ranked before the matching built-in Light High Contrast result.",
+    "correction": "Reuse the same bounded keyboard result selection for both command-palette entries and theme choices. Require the matching result to own aria-activedescendant before Enter; never activate the browse entry.",
+    "rerun": "Running in keyboard-theme-result."
+  },
+  "installedKeyboardThemesPassed": {
+    "assertion": "SC-006-keyboard-themes",
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "report": ".vscode-test/desktop-artifacts/keyboard-theme-result-report.json",
+    "reportSha256": "24a5cc068dfd9879ea11ad6509754e9726d0f5a48baee9d0a59e6beaff87a540",
+    "passed": 1,
+    "failed": 0,
+    "exitCode": 0,
+    "durationSeconds": 32.5,
+    "scope": "Real keyboard theme selection and propagation, native row navigation/activation, accepted primary cues, focus-visible with distinct background or outline and palette return pass for the four built-in light/dark/high-contrast variants with captures.",
+    "limitation": "Together with the earlier 23 passes, every assertion in the three functional suites has passed on this package, but they are not one exit-0 aggregate. This does not certify pixel contrast, focus-boundary measurements or 200-percent visual variants."
+  },
+  "layoutFixtureAndStatusFollowUp": {
+    "file": "tests/desktop/layout.spec.ts",
+    "changes": "Use the actual topmost LaterTie item for pointer gestures. At each scale require a live designer and rendered footer, a populated status region whose message is present in the footer accessibility snapshot, and record its actual width/height rather than assume text has nonzero width.",
+    "scope": "The fixtures require a selected primary, not the deliberately covered Front item. Scaling and stability thresholds, frame sampling, XML/history checks and 200-percent guards remain unchanged.",
+    "runtime": "Source reviewed; serialized installed layout rerun is pending the active context suite.",
+    "limitation": "No claim is made that a collapsed status message is visually readable. Its actual box and accessible message must be retained in the scale evidence; mandated contrast and unavailable-reason coverage remain separate requirements."
+  },
+  "installedScalingPassedStabilityOpen": {
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "report": ".vscode-test/desktop-artifacts/layout-topmost-accessible-status-report.json",
+    "reportSha256": "520c69fa1505b3eb29a32464a85cb35895ba1bbe16a9bf0acc53766d62c270ac",
+    "passed": ["FR-028-scaling", "US6.2-interface-scaling"],
+    "failed": ["US6.3-frame-stability", "SC-007-stability", "FR-029-stability"],
+    "exitCode": 1,
+    "scope": "Actual 100/200-percent interface-scale guards and recorded status accessibility/geometry pass. Stability journeys now reach their next preconditions after using the topmost pointer target.",
+    "remainingFailures": [
+      "Move View is not the first fuzzy command-palette result",
+      "The supposed in-flight move shows zero item displacement before the resize",
+      "The native-menu dismissal locator matches the persistent File menubar item"
+    ],
+    "followUp": "The layout owner is correcting command/menu targeting and diagnosing the live gesture precondition. Sampling and all drift/cancellation budgets remain mandatory.",
+    "limitation": "These functional scaling passes do not establish reference screenshots, contrast or full stability acceptance."
+  },
+  "focusQualityReviewFollowUp": {
+    "reviewSession": "ses_e8c7b360affekXr4BX5Aq1mY0U",
+    "scope": "Read-only independent review of native authority, command lifetime, deferred titles and pending focus recovery.",
+    "authorityFindings": "No actionable authority/retag, command-registration or title-publication defect found.",
+    "focusFinding": "A connected input hidden by compact-layout changes during a pending edit can reject focus after settle; the current recovery does not verify focus landed and skips its disconnected-only fallback.",
+    "followUp": "Add a viewport fallback when the restore attempt leaves focus on the body, with a hidden-control regression and preservation of deliberate focus movement. Use effective :disabled input selection rather than only the disabled attribute.",
+    "status": "The correction is delivered. The hidden-control regression fails before the viewport fallback and all 243 Angular tests pass afterward; scoped lint, formatting and Angular typecheck pass. Installed verification requires a fresh package."
+  },
+  "hiddenFocusFallbackCandidate": {
+    "vsixSha256": "983ddfbf7c6996f59bb34eb3754342cbb571cf5c2f08c6be4164f5c6703aa9a5",
+    "build": "pnpm build passes",
+    "package": "pnpm package passes",
+    "scope": "Includes the reviewed connected-hidden-control viewport fallback and effective :disabled input selector. The previous candidate bytes are retained by digest.",
+    "runtime": "All six accessibility scenarios are running against the installed package with separate accessibility-hidden-focus-fallback artifacts. No result is claimed yet."
+  },
+  "installedCompleteAccessibilityPassed": {
+    "vsixSha256": "983ddfbf7c6996f59bb34eb3754342cbb571cf5c2f08c6be4164f5c6703aa9a5",
+    "report": ".vscode-test/desktop-artifacts/accessibility-hidden-focus-fallback-report.json",
+    "reportSha256": "6605af58cb6e7df36f0933a4dcf153b8b4b06c42da03dd59dac7b0d2c841cd0e",
+    "passed": 6,
+    "failed": 0,
+    "exitCode": 0,
+    "durationMinutes": 2.6,
+    "scope": "The complete installed accessibility suite passes together: filter clearing, full US6.1 keyboard journey, state labels, FR-027 refusal/field/no-trap journey, long labels and all four keyboard theme variants.",
+    "limitation": "The hidden-control-during-pending case is covered by the 243-test Angular regression, not a separate Desktop resize injection. Pixel contrast, reference visuals, 200-percent contrast and cross-platform acceptance remain open."
+  },
+  "stabilityPreconditionsCorrected": {
+    "file": "tests/desktop/layout.spec.ts",
+    "changes": [
+      "Navigate to the matching command and follow-up picker results by keyboard instead of requiring rank-first results",
+      "Prove a live held move from the actual preview overlay displacement; accepted item bounds intentionally remain unchanged until release",
+      "Require the preview to disappear without changing dirty state, accepted geometry or source bytes after native window resize",
+      "Enter the native tree with Home and scope Shift+F10 open/dismissal checks to the actual context-view menu rather than the File menubar"
+    ],
+    "delegatedChecks": "TypeScript, scoped lint and formatting pass",
+    "runtime": "Parent reviewed the actual preview precondition; installed rerun waits for the active Data/Components suite. Drift and cancellation thresholds remain unchanged."
+  },
+  "independentReview": {
+    "outcome": "corrections required; T062/T063/T065 remain open",
+    "visualOracle": "The text oracle now pins its foreground to computed painted text and requires an observed matching pixel cluster. The boundary oracle uses computed per-edge border paint and widths. Exact theme tokens replace overlapping regexes; actual Report Structure headers replace generic sidebar headers. A synthetic 2:1 text plus black-decoy negative control proves the old farthest-color heuristic falsely passes while the pinned oracle rejects it.",
+    "networkOracleCorrection": {
+      "regression": "Unrecognized outgoing connect/sendto/sendmsg destinations previously had undefined classification and disappeared from unexpectedEvents. The new regression fails against the original implementation.",
+      "fix": "The shared classifier now marks such outgoing attempts unexpected when no approved destination can be proven. A second red-before regression proves ::1234 was wrongly allowed by the ::1 prefix check; the IPv6 loopback alternative now requires an exact ::1 match, retaining genuine ::1 allowance.",
+      "command": "node --import file:///C:/Users/Alexandre/AppData/Local/Temp/opencode/us3-ts-hooks.mjs --test tests/desktop/security-observer.test.ts",
+      "passed": 25,
+      "failed": 0,
+      "limitation": "Source-level parser/classifier checks, not live Linux or Windows host capture."
+    },
+    "remainingScope": [
+      "Host loopback connects are allowed runtime traffic and cannot currently be attributed to the report; service-worker request attribution is also incomplete.",
+      "The trusted/restricted offline legs now attempt all six journeys and record actual completed/unvalidated names. Restricted designer history deliberately refuses; the test asserts that refusal and unchanged post-edit bytes, then uses native Undo in the proven source editor of the same document. Trusted and restricted profiles have fresh isolated fixtures. These real UI paths remain unexecuted on Linux.",
+      "Visual contrast at 200 percent interface scale and focus-boundary measurement are not implemented.",
+      "The icon gate now requires a proven computed mask/SVG/font-glyph paint and observed matching pixels; unsupported background images fail closed. Its actual Desktop paint source remains unverified."
+    ]
+  },
+  "offlineOracleHardening": {
+    "command": "node --import file:///C:/Users/Alexandre/AppData/Local/Temp/opencode/us3-ts-hooks.mjs --test tests/desktop/offline-assertions.test.ts tests/desktop/security-observer.test.ts",
+    "parentExecuted": true,
+    "passed": 28,
+    "failed": 0,
+    "negativeControl": "A window containing an unclassified outgoing connection fails; the otherwise identical quiet window passes. Genuine zero network traffic is not forced to generate traffic merely to satisfy a count.",
+    "attribution": "Artifacts distinguish attributable report requests, background requests, and requests without frame attribution. Loopback host traffic is permitted and not attributed to report code; service-worker attribution and syscall capture semantics remain explicit limits.",
+    "restrictedHistory": "The test exercises the designer's expected restriction once, requires the exact refusal and unchanged bytes, then invokes Ctrl+Z/Ctrl+S through the source editor after checking the active document tab and text-editor status. Profile artifacts distinguish this source-editor route from trusted designer history. Fixture setup isolation is never counted as Undo proof.",
+    "limitation": "Pure/source-level oracle checks do not prove actual Linux capture, trust journeys or zero report-triggered activity."
+  },
+  "contrastOracleSelfChecks": {
+    "command": "node --import file:///C:/Users/Alexandre/AppData/Local/Temp/opencode/us3-ts-hooks.mjs --test tests/desktop/visual-contrast.test.ts tests/desktop/offline-assertions.test.ts tests/desktop/security-observer.test.ts",
+    "parentExecuted": true,
+    "aggregatePassed": 33,
+    "aggregateFailed": 0,
+    "contrastTestsPassed": 5,
+    "assertions": "Low-contrast text with a high-contrast decoy fails; independently known 4.5:1 and 7:1 pairs measure correctly; boundary bands follow computed widths and reject decoys; malformed/truncated PNGs throw.",
+    "glyphNegativeControl": "A low-contrast glyph with a black decoy cannot certify the icon requirement. An unproven paint fails even when its supplementary farthest-color diagnostic exceeds 20:1; a proven low-contrast paint also fails. Proven 7:1 paint passes the pure control.",
+    "pngScanlineCorrection": "A parent regression constructs a PNG with a valid complete container but insufficient decompressed bytes for its declared width. The old decoder silently supplied black pixels; the decoder now checks the exact decompressed scanline length before reading. All five contrast tests pass after the correction.",
+    "limitation": "Synthetic oracle checks are not actual Desktop contrast measurements. Actual icon paint, 200-percent variants and genuine reference screenshots remain open."
+  },
+  "pending": [
+    "Complete and execute keyboard, layout, visual and monitored offline suites",
+    "Provision and verify the pinned Ubuntu reference image, fonts, exact Desktop build and display",
+    "Generate genuine reviewed reference PNGs in the required environment",
+    "Implement and prove the missing Windows host capture and outbound-blocking backends",
+    "Run the applicable CI matrix and canonical same-VSIX checks",
+    "Resolve coverage references and aggregate same-candidate evidence"
+  ]
+}

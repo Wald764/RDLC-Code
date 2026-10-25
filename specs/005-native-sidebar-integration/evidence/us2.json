@@ -1,0 +1,270 @@
+{
+  "feature": "005-native-sidebar-integration",
+  "story": "US2",
+  "recordKind": "partial-implementation-diagnostics",
+  "eligibleForAcceptance": false,
+  "focusHeaderInstalledStructureRun": {
+    "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
+    "report": ".vscode-test/desktop-artifacts/workspace-structure-focus-header-report.json",
+    "reportSha256": "ffb66a8683a0c3695c4a4ae02f023425868501b50bbe45a30424fc8115f7bd3f",
+    "passed": 7,
+    "failed": ["SC-003-timing", "US2.3-reveal-ancestors", "FR-010-context-actions", "EDGE-03-refusal", "EDGE-07-reachable-center"],
+    "aggregateExitCode": 1,
+    "timing": {
+      "samples": 100,
+      "within200Milliseconds": 50,
+      "requiredWithin200Milliseconds": 95,
+      "minMilliseconds": 21,
+      "medianMilliseconds": 144,
+      "p95Milliseconds": 237,
+      "maxMilliseconds": 254,
+      "file": ".vscode-test/desktop-artifacts/workspace-structure-focus-header/structure/selection-timings.json",
+      "sha256": "f229ddfd8b8fec281235195f1e6cb6520d9958482d0b8f112086b3fd4664fd30",
+      "result": "Failed; the improved fifty fast samples do not meet the unchanged 95/100 requirement. Earlier 0/100 evidence remains historical."
+    },
+    "followUp": "The Structure owner is checking reveal ordering, actual row capabilities, the exact refusal notification and unknown-bound canvas semantics. No threshold or refusal assertion is bypassed."
+  },
+  "featureComplete": false,
+  "candidateInputFingerprint": null,
+  "reason": "Source and fixture work is ongoing. No frozen same-candidate installed Desktop, performance or visual acceptance is established by this record.",
+  "hierarchyRegression": {
+    "command": "node --import file:///C:/Users/Alexandre/AppData/Local/Temp/opencode/us1-ts-hooks.mjs --test packages/renderer/src/structure-hierarchy.test.ts packages/renderer/src/structure.test.ts packages/renderer/src/navigation.test.ts",
+    "execution": "Source-isolated Node tests; the scratch resolver redirects missing relative .js siblings to .ts. No Desktop or extension-host integration is represented.",
+    "before": [
+      {
+        "case": "legacy fallback retains actual table bodies, members and groups alongside data",
+        "outcome": "failed",
+        "observed": "ByLabel was absent: expected kind group, received undefined."
+      },
+      {
+        "case": "legacy Table grouping remains source-only and inspectable in both projections",
+        "outcome": "failed",
+        "observed": "ByCategory was absent from the legacy projection."
+      }
+    ],
+    "after": {
+      "outcome": "passed",
+      "tests": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    "reviewDisposition": {
+      "nativeDataExclusion": "Already implemented by projectNavigation skipping same-namespace data collections in the Structure walk. The existing native projection test explicitly excludes dataset and field kinds; all nine source-isolated tests pass.",
+      "legacyGrouping": "Fixed in both projections: Grouping is an actual group; legacy fallback traverses TableGroups/TableGroup and known source-only namespaces. Regression checks source identity/range, preserved reason and refusal of author capability.",
+      "unnamedMembers": "Retain actual unnamed syntax targets. Ambiguous cross-version identities intentionally lose expansion rather than inherit a different target; no skipping or invented names.",
+      "icons": "Generic fallback icons remain. Accessible labels and preserved reasons carry meaning; theme and visual acceptance remain open under US6."
+    },
+    "references": [
+      "vendor/02-structures/2.80-tablegroup.md",
+      "vendor/02-structures/2.85-grouping.md"
+    ]
+  },
+  "pending": [
+    "Angular and extension-host regression checks after integration",
+    "Installed Desktop selection, source, membership, focus and timing assertions",
+    "Applicable same-candidate platform and visual acceptance gates"
+  ],
+  "compiledRegression": {
+    "compileCommand": "node scripts/compile.ts",
+    "command": "node --test packages/renderer/dist/*.test.js dist/tests/roundtrip/*.test.js dist/tests/compatibility/*.test.js",
+    "outcome": "passed",
+    "passed": 94,
+    "failed": 0,
+    "skipped": 0,
+    "limitation": "This verifies the current compiled hierarchy change, not subsequent delegated actions or fixtures and not installed Desktop acceptance."
+  },
+  "angularRegression": {
+    "command": "$env:VITEST_MAX_WORKERS = '1'; pnpm --filter @rdlc/designer test",
+    "passed": 227,
+    "failed": 0,
+    "initialFailures": [
+      "The default parallel run exhausted available memory before all workers started.",
+      "With one worker and Angular's default isolation disabled, two tests inherited another file's host API state (225 passed, 2 failed)."
+    ],
+    "resolution": "The serial isolated CLI run passes all 227 tests. The Angular test configuration now enables isolate; a subsequent run without the CLI isolation override also passes 227/227. The one-worker limit remains a local execution environment setting."
+  },
+  "navigationBudgetAndActions": {
+    "unitCommand": "node --test dist/apps/vscode-extension/src/navigation-budget.test.js dist/apps/vscode-extension/src/sidebar-actions.test.js",
+    "unitPassed": 8,
+    "unitFailed": 0,
+    "hostCommand": "$env:VSCODE_VERSION = '1.142.0'; pnpm test:vscode",
+    "hostOutcome": "The real Extension Host prints PASS navigation-budget.test.cjs after activation, clipboard, existing-report and lifecycle suites. The overall command exceeds 300 seconds, so it is not a root-suite pass.",
+    "subsequentDiagnostic": "A standalone official-harness invocation for sidebar-loading.test.cjs fails because that compiled bundle is missing. Concurrent compilation replaced the shared dist outputs; rebuild and rerun serially after delegated source work finishes.",
+    "actions": "Finite delete/table/group commands route through existing properties forms. They carry no authoring or confirmation payload; deletion acknowledgement and mutation/reference validation remain owned by the existing designer workflow.",
+    "review": "Independent review confirms captured authority, draft-aware properties routing and designer-owned contained-XML acknowledgement. Follow-up fixes report the blocked owning table's reason, hide group forms for placeholder tables and expose Delete for editable tables without clipboard eligibility, only within Structure.",
+    "followUpCommand": "node --experimental-transform-types --import file:///C:/Users/Alexandre/AppData/Local/Temp/opencode/us1-ts-hooks.mjs --test apps/vscode-extension/src/sidebar-actions.test.ts tests/package/sidebar.test.ts",
+    "followUpPassed": 14,
+    "followUpFailed": 0,
+    "followUpTypecheck": "pnpm typecheck passes",
+    "limitation": "Updated installed VSIX and full serial host/Desktop validation are pending."
+  },
+  "nativeRefreshLatencyCorrection": {
+    "vscodeVersion": "1.142.0",
+    "vscodeCommit": "6d62b1d5dace93a33b3a6d3eca1317bd5e15bcb1",
+    "source": "https://github.com/microsoft/vscode/blob/6d62b1d5dace93a33b3a6d3eca1317bd5e15bcb1/src/vs/workbench/api/common/extHostTreeViews.ts",
+    "mechanism": "TreeView.message has no equality guard and shares a leading/trailing 200ms debounced event stream with row changes. Sidebar refresh rewrote unchanged messages before updateCues, opening the leading window with a message-only event and pushing rows to the trailing edge.",
+    "fix": "The provider writes message and description only when their values actually differ. No private API, threshold change, timer abstraction or suppression of required pending/refusal cues is introduced.",
+    "hostRegression": "sidebar-loading adds a real SidebarHostContext contract with spied TreeViews: identical refreshes write neither property, state transitions still update them, current rows route, and pre-switch rows still refuse as stale.",
+    "verification": "The new host regression and real timing threshold need the next serialized compile/build/installed run. No improved latency measurement is claimed yet."
+  },
+  "installedStructureInitialRun": {
+    "platform": "win32",
+    "vscodeVersion": "1.142.0",
+    "packaged": true,
+    "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+    "assertions": ["US2.1-native-projection", "US2.2-known-bounds-center"],
+    "passed": 0,
+    "failed": 2,
+    "exitCode": 1,
+    "observed": "Both fail at designerFrame after 60000ms. The retained screenshot shows the report open in Text Editor, the native sidebar populated, and no designer webview.",
+    "rootCause": "The shared openReport test helper assumes Quick Open chooses the custom editor. Actual installed behavior chooses the XML text editor. US1 already explicitly invokes the public Open Designer command.",
+    "correction": "openReport now invokes RDLC Code: Open Designer after openFile, before focusing Report Structure and waiting for the frame. No product association or timeout is changed.",
+    "report": ".vscode-test/desktop-artifacts/structure-integration.json",
+    "reportSha256": "0d9a7de92896d9371ad558c061f0a9d3c232cb08f14b3a3e44c1726dd56c27de",
+    "rerun": {
+      "report": ".vscode-test/desktop-artifacts/structure-open-designer-report.json",
+      "passed": 0,
+      "failed": 2,
+      "exitCode": 1,
+      "observed": "Both now open the designer and reach actual assertions. US2.1 observes a bottom-window endpoint of 14 rather than the oracle's 27 after End; US2.2's centering probe cannot find Title although earlier selection assertions pass.",
+      "followUp": "The trace proves End reached the bottom: four sticky ancestor clones appended after the actual list made the contiguous-window offset -1 (15 nodes yielded -1+15=14). The test now reads actual monaco-list-rows, retaining all 27 oracle entries. The canvas uses aria-label Title: Hello & welcome rather than the name-only string; the geometry probe now recognizes that real label and waits for known bounds. Native keys and folds still use real input."
+    }
+  },
+  "installedStructureCorrectedOracles": {
+    "platform": "win32",
+    "vscodeVersion": "1.142.0",
+    "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+    "passed": ["US2.1-native-projection", "US2.2-known-bounds-center"],
+    "failed": 0,
+    "exitCode": 0,
+    "durationSeconds": 38.8,
+    "report": ".vscode-test/desktop-artifacts/structure-oracles-report.json",
+    "reportSha256": "d03e7ce2d7a091a009378fd64620ef0238f7ce58d6a080935105403bdfb4a0a9",
+    "scope": "The two installed projection/centering scenarios pass with the complete frozen hierarchy and original geometric tolerances. The historic failed runs remain retained; other US2 scenarios, timing and same-candidate feature acceptance are not certified.",
+    "separateProductObservation": "An asynchronous reveal after a native row click can reset a subsequent user scroll. This remains assigned to the sidebar owner; the oracle corrections do not declare that behavior fixed."
+  },
+  "installedStructureWorkflows": {
+    "platform": "win32",
+    "vscodeVersion": "1.142.0",
+    "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+    "passed": ["US2.3-reveal-ancestors", "US2.6-refresh"],
+    "failed": ["US2.4-no-fabricated-bounds", "US2.5-context-actions"],
+    "exitCode": 1,
+    "report": ".vscode-test/desktop-artifacts/structure-workflows-report.json",
+    "reportSha256": "a6365b3ea9508801a3a30d5339dfbdb73c2ec017370e6280f1f476febaf0f26a",
+    "observed": "US2.4 expects the child Textbox row to carry Selected, while the screenshot shows the actual TablixCell identity selected. US2.5 expects no Copy/Cut/Duplicate on an eligible whole table, but the existing host evaluator explicitly grants clipboard to non-cell body items and the menu exposes those three actions.",
+    "followUp": "The Structure owner is checking the cell identity contract and correcting any menu expectation that forbids valid existing actions. Neither original failure is treated as a pass. Clipboard capability remains added by report-evaluation.ts, not by the syntax-only renderer."
+  },
+  "installedCellAndMenuRerun": {
+    "platform": "win32",
+    "vscodeVersion": "1.142.0",
+    "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+    "passed": ["US2.4-no-fabricated-bounds"],
+    "failed": ["US2.5-context-actions"],
+    "exitCode": 1,
+    "report": ".vscode-test/desktop-artifacts/structure-cell-menus-report.json",
+    "reportSha256": "c4d4ddaab13db28a88aaf176d1aa1fc879a8ecaef9537ce997eb5e251828d354",
+    "cellScope": "The actual XML cell is uniquely selected; its child and owning table do not double-claim. The scene cell content is checked, no independent rectangle/primary is fabricated, and selecting the whole table still produces its own rectangle. The unknown-bounds preservation assertions also pass.",
+    "menuFailure": "The deletion notice is present twice: the live accessible alert and the visible notification. An unscoped getByText raises a strict-mode error before later assertions.",
+    "correction": "Scope the visible-notice assertion to notifications-toasts. A separate US2.5 rerun is in progress; no passing menu result is claimed yet."
+  },
+  "installedContextNoticeRerun": {
+    "platform": "win32",
+    "vscodeVersion": "1.142.0",
+    "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
+    "assertion": "US2.5-context-actions",
+    "passed": 0,
+    "failed": 1,
+    "exitCode": 1,
+    "report": ".vscode-test/desktop-artifacts/structure-context-notice-report.json",
+    "reportSha256": "da1c85702e6b87936156774deadf49ade3fca15e5b0f97f080b20e2555f30188",
+    "observed": "The scoped notice passes. The test later clicks Code XML on Group: Details but no source-editor status range appears; the screenshot still shows that context menu open.",
+    "rootCause": "Pinned VS Code source arms menu mouseup handlers 100ms after render. This click starts 0.5ms after right-click; the successful preceding Table Delete starts at 124ms. The handler is not yet armed in the failed click, so no command dispatch starts.",
+    "correction": "Each menu activation uses one pointer gesture held for 250ms, then requires the context menu to dismiss. No action retry, fake dispatch or keyboard replacement is used. Code XML current-range assertions remain unchanged; the fresh rerun is in progress."
+  },
+  "menuArmingRerun": {
+    "assertion": "US2.5-context-actions",
+    "vsixSha256": "26c182ded94160679f9cdb24507f9b153a5e62379fbe0442d74900e5ab583021",
+    "report": ".vscode-test/desktop-artifacts/menu-arming-report.json",
+    "reportSha256": "439d1d7179f4353dd01c68e568bc54e8d84ef055d249224313126d0c52b6f8c5",
+    "passed": 0,
+    "failed": 1,
+    "observed": "Code XML now opens the source editor and the retained screenshot shows exactly Ln 10, Col 310 (23 selected). The test's obsolete .editor-status-selection class matches no element.",
+    "correction": "Require the exact same line, column and selected length via visible text within the actual statusbar. No substring or tolerance substitutes for the complete current-range oracle.",
+    "rerun": "In progress with separate menu-oracles artifacts."
+  },
+  "sourceActiveCaptureFollowUp": {
+    "vsixSha256": "26c182ded94160679f9cdb24507f9b153a5e62379fbe0442d74900e5ab583021",
+    "report": ".vscode-test/desktop-artifacts/menu-oracles-report.json",
+    "reportSha256": "8a7fd0727dca5e0574a5461dc250c4ab11005935fee805c5e0904b6cd7a5bfca",
+    "assertion": "US2.5-context-actions",
+    "passed": 0,
+    "failed": 1,
+    "observed": "All menu/source-range/source-equality assertions pass. The final generic capture times out trying to screenshot the retained designer while the source editor is active and the designer is hidden.",
+    "correction": "The shared capture still records the actual workbench pixels, accessible tree and focus, but records designer visibility and only screenshots a visible designer root. The Structure regression requires visible:false for this source-active capture. No hidden screenshot is fabricated or source editor switched away for evidence.",
+    "rerun": "Running with separate menu-final-assertions artifacts."
+  },
+  "captureAncestorVisibilityFollowUp": {
+    "report": ".vscode-test/desktop-artifacts/menu-final-assertions-report.json",
+    "reportSha256": "bd99bf012bf8a6d9ffb5503dba7d8cf41b96e8a2167654af828b64c53e7ef3d6",
+    "passed": 0,
+    "failed": 1,
+    "observed": "The inner root reports visible within its retained iframe even while an ancestor webview frame is hidden. The screenshot still times out, so root-only visibility is insufficient.",
+    "correction": "The driver additionally checks each iframe ancestor before recording designer visibility or requesting its screenshot. The existing source-active regression requires visible:false, while workbench pixels/accessibility/focus are always captured. The source-visible-capture rerun is in progress."
+  },
+  "installedContextActionsPassed": {
+    "assertion": "US2.5-context-actions",
+    "platform": "win32",
+    "vscodeVersion": "1.142.0",
+    "vsixSha256": "26c182ded94160679f9cdb24507f9b153a5e62379fbe0442d74900e5ab583021",
+    "passed": 1,
+    "failed": 0,
+    "aggregateExitCode": 0,
+    "report": ".vscode-test/desktop-artifacts/source-visible-capture-report.json",
+    "reportSha256": "f24126a864645a7e1048d990f2bc05c6241cc2a75d1489d3ae73f0788b754acf",
+    "scope": "All eligible/source-only menu sets, destructive notice, exact current source ranges and source equality pass. The final capture records the retained designer as hidden and captures the actual workbench without switching editors.",
+    "limitation": "US2.1–6 have now passed individually across two diagnostic VSIX candidates. They are not a complete same-candidate US2 run; SC-003 still fails on the current candidate."
+  },
+  "postReviewPackage": {
+    "build": "pnpm build passes",
+    "compiledAggregatePassed": 353,
+    "package": "pnpm package passes",
+    "packageAssertionsPassed": 15,
+    "vsixSha256": "26c182ded94160679f9cdb24507f9b153a5e62379fbe0442d74900e5ab583021",
+    "previousVsixRetained": ".vscode-test/desktop-artifacts/rdlc-code-ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a.vsix",
+    "timing": "The unchanged 100-sample SC-003 95-percent/200ms oracle executes completely but fails: none of the hundred samples is within 200ms. See installedTimingPostReview.",
+    "limitation": "Diagnostic package only. The new full host run failed on lifecycle cleanup; later ongoing source edits and final same-candidate acceptance are not certified."
+  },
+  "installedTimingPostReview": {
+    "assertion": "SC-003-timing",
+    "platform": "win32",
+    "vscodeVersion": "1.142.0",
+    "vsixSha256": "26c182ded94160679f9cdb24507f9b153a5e62379fbe0442d74900e5ab583021",
+    "exitCode": 1,
+    "sampleCount": 100,
+    "within200ms": 0,
+    "requiredWithin200ms": 95,
+    "minimumMs": 212,
+    "medianMs": 224,
+    "p95Ms": 255,
+    "maximumMs": 263,
+    "report": ".vscode-test/desktop-artifacts/native-timing-post-review-report.json",
+    "reportSha256": "7ad6e901b7a2e9067a89c6257beb07c66ac2e08cdbcaec9105aaea630d4d50fa",
+    "samples": ".vscode-test/desktop-artifacts/native-timing-post-review/structure/selection-timings.json",
+    "samplesSha256": "0afdeb59967fdeb6089b9e5700a102f9d984562a0741818c519baddbd13010f5",
+    "interpretation": "Avoiding redundant message writes is insufficient. Pending and multiple row cue updates can still occupy the host's leading/trailing debounce window. The sidebar owner is investigating the actual event ordering using this trace. No state cue, accepted-selection requirement or performance threshold is removed."
+  },
+  "structureFixtures": {
+    "fixtureId": "sidebar-structure",
+    "source": "tests/fixtures/sidebar/structure.rdlc",
+    "oracle": "tests/fixtures/sidebar/structure.expected.json",
+    "boundaries": "tests/fixtures/sidebar/structure-boundaries.json",
+    "coverage": "US2.1 now references the manifest-listed fixture and the actual frozen-oracle test titles.",
+    "command": "node --experimental-transform-types --import file:///C:/Users/Alexandre/AppData/Local/Temp/opencode/us1-ts-hooks.mjs --test packages/renderer/src/structure.test.ts packages/renderer/src/navigation.test.ts packages/renderer/src/structure-hierarchy.test.ts",
+    "passed": 16,
+    "failed": 0,
+    "skipped": 0,
+    "assertions": "Independent hierarchy/slices/expanded names/source order, source-only namespace, opaque foreign content, absent sections, duplicate/unnamed targets, native data exclusion, entry 2000/2001 and parser/depth boundaries.",
+    "limitation": "These are source-isolated projection tests. Fresh compiled/installed checks of the integrated fixture, action and driver changes remain pending."
+  }
+}

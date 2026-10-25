@@ -33,8 +33,9 @@ local `.rdlc` picker. VS Code owns view placement, hiding and restoration.
 - Structure follows accepted XML, including cells, members, groups and preserved
   report items. Activate a row to select its associated designer target; use
   **Properties** or **Code XML** from its context menu. Eligible body items also
-  expose Copy, Cut and Duplicate. Existing inspector forms retain their validation
-  and destructive-change safeguards.
+  expose Copy, Cut and Duplicate. **Delete**, **Table Properties** and **Group
+  Properties** open the existing inspector workflow; deletion still requires its
+  contained-content acknowledgement and reference checks.
 - Data lists datasets/fields, parameters, embedded images and data sources.
   Tooltips contain allowlisted metadata, never image payloads, query text or
   connection strings. Parameters, images and data sources remain inspection-only.
@@ -48,9 +49,11 @@ local `.rdlc` picker. VS Code owns view placement, hiding and restoration.
   preferences remain respected.
 
 Native-tree drag delivery is unavailable in the executed Windows probe, so the
-native views advertise activation rather than dragging. The native sidebar is
-not yet acceptance-complete: the selection-latency gate currently fails and
-mandatory visual, security and cross-platform evidence remains outstanding.
+native views advertise activation rather than dragging. Every installed
+functional journey passes locally on Windows with VS Code 1.142.0, including
+the selection-latency gate. The native sidebar is not yet acceptance-complete:
+pinned Linux visual references, monitored offline/security capture and the
+cross-platform CI matrix remain outstanding.
 
 ### Interactive canvas
 
