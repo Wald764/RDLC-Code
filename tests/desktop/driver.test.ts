@@ -12,6 +12,7 @@ import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import {
+  commandAvailable,
   desktopLaunchArgs,
   desktopPaths,
   ensureWorkspaceTrusted,
@@ -21,8 +22,189 @@ import {
   readExecutableVersion,
   trustProbePath,
   validateDesktopOptions,
+  workbenchCommand,
+  workbenchLocation,
 } from './driver.js';
 import config from './playwright.config.js';
+import type { BrowserContext, Page } from 'playwright';
+
+/** A page whose `.monaco-workbench` count never answers: the hung-transport case. */
+const fakePage = (url: string, count: () => Promise<number>): Page =>
+  ({
+    isClosed: () => false,
+    url: () => url,
+    setDefaultTimeout: () => {},
+    locator: () => ({ count }),
+  }) as unknown as Page;
+
+const fakeContext = (...pages: Page[]): BrowserContext =>
+  ({ pages: () => pages }) as unknown as BrowserContext;
+
+const hangingCount = (): Promise<number> => new Promise<number>(() => {});
+
+test(
+  'workbenchLocation bounds a hanging locator count by its deadline',
+  { timeout: 15_000 },
+  async () => {
+    const url = 'vscode-file://fake/loading-window';
+    const page = fakePage(url, hangingCount);
+    const started = Date.now();
+    await assert.rejects(
+      workbenchLocation(() => [fakeContext(page)], 600),
+      (error: unknown) =>
+        error instanceof Error &&
+        /not found within 600ms/.test(error.message) &&
+        error.message.includes(url),
+    );
+    const elapsed = Date.now() - started;
+    // Generous CI range: past the 600ms deadline, nowhere near test timeout.
+    assert.ok(elapsed >= 550, `resolved before the deadline: ${elapsed}ms`);
+    assert.ok(elapsed < 5_000, `deadline not respected: ${elapsed}ms`);
+  },
+);
+
+test(
+  'workbenchLocation still tries the other windows after a hanging count',
+  { timeout: 15_000 },
+  async () => {
+    const hanging = fakePage('vscode-file://fake/loading', hangingCount);
+    const ready = fakePage('vscode-file://fake/workbench', async () => 1);
+    const started = Date.now();
+    const located = await workbenchLocation(
+      () => [fakeContext(hanging, ready)],
+      10_000,
+    );
+    assert.equal(located.page, ready);
+    assert.ok(
+      Date.now() - started < 5_000,
+      'a hanging window must not consume the whole deadline',
+    );
+  },
+);
+
+/**
+ * A primitive page whose command palette never closes and whose Escape either
+ * answers or never returns (the EDGE-08 transport). It stands in for the
+ * unresponsive transport only: it guards the driver's recovery, no Desktop claim.
+ */
+function palettePage(escapeHangs: boolean) {
+  const pressed: string[] = [];
+  let rejectEscape: ((reason: Error) => void) | undefined;
+  let reached: () => void = () => {};
+  const escapeReached = new Promise<void>((done) => {
+    reached = done;
+  });
+  const page = {
+    bringToFront: async () => {},
+    evaluate: async () => {},
+    locator: (selector: string) => ({
+      waitFor: async (options: { state?: string }) => {
+        // Only "the palette is still open after its budget" fails here.
+        if (selector.endsWith('input') && options.state === 'hidden')
+          throw new Error('Timeout 30000ms exceeded.');
+      },
+      filter: () => ({
+        first: () => ({ click: async () => {}, waitFor: async () => {} }),
+      }),
+    }),
+    keyboard: {
+      type: async () => {},
+      press: async (key: string) => {
+        pressed.push(key);
+        if (key !== 'Escape') return;
+        reached();
+        if (escapeHangs)
+          return new Promise<never>((_, reject) => {
+            rejectEscape = reject;
+          });
+      },
+    },
+  };
+  return {
+    page: page as unknown as Page,
+    pressed,
+    escapeReached,
+    rejectEscape: (reason: Error) => {
+      assert.ok(rejectEscape, 'Escape must be pending before it can reject');
+      rejectEscape(reason);
+    },
+  };
+}
+
+test(
+  'command recovery is bounded when the palette transport stops answering',
+  { timeout: 10_000 },
+  async (t) => {
+    const id = 'Focus on Report Structure View';
+    const { page, pressed, escapeReached, rejectEscape } = palettePage(true);
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const command = workbenchCommand(page, id);
+    const checked = assert.rejects(command, (error: unknown) => {
+      assert.ok(error instanceof AggregateError, String(error));
+      // The palette failure is the headline and the first cause; the recovery
+      // timeout rides along instead of replacing it.
+      assert.equal(
+        error.message,
+        `Command palette did not execute ${id}: Timeout 30000ms exceeded.`,
+      );
+      assert.equal(error.errors.length, 2);
+      assert.match(String(error.errors[0]), /Timeout 30000ms exceeded/);
+      assert.match(
+        String(error.errors[1]),
+        /Command palette recovery timed out after 30000ms/,
+      );
+      return true;
+    });
+    await escapeReached;
+    // The escape was attempted; the budget, not the transport, ends the wait.
+    assert.equal(pressed.length, 2);
+    t.mock.timers.tick(30_000);
+    await checked;
+    assert.equal(pressed.at(-1), 'Escape');
+    // Closing the hung transport later must not produce an unhandled rejection.
+    rejectEscape(new Error('Transport closed after recovery timed out.'));
+    await new Promise<void>((done) => setImmediate(done));
+  },
+);
+
+test('a failed palette keeps its original error once the Escape recovery answers', async () => {
+  const id = 'View: Close Editor';
+  const { page, pressed } = palettePage(false);
+  await assert.rejects(workbenchCommand(page, id), (error: unknown) => {
+    assert.ok(error instanceof Error && !(error instanceof AggregateError));
+    assert.equal(
+      error.message,
+      `Command palette did not execute ${id}: Timeout 30000ms exceeded.`,
+    );
+    return true;
+  });
+  assert.equal(pressed.at(-1), 'Escape');
+});
+
+test(
+  'command availability bounds dismissal of an unresponsive palette',
+  { timeout: 10_000 },
+  async (t) => {
+    const { page, escapeReached } = palettePage(true);
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const checked = assert.rejects(
+      commandAvailable(page, 'Workspaces: Manage Workspace Trust'),
+      /Command palette dismissal timed out after 30000ms/,
+    );
+    await escapeReached;
+    t.mock.timers.tick(30_000);
+    await checked;
+  },
+);
+
+test('command availability returns the listed command after dismissing the palette', async () => {
+  const { page, pressed } = palettePage(false);
+  assert.equal(
+    await commandAvailable(page, 'Workspaces: Manage Workspace Trust'),
+    true,
+  );
+  assert.equal(pressed.at(-1), 'Escape');
+});
 
 test('shutdown accepts a clean exit and refuses a crashed owned process', async () => {
   for (const code of [0, 7]) {
@@ -135,6 +317,37 @@ test('binary identity requires actual version and build metadata, including hash
       JSON.stringify({ commit: 'unknown' }),
     );
     assert.throws(() => readExecutableVersion(executable), /Cannot verify/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('an extension inspector port is validated and passed before the folder', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rdlc-desktop-'));
+  try {
+    const base = {
+      root,
+      version: '1.142.0',
+      packaged: false,
+      artifactDir: join(root, 'artifacts'),
+    };
+    const plain = validateDesktopOptions(base);
+    assert.equal(
+      desktopLaunchArgs(plain, desktopPaths(plain, 'a')).some((arg) =>
+        arg.startsWith('--inspect-extensions'),
+      ),
+      false,
+    );
+    const inspected = validateDesktopOptions({
+      ...base,
+      inspectExtensions: 9333,
+    });
+    const args = desktopLaunchArgs(inspected, desktopPaths(inspected, 'a'));
+    assert.equal(args.at(-2), '--inspect-extensions=9333');
+    for (const port of [0, 80, 70000, 1.5])
+      assert.throws(() =>
+        validateDesktopOptions({ ...base, inspectExtensions: port }),
+      );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

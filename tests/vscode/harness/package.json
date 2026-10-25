@@ -26,6 +26,26 @@
     },
     "customEditors": [
       {
+        "viewType": "rdlcTests.sourceOnlyOpening",
+        "displayName": "RDLC source-only opening test",
+        "selector": [
+          {
+            "filenamePattern": "*.rdlc"
+          }
+        ],
+        "priority": "option"
+      },
+      {
+        "viewType": "rdlcTests.sessionInit",
+        "displayName": "RDLC session initialization test",
+        "selector": [
+          {
+            "filenamePattern": "*.rdlc"
+          }
+        ],
+        "priority": "option"
+      },
+      {
         "viewType": "rdlcCode.historyProof",
         "displayName": "RDLC native history test",
         "selector": [

@@ -53,13 +53,40 @@ export function desktopArguments(
         `--update-baselines is refused before launch: VS Code version ${version} is not the reference ${REFERENCE_ENVIRONMENT.vscodeVersion}`,
       );
   }
+  // CI splits the functional journeys into parallel jobs; unset runs them all.
+  const group = env['RDLC_DESKTOP_GROUP'] || null;
+  if (group !== null && !(group in DESKTOP_GROUPS))
+    throw new Error(
+      `Unknown RDLC_DESKTOP_GROUP: ${group} (expected ${Object.keys(DESKTOP_GROUPS).join(', ')})`,
+    );
   return {
     probe: flags.has('--probe'),
     packaged: flags.has('--packaged'),
     visual: flags.has('--visual'),
     updateBaselines: flags.has('--update-baselines'),
+    group: group as DesktopGroup | null,
   };
 }
+
+/** Disjoint partition of the functional journeys; together they are all of them. */
+export const DESKTOP_GROUPS = {
+  core: [
+    'bootstrap.spec.ts',
+    'workspace.spec.ts',
+    'structure.spec.ts',
+    'data.spec.ts',
+    'coverage.spec.ts',
+  ],
+  authoring: [
+    'components.spec.ts',
+    'native-drag.spec.ts',
+    'accessibility.spec.ts',
+    'layout.spec.ts',
+    'offline.spec.ts',
+  ],
+  context: ['context.spec.ts'],
+} as const;
+export type DesktopGroup = keyof typeof DESKTOP_GROUPS;
 
 /** Playwright CLI arguments; reference generation is the only path that updates snapshots. */
 export function desktopPlaywrightArguments(
@@ -88,19 +115,8 @@ export function requiredDesktopSuites(
       'native-drag.spec.ts',
     ];
   if (mode.visual) return ['visual.spec.ts', 'layout.spec.ts'];
-  return [
-    'bootstrap.spec.ts',
-    'workspace.spec.ts',
-    'structure.spec.ts',
-    'data.spec.ts',
-    'components.spec.ts',
-    'native-drag.spec.ts',
-    'context.spec.ts',
-    'accessibility.spec.ts',
-    'layout.spec.ts',
-    'offline.spec.ts',
-    'coverage.spec.ts',
-  ];
+  if (mode.group) return [...DESKTOP_GROUPS[mode.group]];
+  return Object.values(DESKTOP_GROUPS).flat();
 }
 
 export function completeDesktopReport(
@@ -183,10 +199,11 @@ export function completeDesktopReport(
   );
 }
 
-const FUNCTIONAL_CAPABILITIES = [
+export const FUNCTIONAL_CAPABILITIES = [
   'launch',
   'nativeInput',
   'angular',
+  'geometry',
   'source',
   'undo',
   'accessibility',
@@ -371,8 +388,11 @@ export async function runDesktop(
       child.once('error', reject);
       child.once('exit', (code) => done(code ?? 1));
     });
-    // Only the security spec installs host blocking rules.
-    if (present.includes('security-observer.spec.ts'))
+    if (
+      present.some((file) =>
+        ['security-observer.spec.ts', 'offline.spec.ts'].includes(file),
+      )
+    )
       hostBlockingSweep = sweepAfterRun(platform, sweep);
   }
   let reportComplete = false;

@@ -986,11 +986,13 @@ function classifyUnexpected(
   const ipv4 = /inet_addr\("([^"]+)"\)/.exec(args)?.[1];
   if (ipv4) return !ipv4.startsWith('127.');
   const ipv6 = /inet_pton\(AF_INET6, "([^"]+)"/.exec(args)?.[1];
-  if (ipv6) return !/^(?:::1|::ffff:127\.)/i.test(ipv6);
+  if (ipv6) return !/^(?:::1$|::ffff:127\.)/i.test(ipv6);
   const unix = UNIX_SOCKET.exec(args);
+  // An outgoing attempt without a proven destination cannot certify an empty violation set.
   return unix
     ? unixSocketUnexpected(unix[1] === '@', unix[2] ?? '', context)
-    : args.includes('sun_path=')
+    : args.includes('sun_path=') ||
+        ['connect', 'sendto', 'sendmsg'].includes(operation)
       ? true
       : undefined;
 }
@@ -1254,6 +1256,20 @@ function probeAttach(directory: string): NativeCaptureCapability {
 }
 
 /**
+ * Windows host-tree capture needs an elevated ETW kernel session plus a
+ * bounded ETL consumer; neither is implemented, so win32 stays unsupported.
+ */
+export const WINDOWS_CAPTURE_REQUIREMENT =
+  'Windows host-tree capture needs an elevated ETW kernel session (logman/wpr/xperf, "Windows Kernel Trace") recording file, process and network attempts, plus a bounded ETL consumer parsing them into events; no elevated capture path and no ETL consumer are implemented. Browser routing is not host observation.';
+
+/**
+ * Windows host blocking needs an administrator-elevated WFP rule plus a
+ * positive control proving it matched; neither is implemented.
+ */
+export const WINDOWS_BLOCKING_REQUIREMENT =
+  'Windows host outbound blocking needs an administrator-elevated Windows Filtering Platform rule (netsh advfirewall or FirewallAPI) plus a positive control proving the rule matched (for example a per-rule packet counter); no elevated rule mechanism and no positive control are implemented. Browser routing is not host blocking.';
+
+/**
  * Prove what the platform can actually do. A missing strace, denied attach, or
  * a probe that misses failed attempts is reported, never upgraded to a pass.
  */
@@ -1272,6 +1288,15 @@ export function detectNativeCapability(
     reason,
     controls: empty,
   });
+
+  if (platform === 'win32')
+    return {
+      platform,
+      tool: null,
+      version: null,
+      launch: unsupported(WINDOWS_CAPTURE_REQUIREMENT),
+      attach: unsupported(WINDOWS_CAPTURE_REQUIREMENT),
+    };
 
   if (platform !== 'linux')
     return {
@@ -2141,6 +2166,8 @@ export async function enableHostBlocking(
   } = {},
 ): Promise<HostBlocking> {
   const platform = options.platform ?? osPlatform();
+  if (platform === 'win32')
+    throw new SecurityObserverUnsupportedError(WINDOWS_BLOCKING_REQUIREMENT);
   if (platform !== 'linux')
     throw new SecurityObserverUnsupportedError(
       `Host-level outbound blocking is not implemented for ${platform}; browser routing is not host blocking.`,

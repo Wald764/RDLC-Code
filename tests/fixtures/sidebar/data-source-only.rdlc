@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2008/01/reportdefinition" xmlns:rd="http://schemas.microsoft.com/SQLServer/reporting/reportdesigner">
+  <DataSources>
+    <DataSource Name="Legacy">
+      <ConnectionProperties>
+        <DataProvider>OLEDB</DataProvider>
+        <ConnectString>SECRET_LEGACY_CONNECTION</ConnectString>
+      </ConnectionProperties>
+    </DataSource>
+  </DataSources>
+  <DataSets>
+    <DataSet Name="Orders">
+      <Query>
+        <CommandText>SELECT SECRET_LEGACY_QUERY</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="Id"><DataField>Id</DataField><rd:TypeName>System.Int64</rd:TypeName></Field>
+        <Field Name="Total"><Value>=Sum(Fields!Id.Value)</Value><rd:TypeName>System.Decimal</rd:TypeName></Field>
+      </Fields>
+    </DataSet>
+  </DataSets>
+  <ReportParameters>
+    <ReportParameter Name="Since">
+      <DataType>DateTime</DataType>
+      <Hidden>true</Hidden>
+      <DefaultValue><Values><Value>SECRET_LEGACY_DEFAULT</Value></Values></DefaultValue>
+    </ReportParameter>
+  </ReportParameters>
+  <EmbeddedImages>
+    <EmbeddedImage Name="Mark">
+      <MIMEType>image/png</MIMEType>
+      <ImageData>SECRET_LEGACY_IMAGE</ImageData>
+    </EmbeddedImage>
+  </EmbeddedImages>
+  <ReportSections>
+    <ReportSection>
+      <Body>
+        <ReportItems><Textbox Name="Title"/></ReportItems>
+        <Height>2in</Height>
+      </Body>
+      <Width>6.5in</Width>
+      <Page>
+        <PageHeight>11in</PageHeight>
+        <PageWidth>8.5in</PageWidth>
+        <LeftMargin>1in</LeftMargin>
+        <RightMargin>1in</RightMargin>
+        <TopMargin>1in</TopMargin>
+        <BottomMargin>1in</BottomMargin>
+      </Page>
+    </ReportSection>
+  </ReportSections>
+</Report>

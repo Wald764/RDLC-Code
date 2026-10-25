@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
+import { inspect } from 'node:util';
 
 // The official Electron harness loads this entry as bundled CommonJS, including on 1.110.
 export async function run(): Promise<void> {
@@ -13,7 +14,12 @@ export async function run(): Promise<void> {
   for (const file of files) {
     const suite = load(join(__dirname, file)) as { run?: () => Promise<void> };
     assert.equal(typeof suite.run, 'function', `${file} must export run()`);
-    await suite.run!();
+    try {
+      await suite.run!();
+    } catch (error) {
+      console.error(`FAIL ${file}: ${inspect(error, { depth: 8 })}`);
+      throw error;
+    }
     console.log(`PASS ${file}`);
   }
 }

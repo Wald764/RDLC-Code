@@ -2,6 +2,103 @@
   "schemaVersion": 1,
   "fixtures": [
     {
+      "id": "sidebar-data",
+      "path": "sidebar/data.rdlc",
+      "expected": "sidebar/data.expected.json",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.3-report.md",
+        "vendor/02-structures/2.321-datasources.md",
+        "vendor/02-structures/2.322-datasource.md",
+        "vendor/02-structures/2.323-connectionproperties.md",
+        "vendor/02-structures/2.324-datasets.md",
+        "vendor/02-structures/2.325-dataset.md",
+        "vendor/02-structures/2.327-fields.md",
+        "vendor/02-structures/2.328-field.md",
+        "vendor/02-structures/2.307-reportparameters.md",
+        "vendor/02-structures/2.308-reportparameter.md",
+        "vendor/02-structures/2.305-embeddedimages.md",
+        "vendor/02-structures/2.306-embeddedimage.md",
+        "vendor/02-structures/2.341.4-data-types.md"
+      ],
+      "operation": "none; read-only native Report Data oracle for category membership, source order, inert metadata, capability facts and sentinel payload exclusion",
+      "editFootprint": [],
+      "expectedDiagnostics": [],
+      "preservation": "Query text, connection strings, parameter defaults and image payloads stay inert source; duplicate and unnamed definitions stay identifiable and every untouched span remains byte-exact",
+      "consumerEvidence": ["packages/renderer/src/data.test.ts"]
+    },
+    {
+      "id": "sidebar-data-source-only",
+      "path": "sidebar/data-source-only.rdlc",
+      "expected": "sidebar/data.expected.json",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2008/01/reportdefinition",
+      "status": "unsupported",
+      "capabilities": ["source"],
+      "citations": [
+        "vendor/02-structures/2.3-report.md",
+        "vendor/02-structures/2.324-datasets.md",
+        "vendor/02-structures/2.328-field.md",
+        "vendor/02-structures/2.308-reportparameter.md",
+        "vendor/02-structures/2.306-embeddedimage.md"
+      ],
+      "operation": "none; read-only source-only Report Data oracle for inspection-only capabilities with complete inert metadata",
+      "editFootprint": [],
+      "expectedDiagnostics": ["REPORT_SOURCE_ONLY"],
+      "preservation": "The 2008/01 profile stays source-only without conversion; query, default value and image payload sentinels never reach labels or metadata",
+      "consumerEvidence": ["packages/renderer/src/data.test.ts"]
+    },
+    {
+      "id": "sidebar-data-empty",
+      "path": "sidebar/data-empty.rdlc",
+      "expected": "sidebar/data.expected.json",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.3-report.md",
+        "vendor/02-structures/2.3.14-report.datasets.md",
+        "vendor/02-structures/2.3.20-report.embeddedimages.md",
+        "vendor/02-structures/2.3.15-report.datasources.md",
+        "vendor/02-structures/2.3.34-report.reportparameters.md"
+      ],
+      "operation": "none; read-only empty-category oracle so an editable report with no definitions stays distinguishable from an incomplete inventory",
+      "editFootprint": [],
+      "expectedDiagnostics": [],
+      "preservation": "Empty DataSources/EmbeddedImages collections and absent DataSets/ReportParameters remain exact; no definition, category entry or query is invented",
+      "consumerEvidence": ["packages/renderer/src/data.test.ts"]
+    },
+    {
+      "id": "sidebar-data-opaque",
+      "path": "sidebar/data-opaque.rdlc",
+      "expected": "sidebar/data.expected.json",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.3-report.md",
+        "vendor/02-structures/2.324-datasets.md",
+        "vendor/02-structures/2.325-dataset.md",
+        "vendor/02-structures/2.328-field.md",
+        "vendor/02-structures/2.322-datasource.md",
+        "vendor/01-introduction/1.7-vendor-extensible-fields.md"
+      ],
+      "operation": "none; read-only opaque/lookalike Report Data oracle for foreign data definitions, foreign query/connection lookalikes and sentinel exclusion",
+      "editFootprint": [],
+      "expectedDiagnostics": [],
+      "preservation": "Foreign-namespace data definitions stay opaque inspection-only nodes with no metadata, no foreign query or credential is read or executed, and no lookalike gains a supported kind or authoring capability",
+      "consumerEvidence": ["packages/renderer/src/data.test.ts"]
+    },
+    {
       "id": "local-blank",
       "path": "datasets/blank.rdlc",
       "provenance": "Synthetic, authored by RDLC Code contributors",
@@ -332,6 +429,37 @@
       "expectedDiagnostics": [],
       "preservation": "External image and data source references to a local file outside every allowlist stay inert source; nothing is read, resolved or retrieved",
       "consumerEvidence": ["tests/desktop/security-observer.spec.ts"]
+    },
+    {
+      "id": "sidebar-structure",
+      "path": "sidebar/structure.rdlc",
+      "expected": "sidebar/structure.expected.json",
+      "boundaries": "sidebar/structure-boundaries.json",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.23.33-tablix.tablixbody.md",
+        "vendor/02-structures/2.27-tablixrows.md",
+        "vendor/02-structures/2.29-tablixcells.md",
+        "vendor/02-structures/2.31-cellcontents.md",
+        "vendor/02-structures/2.34-tablixmember.md",
+        "vendor/02-structures/2.34.5-tablixmember.group.md",
+        "vendor/02-structures/2.34.11-tablixmember.tablixheader.md",
+        "vendor/02-structures/2.10-pageheaderfooter.md",
+        "vendor/02-structures/2.14-rectangle.md",
+        "vendor/01-introduction/1.7-vendor-extensible-fields.md"
+      ],
+      "operation": "none; read-only native Structure navigation oracle for ancestry, source order, ranges, opaque states and entry/depth/parser boundaries",
+      "editFootprint": [],
+      "expectedDiagnostics": [],
+      "preservation": "Table body/rows/cells, row and column members, groups, member headers, nested preserved and foreign content, duplicate and unnamed targets and the page header stay exact; the footer and the data categories stay absent and datasets keep their legacy Structure branch until the US3 migration",
+      "consumerEvidence": [
+        "packages/renderer/src/structure.test.ts",
+        "packages/renderer/src/navigation.test.ts"
+      ]
     }
   ]
 }

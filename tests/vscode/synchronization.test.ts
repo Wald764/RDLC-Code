@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
 import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { observe, replaceSource, until } from './session-checks.js';
+import { closeOwnedEditors } from './lifecycle.test.js';
+import { history, observe, replaceSource, until } from './session-checks.js';
 import { validateMessage } from '@rdlc/report-model/protocol';
 import { FailingFileSystem } from './failing-file-system.js';
 import { parse } from '@rdlc/xml-parser/parser';
@@ -12,9 +14,16 @@ import { WindowClipboard } from '../../apps/vscode-extension/src/clipboard.js';
 import { memory, open, view } from './clipboard.test.js';
 import { DocumentSession } from '../../apps/vscode-extension/src/document-session.js';
 import { activateHistoryTarget } from '../../apps/vscode-extension/src/editor-provider.js';
-import type { HostMessage } from '@rdlc/report-model/protocol';
+import { SidebarHostContext } from '../../apps/vscode-extension/src/sidebar/host-context.js';
+import type { NativeIntent } from '../../apps/vscode-extension/src/sidebar/host-context.js';
+import type {
+  ActionOutcomeMessage,
+  HostMessage,
+  NativeActionMessage,
+} from '@rdlc/report-model/protocol';
 
 export async function run(): Promise<void> {
+  await nativeRequestLifecycle();
   await sourceNavigationRaces();
   await nativeDesignerHistory();
   await clipboardViewRace();
@@ -1143,4 +1152,1194 @@ async function clipboardViewRace(): Promise<void> {
   await vscode.commands.executeCommand(
     'workbench.action.revertAndCloseActiveEditor',
   );
+}
+
+// ---------------------------------------------------------------------------
+// T052/T056 — captured native request lifecycle.
+//
+// `tests/desktop/context.spec.ts` lists these request classes as
+// NOT_INJECTABLE from the Desktop surface, so the host suite owns them: a real
+// DocumentSession over a real TextDocument, the real shared mutation queue and
+// the real WindowContextRegistry. The stub panel only plays the designer half
+// of the bridge, and `webview.postMessage` is exactly the delivery boundary
+// `SidebarHostContext.dispatch` awaits, so every disturbance lands on a real
+// await instead of being simulated around it.
+// ---------------------------------------------------------------------------
+
+/** The finite native action families the sidebar routes. */
+type NativeKind = 'select' | 'properties' | 'create' | 'clipboard';
+
+interface Rig {
+  host: SidebarHostContext;
+  session: DocumentSession;
+  document: vscode.TextDocument;
+  original: string;
+  messages: HostMessage[];
+  outcomes: ActionOutcomeMessage[];
+  viewId: string;
+  documentId: string;
+  deliveries: number;
+  delivered: NativeActionMessage[];
+  registration: vscode.Disposable | null;
+  subscriptions: vscode.Disposable[];
+}
+
+interface RaceEnv {
+  readonly source: string;
+  readonly directory: string;
+  readonly notes: vscode.TextDocument;
+  readonly other: vscode.TextDocument;
+  readonly otherSource: string;
+  readonly otherVersion: number;
+}
+
+/** A real source change injected during delivery; never a fake document patch. */
+const DISTURBED = '<!-- disturbed during delivery -->';
+/** Save As moves the lifetime to another URI through the host's own transition. */
+const SAVED_URI = 'file:///saved-as/renamed.rdlc';
+
+function textboxCount(source: string): number {
+  return projectReport(
+    parse({ uri: 'file:///count.rdlc', version: 1, source, eol: '\n' }),
+  ).textboxes.length;
+}
+
+function bodyTarget(rig: Rig) {
+  const evaluation = rig.host.evaluation;
+  assert.ok(evaluation, 'the host keeps the active report evaluation');
+  const bodies = new Set(
+    (evaluation.scene?.items ?? [])
+      .filter((item) => item.kind !== 'cell')
+      .map((item) => item.id),
+  );
+  const target = evaluation.navigation.structure.nodes.find(
+    (node) =>
+      bodies.has(node.id) &&
+      evaluation.ids.includes(node.id) &&
+      node.capabilities.some(
+        (capability) =>
+          capability.operation === 'properties' && capability.eligible,
+      ),
+  );
+  assert.ok(target, 'the fixture has an authored, selectable body item');
+  return target;
+}
+
+async function openRig(options: {
+  readonly file: string;
+  readonly ready: boolean;
+  readonly apply?: typeof vscode.workspace.applyEdit;
+  readonly onDeliver: (rig: Rig) => Promise<boolean>;
+}): Promise<Rig> {
+  const document = await vscode.workspace.openTextDocument(options.file);
+  await vscode.window.showTextDocument(document);
+  const host = new SidebarHostContext();
+  const session = new DocumentSession(
+    document,
+    options.apply,
+    new WindowClipboard(memory()),
+  );
+  const rig: Rig = {
+    host,
+    session,
+    document,
+    original: document.getText(),
+    messages: [],
+    outcomes: [],
+    viewId: '',
+    documentId: '',
+    deliveries: 0,
+    delivered: [],
+    registration: null,
+    subscriptions: [],
+  };
+  rig.subscriptions = [
+    session.onMessage((message) => rig.messages.push(message)),
+    session.onActionOutcome((outcome) => rig.outcomes.push(outcome)),
+  ];
+  // The designer half of the bridge: this is the transport the host awaits.
+  const panel = {
+    active: false,
+    visible: false,
+    viewColumn: undefined,
+    onDidChangeViewState: () => new vscode.Disposable(() => undefined),
+    webview: {
+      postMessage: async (input: unknown) => {
+        rig.deliveries++;
+        rig.delivered.push(input as NativeActionMessage);
+        return options.onDeliver(rig);
+      },
+    },
+  } as unknown as vscode.WebviewPanel;
+  rig.registration = host.register(document, panel, session);
+  const context = host.registry.context();
+  rig.viewId = context.viewId ?? '';
+  rig.documentId = context.documentId ?? '';
+  assert.ok(rig.viewId, 'the same-document designer view is registered');
+  assert.ok(rig.documentId, 'the report lifetime is registered');
+  if (options.ready) {
+    session.receive({ protocol: 2, kind: 'ready' });
+    await until(() => session.isReady, 'designer rig ready');
+  }
+  return rig;
+}
+
+async function closeRig(rig: Rig): Promise<void> {
+  // The host marks itself disposed first, so its registration teardown can
+  // never re-route a lifetime the scenario already invalidated.
+  rig.host.dispose();
+  rig.registration?.dispose();
+  for (const subscription of rig.subscriptions) subscription.dispose();
+  rig.session.dispose();
+  await vscode.window.showTextDocument(rig.document);
+  await vscode.commands.executeCommand(
+    'workbench.action.revertAndCloseActiveEditor',
+  );
+}
+
+function assertOtherUntouched(env: RaceEnv, label: string): void {
+  assert.equal(env.other.getText(), env.otherSource, `${label}: other report`);
+  assert.equal(env.other.version, env.otherVersion, `${label}: other version`);
+}
+
+/** The designer half of the bridge: answer one delivered action exactly once. */
+async function react(rig: Rig, action: NativeActionMessage): Promise<void> {
+  const settle = (
+    resultVersion: number,
+    selectionSequence: number,
+    accepted: boolean,
+    reason?: string,
+  ) =>
+    rig.session.receive({
+      protocol: 2,
+      kind: 'actionOutcome',
+      requestId: action.requestId,
+      baseVersion: action.baseVersion,
+      resultVersion,
+      ...(accepted
+        ? { status: 'accepted' as const }
+        : { status: 'refused' as const, reason: reason ?? 'Refused' }),
+      selectionSequence,
+    });
+  if (action.action === 'select') {
+    rig.session.receive({
+      protocol: 2,
+      kind: 'acceptedSelection',
+      version: action.baseVersion,
+      viewId: action.viewId,
+      sequence: 1,
+      requestId: action.requestId,
+      selection: {
+        mode: 'body',
+        targetIds: [...action.targetIds],
+        primaryId: action.primaryId,
+      },
+    });
+    settle(action.baseVersion, 1, true);
+    return;
+  }
+  if (action.action === 'properties') {
+    settle(action.baseVersion, 0, true);
+    return;
+  }
+  let echo: string;
+  if (action.action === 'create') {
+    echo = `edit-${action.requestId}`;
+    rig.session.receive({
+      protocol: 2,
+      kind: 'edit',
+      requestId: echo,
+      nativeRequestId: action.requestId,
+      baseVersion: action.baseVersion,
+      targetId: rig.session.evaluation.syntax.root!.id,
+      operation: 'author',
+      payload: { action: 'createTextbox', left: '20pt', top: '20pt' },
+    });
+  } else if (action.action === 'clipboard') {
+    echo = `clip-${action.requestId}`;
+    rig.session.receive({
+      protocol: 2,
+      kind: 'clipboard',
+      requestId: echo,
+      nativeRequestId: action.requestId,
+      baseVersion: action.baseVersion,
+      action: action.clipboard,
+      targetIds: [...action.targetIds],
+      ...(action.unit ? { unit: action.unit } : {}),
+    });
+  } else {
+    throw new Error(`The harness does not play ${action.action} actions`);
+  }
+  await until(
+    () =>
+      rig.messages.some(
+        (message) =>
+          (message.kind === 'editResult' ||
+            message.kind === 'clipboardResult') &&
+          message.requestId === echo,
+      ),
+    `${action.action} settles through the shared queue`,
+  );
+  const result = rig.messages.find(
+    (
+      message,
+    ): message is
+      | Extract<HostMessage, { kind: 'editResult' }>
+      | Extract<HostMessage, { kind: 'clipboardResult' }> =>
+      (message.kind === 'editResult' || message.kind === 'clipboardResult') &&
+      message.requestId === echo,
+  );
+  assert.ok(result, `${action.action} produced its result`);
+  settle(result.version, 0, result.accepted, result.reason);
+}
+
+type RegistryExpectation =
+  | 'unchanged'
+  | 'no-report'
+  | 'no-view'
+  | 'retargeted'
+  | 'synced'
+  | 'auto';
+
+interface Disturbance {
+  readonly id: string;
+  /** A bound session only answers the readiness loop after the handshake. */
+  readonly ready: boolean;
+  readonly apply?: typeof vscode.workspace.applyEdit;
+  /** Runs before authority is captured; may set up a queued mutation. */
+  readonly setup?: (rig: Rig) => Promise<void>;
+  /** The delivery boundary. Absent means the designer must never receive. */
+  readonly deliver?: (rig: Rig) => Promise<boolean>;
+  /** Runs while the request waits inside the bounded readiness loop. */
+  readonly duringWait?: (rig: Rig) => Promise<void>;
+  readonly terminal: 'accepted' | 'error';
+  readonly reason: RegExp;
+  readonly deliveries: number;
+  readonly outcomes: number;
+  readonly cancels: number;
+  readonly registry: RegistryExpectation;
+}
+
+async function lifecycleCase(options: {
+  readonly file: string;
+  readonly kind: NativeKind;
+  readonly disturbance: Disturbance;
+  readonly env: RaceEnv;
+}): Promise<void> {
+  const { kind, disturbance, env } = options;
+  const label = `${kind}/${disturbance.id}`;
+  const rig = await openRig({
+    file: options.file,
+    ready: disturbance.ready,
+    ...(disturbance.apply ? { apply: disturbance.apply } : {}),
+    onDeliver:
+      disturbance.deliver ??
+      (async () => {
+        throw new Error(`${label}: the request must never be delivered`);
+      }),
+  });
+  try {
+    if (disturbance.setup) await disturbance.setup(rig);
+    rig.host.refreshFocus();
+    const before = rig.host.registry.context();
+    const request = requestFor(rig, kind);
+    const running = rig.host.dispatch(request.intent, request.targetIds).then(
+      (outcome) => ({ ok: true as const, outcome }),
+      (error) => ({ ok: false as const, error }),
+    );
+    if (disturbance.duringWait) await disturbance.duringWait(rig);
+    const settled = await running;
+
+    // One terminal result, one delivery, no protocol noise, no lost capture.
+    assert.equal(rig.deliveries, disturbance.deliveries, `${label}: delivery`);
+    assert.equal(
+      rig.outcomes.length,
+      disturbance.outcomes,
+      `${label}: terminal`,
+    );
+    assert.equal(
+      rig.messages.filter((message) => message.kind === 'protocolError').length,
+      0,
+      `${label}: no protocol error`,
+    );
+    assert.equal(
+      rig.messages.filter((message) => message.kind === 'nativeCancel').length,
+      disturbance.cancels,
+      `${label}: pending state cleared once`,
+    );
+    assert.equal(
+      rig.host.registry.pendingCount,
+      0,
+      `${label}: capture settled`,
+    );
+    assertOtherUntouched(env, label);
+
+    if (settled.ok) {
+      assert.equal(
+        disturbance.terminal,
+        'accepted',
+        `${label}: not accepted — ${settled.outcome.status} ${settled.outcome.reason ?? ''}`,
+      );
+      assert.equal(settled.outcome.status, 'accepted', label);
+      assert.equal(
+        settled.outcome.resultVersion > settled.outcome.baseVersion,
+        kind === 'create' || kind === 'clipboard',
+        `${label}: only a mutation advances the result version`,
+      );
+    } else {
+      const failure =
+        settled.error instanceof Error
+          ? settled.error.message
+          : String(settled.error);
+      assert.equal(
+        disturbance.terminal,
+        'error',
+        `${label}: unexpected acceptance — ${failure}`,
+      );
+      assert.ok(disturbance.reason.test(failure), `${label}: ${failure}`);
+    }
+
+    // Exact text: the action itself may only ever produce its own one step.
+    const mutates =
+      disturbance.id === 'queued-mutation' ||
+      (disturbance.id === 'delayed' &&
+        (kind === 'create' || kind === 'clipboard'));
+    if (disturbance.id === 'edit')
+      assert.equal(
+        rig.document.getText(),
+        rig.original +
+          (rig.document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n') +
+          DISTURBED,
+        `${label}: only the injected source change`,
+      );
+    else if (mutates) {
+      assert.equal(
+        textboxCount(rig.document.getText()),
+        textboxCount(rig.original) + 1,
+        `${label}: exactly one created item`,
+      );
+      await history(rig.document, 'undo', rig.original);
+      assert.equal(
+        rig.document.getText(),
+        rig.original,
+        `${label}: one Undo step reverses it`,
+      );
+    } else assert.equal(rig.document.getText(), rig.original, `${label}: text`);
+
+    // Exact routing state for this disturbance.
+    const expectation: Exclude<RegistryExpectation, 'auto'> =
+      disturbance.registry === 'auto'
+        ? mutates
+          ? 'synced'
+          : 'unchanged'
+        : disturbance.registry;
+    const context = rig.host.registry.context();
+    if (expectation === 'unchanged')
+      assert.deepEqual(context, before, `${label}: routing context`);
+    else if (expectation === 'no-report')
+      assert.deepEqual(
+        context,
+        {
+          state: 'no-report',
+          documentId: null,
+          uri: null,
+          version: 0,
+          generation: before.generation + 1,
+          viewId: null,
+        },
+        label,
+      );
+    else if (expectation === 'no-view')
+      assert.deepEqual(context, { ...before, viewId: null }, label);
+    else if (expectation === 'retargeted') {
+      assert.equal(context.documentId, before.documentId, label);
+      assert.equal(context.uri, SAVED_URI, label);
+      assert.equal(context.state, 'loading', label);
+      assert.equal(context.generation, before.generation + 1, label);
+    } else {
+      await until(
+        () => rig.host.registry.context().version === rig.document.version,
+        `${label}: registry tracks the accepted document`,
+      );
+      const synced = rig.host.registry.context();
+      assert.equal(synced.state, 'editable', label);
+      assert.equal(synced.documentId, before.documentId, label);
+      assert.equal(synced.viewId, before.viewId, label);
+      assert.equal(synced.generation, before.generation, label);
+    }
+  } finally {
+    await closeRig(rig);
+  }
+}
+
+function requestFor(
+  rig: Rig,
+  kind: NativeKind,
+): { readonly intent: NativeIntent; readonly targetIds: readonly string[] } {
+  const target = bodyTarget(rig);
+  switch (kind) {
+    case 'create':
+      return { intent: { action: 'create', create: 'textbox' }, targetIds: [] };
+    case 'properties':
+      return { intent: { action: 'properties' }, targetIds: [target.id] };
+    case 'select':
+      return {
+        intent: { action: 'select', primaryId: target.id, additive: false },
+        targetIds: [target.id],
+      };
+    case 'clipboard':
+      return {
+        intent: { action: 'clipboard', clipboard: 'duplicate', unit: 'pt' },
+        targetIds: [target.id],
+      };
+  }
+}
+
+async function nativeRequestLifecycle(): Promise<void> {
+  const source = readFileSync(
+    resolve(__dirname, '../../../tests/fixtures/interactive/mixed.rdlc'),
+    'utf8',
+  );
+  const directory = mkdtempSync(join(tmpdir(), 'rdlc-native-races-'));
+  const otherFile = join(directory, 'other.rdlc');
+  writeFileSync(otherFile, source);
+  const other = await vscode.workspace.openTextDocument(otherFile);
+  const notesFile = join(directory, 'notes.txt');
+  writeFileSync(notesFile, 'plain notes, never a report\n');
+  const notes = await vscode.workspace.openTextDocument(notesFile);
+  const env: RaceEnv = {
+    source,
+    directory,
+    notes,
+    other,
+    otherSource: other.getText(),
+    otherVersion: other.version,
+  };
+
+  // A typed mutation parked in the real shared queue while a native action
+  // delivers: the queue wins, the native action must never replay onto it.
+  const queued: { blocked: boolean; release: () => void } = {
+    blocked: false,
+    release: () => undefined,
+  };
+  let queuedBase = 0;
+  const apply: typeof vscode.workspace.applyEdit = async (edit, metadata) => {
+    queued.blocked = true;
+    await new Promise<void>((resolve) => {
+      queued.release = resolve;
+    });
+    return vscode.workspace.applyEdit(edit, metadata);
+  };
+
+  const refusal = {
+    terminal: 'error' as const,
+    reason: /report or designer changed while the action was being delivered/,
+    deliveries: 1,
+    outcomes: 1,
+    cancels: 1,
+  };
+
+  const disturbances: Disturbance[] = [
+    {
+      ...refusal,
+      id: 'edit',
+      ready: true,
+      registry: 'synced',
+      deliver: async (rig) => {
+        const edit = new vscode.WorkspaceEdit();
+        edit.insert(
+          rig.document.uri,
+          rig.document.positionAt(rig.document.getText().length),
+          (rig.document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n') +
+            DISTURBED,
+        );
+        assert.equal(await vscode.workspace.applyEdit(edit), true);
+        return true;
+      },
+    },
+    {
+      ...refusal,
+      id: 'context',
+      ready: true,
+      registry: 'no-report',
+      deliver: async (rig) => {
+        assert.ok(
+          rig.host.registry.context().documentId,
+          'still captured before the switch',
+        );
+        await vscode.window.showTextDocument(notes);
+        return true;
+      },
+    },
+    {
+      ...refusal,
+      id: 'view-close',
+      ready: true,
+      registry: 'no-view',
+      deliver: async (rig) => {
+        assert.equal(rig.host.registry.disposeView(rig.viewId), true);
+        return true;
+      },
+    },
+    {
+      ...refusal,
+      id: 'document-close',
+      ready: true,
+      registry: 'no-report',
+      deliver: async (rig) => {
+        assert.equal(rig.host.registry.closeDocument(rig.documentId), true);
+        return true;
+      },
+    },
+    {
+      ...refusal,
+      id: 'save-as',
+      ready: true,
+      registry: 'retargeted',
+      deliver: async (rig) => {
+        rig.host.registry.retarget(
+          rig.documentId,
+          SAVED_URI,
+          rig.document.version,
+        );
+        return true;
+      },
+    },
+    {
+      ...refusal,
+      id: 'session-disposed',
+      ready: true,
+      cancels: 0,
+      registry: 'unchanged',
+      deliver: async (rig) => {
+        rig.session.dispose();
+        return true;
+      },
+    },
+    {
+      ...refusal,
+      id: 'post-false',
+      reason: /^The designer did not accept the action\.$/,
+      ready: true,
+      registry: 'unchanged',
+      deliver: async () => false,
+    },
+    {
+      ...refusal,
+      id: 'post-throw',
+      reason: /^The designer did not accept the action\.$/,
+      ready: true,
+      registry: 'unchanged',
+      deliver: async () => {
+        throw new Error('the webview was disposed during delivery');
+      },
+    },
+    {
+      ...refusal,
+      id: 'queued-mutation',
+      ready: true,
+      apply,
+      registry: 'synced',
+      setup: async (rig) => {
+        queued.blocked = false;
+        queuedBase = rig.document.version;
+        rig.session.receive({
+          protocol: 2,
+          kind: 'edit',
+          requestId: 'queued-behind-the-bridge',
+          baseVersion: rig.document.version,
+          targetId: rig.session.evaluation.syntax.root!.id,
+          operation: 'author',
+          payload: { action: 'createTextbox', left: '40pt', top: '40pt' },
+        });
+        await until(
+          () => queued.blocked,
+          'a typed mutation waits inside the shared queue',
+        );
+      },
+      deliver: async (rig) => {
+        queued.release();
+        await until(
+          () => rig.document.version > queuedBase,
+          'the queued mutation lands first',
+        );
+        return true;
+      },
+    },
+    {
+      id: 'delayed',
+      ready: true,
+      terminal: 'accepted',
+      reason: /./,
+      deliveries: 1,
+      outcomes: 1,
+      cancels: 0,
+      registry: 'auto',
+      deliver: async (rig) => {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        const action = rig.delivered.at(-1);
+        assert.ok(action, 'the delayed request reached the designer');
+        await react(rig, action);
+        return true;
+      },
+    },
+    {
+      id: 'readiness',
+      ready: false,
+      terminal: 'error',
+      reason: /no longer current: stale-document/,
+      deliveries: 0,
+      outcomes: 0,
+      cancels: 0,
+      registry: 'no-report',
+      duringWait: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        await vscode.window.showTextDocument(notes);
+      },
+    },
+  ];
+
+  const kinds: NativeKind[] = ['select', 'properties', 'create', 'clipboard'];
+  let index = 0;
+  let failed = false;
+  let failure: unknown;
+  try {
+    for (const kind of kinds)
+      for (const disturbance of disturbances) {
+        const file = join(directory, `race-${++index}.rdlc`);
+        writeFileSync(file, source);
+        await lifecycleCase({ file, kind, disturbance, env });
+      }
+    assert.equal(index, 44, 'the parameterized lifecycle matrix is complete');
+    await readinessTimeout(env);
+    await duplicateOutcomeEcho(env);
+    await duplicateTransportDelivery(env);
+    await resultBeforeSnapshot(env);
+    await snapshotBeforeResult(env);
+    await captureRefusedInvalidSource(env);
+    await captureRefusedNonReport(env);
+    await staleSelectionEcho(env);
+    await concurrentDuplicateDispatch(env);
+  } catch (error) {
+    failed = true;
+    failure = error;
+  }
+  // The journey's own error must never be replaced by cleanup, and the temp
+  // directory must go in both cases: collect first, then report together.
+  const cleanup: unknown[] = [];
+  cleanup.push(...(await closeOwnedEditors(directory)));
+  try {
+    await rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    });
+  } catch (error) {
+    cleanup.push(error);
+  }
+  if (failed && cleanup.length)
+    throw new AggregateError(
+      [failure, ...cleanup],
+      'nativeRequestLifecycle and cleanup failed',
+    );
+  if (failed) throw failure;
+  if (cleanup.length === 1) throw cleanup[0];
+  if (cleanup.length)
+    throw new AggregateError(cleanup, 'nativeRequestLifecycle cleanup failed');
+}
+
+/** The bounded readiness wait exhausts without delivering, opening or mutating. */
+async function readinessTimeout(env: RaceEnv): Promise<void> {
+  const label = 'readiness-timeout';
+  const file = join(env.directory, 'readiness-timeout.rdlc');
+  writeFileSync(file, env.source);
+  const rig = await openRig({
+    file,
+    ready: false,
+    onDeliver: async () => {
+      throw new Error(`${label}: an unready session must not deliver`);
+    },
+  });
+  try {
+    const request = requestFor(rig, 'create');
+    const started = Date.now();
+    let failure: unknown;
+    try {
+      await rig.host.dispatch(request.intent, request.targetIds);
+    } catch (error) {
+      failure = error;
+    }
+    assert.ok(failure instanceof Error, `${label}: the wait refuses`);
+    assert.match(failure.message, /did not become ready/, label);
+    assert.ok(
+      Date.now() - started >= 14_000,
+      `${label}: the bounded 15 s wait really expired`,
+    );
+    assert.equal(rig.deliveries, 0, `${label}: never delivered`);
+    assert.equal(rig.outcomes.length, 0, `${label}: nothing to settle`);
+    assert.equal(
+      rig.host.registry.pendingCount,
+      0,
+      `${label}: capture settled`,
+    );
+    assert.equal(rig.document.getText(), rig.original, `${label}: no mutation`);
+    assert.equal(
+      rig.messages.filter((message) => message.kind === 'protocolError').length,
+      0,
+      label,
+    );
+    assertOtherUntouched(env, label);
+  } finally {
+    await closeRig(rig);
+  }
+}
+
+/** Identical and conflicting outcome echoes keep exactly one terminal result. */
+async function duplicateOutcomeEcho(env: RaceEnv): Promise<void> {
+  const label = 'duplicate-outcome-echo';
+  const file = join(env.directory, 'outcome-echo.rdlc');
+  writeFileSync(file, env.source);
+  const rig = await openRig({
+    file,
+    ready: true,
+    onDeliver: async (current) => {
+      const action = current.delivered.at(-1);
+      assert.ok(action, 'the request reached the designer');
+      await react(current, action);
+      const accepted = current.outcomes.at(-1);
+      assert.ok(accepted, 'the designer settles the request once');
+      current.session.receive({ ...accepted });
+      current.session.receive({ ...accepted });
+      current.session.receive({
+        ...accepted,
+        status: 'refused',
+        reason: 'Conflicting duplicate',
+      });
+      return true;
+    },
+  });
+  try {
+    const request = requestFor(rig, 'create');
+    const outcome = await rig.host.dispatch(request.intent, request.targetIds);
+    assert.equal(outcome.status, 'accepted', label);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(rig.outcomes.length, 1, `${label}: one terminal result`);
+    assert.equal(rig.deliveries, 1, `${label}: one delivery`);
+    assert.equal(
+      rig.messages.filter((message) => message.kind === 'protocolError').length,
+      0,
+      `${label}: duplicates are silent`,
+    );
+    assert.equal(rig.host.registry.pendingCount, 0, `${label}: settled`);
+    assert.equal(
+      textboxCount(rig.document.getText()),
+      textboxCount(rig.original) + 1,
+      `${label}: one created item`,
+    );
+    await history(rig.document, 'undo', rig.original);
+    assert.equal(
+      rig.document.getText(),
+      rig.original,
+      `${label}: one Undo step`,
+    );
+    assertOtherUntouched(env, label);
+  } finally {
+    await closeRig(rig);
+  }
+}
+
+/** A repeated transport envelope never reaches the webview twice. */
+async function duplicateTransportDelivery(env: RaceEnv): Promise<void> {
+  const label = 'duplicate-transport-delivery';
+  const file = join(env.directory, 'duplicate-transport.rdlc');
+  writeFileSync(file, env.source);
+  const rig = await openRig({
+    file,
+    ready: true,
+    onDeliver: async (current) => {
+      const action = current.delivered.at(-1);
+      assert.ok(action, 'the request reached the designer');
+      const again = await current.session.dispatchNativeAction(
+        action,
+        () => true,
+        async () => {
+          throw new Error('the transport delivered the same envelope twice');
+        },
+      );
+      assert.equal(again.delivered, false, `${label}: no second delivery`);
+      assert.match(
+        String(again.reason),
+        /Duplicate request/,
+        `${label}: idempotent`,
+      );
+      assert.equal(current.deliveries, 1, `${label}: still one delivery`);
+      await react(current, action);
+      return true;
+    },
+  });
+  try {
+    const request = requestFor(rig, 'create');
+    const outcome = await rig.host.dispatch(request.intent, request.targetIds);
+    assert.equal(outcome.status, 'accepted', label);
+    assert.equal(rig.deliveries, 1, `${label}: one delivery`);
+    assert.equal(rig.outcomes.length, 1, `${label}: one terminal result`);
+    assert.equal(
+      rig.messages.filter((message) => message.kind === 'protocolError').length,
+      0,
+      label,
+    );
+    assert.equal(rig.host.registry.pendingCount, 0, `${label}: settled`);
+    assert.equal(
+      textboxCount(rig.document.getText()),
+      textboxCount(rig.original) + 1,
+      `${label}: one created item`,
+    );
+    await history(rig.document, 'undo', rig.original);
+    assert.equal(
+      rig.document.getText(),
+      rig.original,
+      `${label}: one Undo step`,
+    );
+    assertOtherUntouched(env, label);
+  } finally {
+    await closeRig(rig);
+  }
+}
+
+/** Result-before-snapshot: a refused native edit settles with no history. */
+async function resultBeforeSnapshot(env: RaceEnv): Promise<void> {
+  const label = 'result-before-snapshot';
+  const file = join(env.directory, 'result-first.rdlc');
+  writeFileSync(file, env.source);
+  const rig = await openRig({
+    file,
+    ready: true,
+    onDeliver: async (current) => {
+      const action = current.delivered.at(-1);
+      assert.ok(action, 'the request reached the designer');
+      const echo = `edit-${action.requestId}`;
+      current.session.receive({
+        protocol: 2,
+        kind: 'edit',
+        requestId: echo,
+        nativeRequestId: action.requestId,
+        baseVersion: action.baseVersion,
+        targetId: action.targetIds[0],
+        operation: 'author',
+        payload: { action: 'deleteTextbox', confirm: 'not-confirmed' },
+      });
+      await until(
+        () =>
+          current.messages.some(
+            (message) =>
+              message.kind === 'editResult' && message.requestId === echo,
+          ),
+        'the refused authoring edit settles',
+      );
+      const result = current.messages.find(
+        (message): message is Extract<HostMessage, { kind: 'editResult' }> =>
+          message.kind === 'editResult' && message.requestId === echo,
+      );
+      assert.ok(result && !result.accepted, `${label}: the edit is refused`);
+      current.session.receive({
+        protocol: 2,
+        kind: 'actionOutcome',
+        requestId: action.requestId,
+        baseVersion: action.baseVersion,
+        resultVersion: result.version,
+        status: 'refused',
+        reason: result.reason,
+        selectionSequence: 0,
+      });
+      return true;
+    },
+  });
+  try {
+    const intent: NativeIntent = {
+      action: 'author',
+      payload: { action: 'deleteTextbox', confirm: 'not-confirmed' },
+    };
+    const targetIds = [bodyTarget(rig).id];
+    const before = rig.messages.length;
+    const outcome = await rig.host.dispatch(intent, targetIds);
+    assert.equal(outcome.status, 'refused', label);
+    assert.ok(outcome.reason, `${label}: an accessible reason`);
+    const seen = rig.messages.slice(before);
+    const resultAt = seen.findIndex((message) => message.kind === 'editResult');
+    const snapshotAt = seen.findIndex((message) => message.kind === 'snapshot');
+    assert.ok(resultAt >= 0, `${label}: the result arrived`);
+    assert.ok(
+      snapshotAt > resultAt,
+      `${label}: result first, snapshot second (${resultAt} vs ${snapshotAt})`,
+    );
+    assert.equal(rig.outcomes.length, 1, `${label}: one terminal result`);
+    assert.equal(
+      rig.messages.filter((message) => message.kind === 'nativeCancel').length,
+      0,
+      `${label}: the settled action is not cancelled again`,
+    );
+    assert.equal(rig.host.registry.pendingCount, 0, `${label}: settled`);
+    assert.equal(rig.document.getText(), rig.original, `${label}: no history`);
+    assertOtherUntouched(env, label);
+  } finally {
+    await closeRig(rig);
+  }
+}
+
+/** Snapshot-before-result: an accepted creation publishes before its result. */
+async function snapshotBeforeResult(env: RaceEnv): Promise<void> {
+  const label = 'snapshot-before-result';
+  const file = join(env.directory, 'snapshot-first.rdlc');
+  writeFileSync(file, env.source);
+  const rig = await openRig({
+    file,
+    ready: true,
+    onDeliver: async (current) => {
+      const action = current.delivered.at(-1);
+      assert.ok(action, 'the request reached the designer');
+      await react(current, action);
+      return true;
+    },
+  });
+  try {
+    const request = requestFor(rig, 'create');
+    const before = rig.messages.length;
+    const outcome = await rig.host.dispatch(request.intent, request.targetIds);
+    assert.equal(outcome.status, 'accepted', label);
+    assert.equal(outcome.resultVersion, outcome.baseVersion + 1, label);
+    const seen = rig.messages.slice(before);
+    const resultAt = seen.findIndex((message) => message.kind === 'editResult');
+    const snapshotAt = seen.findIndex((message) => message.kind === 'snapshot');
+    assert.ok(snapshotAt >= 0, `${label}: the accepted snapshot arrived`);
+    assert.ok(
+      resultAt > snapshotAt,
+      `${label}: snapshot first, result second (${snapshotAt} vs ${resultAt})`,
+    );
+    assert.equal(rig.outcomes.length, 1, `${label}: one terminal result`);
+    assert.equal(rig.host.registry.pendingCount, 0, `${label}: settled`);
+    assert.equal(
+      textboxCount(rig.document.getText()),
+      textboxCount(rig.original) + 1,
+      `${label}: one created item`,
+    );
+    await history(rig.document, 'undo', rig.original);
+    assert.equal(
+      rig.document.getText(),
+      rig.original,
+      `${label}: one Undo step`,
+    );
+    assertOtherUntouched(env, label);
+  } finally {
+    await closeRig(rig);
+  }
+}
+
+/** An invalid source refuses the capture before any await, open or delivery. */
+async function captureRefusedInvalidSource(env: RaceEnv): Promise<void> {
+  const label = 'capture-refused-invalid-source';
+  const file = join(env.directory, 'invalid-source.rdlc');
+  writeFileSync(file, env.source);
+  const rig = await openRig({
+    file,
+    ready: true,
+    onDeliver: async () => {
+      throw new Error(`${label}: a refused capture must never deliver`);
+    },
+  });
+  try {
+    const request = requestFor(rig, 'create');
+    await replaceSource(rig.document, '<Report');
+    await until(
+      () => rig.host.registry.context().state === 'invalid-source',
+      `${label}: the host accepts the broken source`,
+    );
+    await assert.rejects(
+      () => rig.host.dispatch(request.intent, request.targetIds),
+      /Report action is unavailable: invalid-source\./,
+      label,
+    );
+    assert.equal(rig.deliveries, 0, `${label}: never delivered`);
+    assert.equal(rig.outcomes.length, 0, `${label}: nothing to settle`);
+    assert.equal(rig.host.registry.pendingCount, 0, `${label}: no pending`);
+    assert.equal(rig.document.getText(), '<Report', `${label}: no history`);
+    assert.equal(rig.document.isDirty, true, label);
+    assertOtherUntouched(env, label);
+  } finally {
+    await closeRig(rig);
+  }
+}
+
+/** Explicit non-report focus refuses the capture before any await or delivery. */
+async function captureRefusedNonReport(env: RaceEnv): Promise<void> {
+  const label = 'capture-refused-non-report';
+  const file = join(env.directory, 'non-report.rdlc');
+  writeFileSync(file, env.source);
+  const rig = await openRig({
+    file,
+    ready: true,
+    onDeliver: async () => {
+      throw new Error(`${label}: a refused capture must never deliver`);
+    },
+  });
+  try {
+    const request = requestFor(rig, 'select');
+    await vscode.window.showTextDocument(env.notes);
+    rig.host.refreshFocus();
+    assert.equal(rig.host.registry.context().state, 'no-report', label);
+    await assert.rejects(
+      () => rig.host.dispatch(request.intent, request.targetIds),
+      /Report action is unavailable: no-report\./,
+      label,
+    );
+    assert.equal(rig.deliveries, 0, `${label}: never delivered`);
+    assert.equal(rig.outcomes.length, 0, `${label}: nothing to settle`);
+    assert.equal(rig.host.registry.pendingCount, 0, `${label}: no pending`);
+    assert.equal(rig.document.getText(), rig.original, `${label}: no history`);
+    assertOtherUntouched(env, label);
+  } finally {
+    await closeRig(rig);
+  }
+}
+
+/** Stale and duplicate selection echoes never move accepted selection. */
+async function staleSelectionEcho(env: RaceEnv): Promise<void> {
+  const label = 'stale-selection-echo';
+  const file = join(env.directory, 'selection-echo.rdlc');
+  writeFileSync(file, env.source);
+  const rig = await openRig({
+    file,
+    ready: true,
+    onDeliver: async (current) => {
+      const action = current.delivered.at(-1);
+      assert.ok(action, 'the request reached the designer');
+      await react(current, action);
+      const accepted = current.session.currentSelection;
+      assert.ok(accepted, 'the selection was accepted once');
+      current.session.receive({ ...accepted });
+      // A late echo from the previous document version carries ids this
+      // version never issued, so it must be ignored before it can move
+      // anything: empty selection validates at any version.
+      current.session.receive({
+        protocol: 2,
+        kind: 'acceptedSelection',
+        version: accepted.version - 1,
+        viewId: accepted.viewId,
+        sequence: 2,
+        selection: { mode: 'empty' },
+      });
+      return true;
+    },
+  });
+  try {
+    const request = requestFor(rig, 'select');
+    const outcome = await rig.host.dispatch(request.intent, request.targetIds);
+    assert.equal(outcome.status, 'accepted', label);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const selection = rig.session.currentSelection;
+    assert.ok(selection, `${label}: accepted selection survives`);
+    assert.equal(
+      selection.sequence,
+      1,
+      `${label}: the older sequence is ignored`,
+    );
+    assert.equal(
+      selection.selection.mode,
+      'body',
+      `${label}: the accepted selection is never replaced by an echo`,
+    );
+    assert.equal(rig.outcomes.length, 1, `${label}: one terminal result`);
+    assert.equal(
+      rig.messages.filter((message) => message.kind === 'protocolError').length,
+      0,
+      `${label}: stale echoes are silent`,
+    );
+    assert.equal(rig.host.registry.pendingCount, 0, `${label}: settled`);
+    assert.equal(rig.document.getText(), rig.original, `${label}: no history`);
+    assertOtherUntouched(env, label);
+  } finally {
+    await closeRig(rig);
+  }
+}
+
+/** Two concurrent dispatches: one accepted mutation, one refused, never both. */
+async function concurrentDuplicateDispatch(env: RaceEnv): Promise<void> {
+  const label = 'concurrent-duplicate-dispatch';
+  const file = join(env.directory, 'concurrent.rdlc');
+  writeFileSync(file, env.source);
+  let firstDone = false;
+  const rig = await openRig({
+    file,
+    ready: true,
+    onDeliver: async (current) => {
+      const action = current.delivered.at(-1);
+      assert.ok(action, 'the request reached the designer');
+      if (current.deliveries === 1) {
+        await react(current, action);
+        firstDone = true;
+        return true;
+      }
+      await until(
+        () => firstDone,
+        'the accepted request settles before the second delivers',
+      );
+      return true;
+    },
+  });
+  try {
+    const request = requestFor(rig, 'create');
+    const settle = (running: Promise<ActionOutcomeMessage>) =>
+      running.then(
+        (outcome) => ({ ok: true as const, outcome }),
+        (error) => ({ ok: false as const, error }),
+      );
+    // Both captures happen before either delivery, so only one can still be
+    // authorized when the shared queue applies the accepted mutation.
+    const first = settle(rig.host.dispatch(request.intent, request.targetIds));
+    const second = settle(rig.host.dispatch(request.intent, request.targetIds));
+    const [a, b] = await Promise.all([first, second]);
+    if (!a.ok)
+      assert.fail(
+        `${label}: the first request is rejected — ${
+          a.error instanceof Error ? a.error.message : String(a.error)
+        }`,
+      );
+    assert.equal(a.outcome.status, 'accepted', label);
+    if (b.ok)
+      assert.fail(
+        `${label}: the second request must be refused, got ${b.outcome.status}`,
+      );
+    assert.match(
+      b.error instanceof Error ? b.error.message : String(b.error),
+      /report or designer changed while the action was being delivered/,
+      `${label}: the refusal names the changed authority`,
+    );
+    assert.equal(rig.deliveries, 2, `${label}: each capture delivered once`);
+    assert.equal(rig.outcomes.length, 2, `${label}: one result per request`);
+    assert.equal(
+      rig.outcomes.filter((outcome) => outcome.status === 'accepted').length,
+      1,
+      `${label}: exactly one accepted mutation`,
+    );
+    assert.equal(
+      rig.messages.filter((message) => message.kind === 'protocolError').length,
+      0,
+      label,
+    );
+    assert.equal(rig.host.registry.pendingCount, 0, `${label}: both settled`);
+    assert.equal(
+      textboxCount(rig.document.getText()),
+      textboxCount(rig.original) + 1,
+      `${label}: exactly one created item`,
+    );
+    await history(rig.document, 'undo', rig.original);
+    assert.equal(
+      rig.document.getText(),
+      rig.original,
+      `${label}: one Undo step`,
+    );
+    assertOtherUntouched(env, label);
+  } finally {
+    await closeRig(rig);
+  }
 }

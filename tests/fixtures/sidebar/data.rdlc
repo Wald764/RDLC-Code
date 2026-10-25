@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition" xmlns:rd="http://schemas.microsoft.com/SQLServer/reporting/reportdesigner">
+  <DataSources>
+    <DataSource Name="Local">
+      <ConnectionProperties>
+        <DataProvider>SQL</DataProvider>
+        <ConnectString>SECRET_CONNECTION_STRING</ConnectString>
+      </ConnectionProperties>
+    </DataSource>
+    <DataSource Name="Shared">
+      <DataSourceReference>../shared/report.rsds</DataSourceReference>
+    </DataSource>
+  </DataSources>
+  <DataSets>
+    <DataSet Name="Sales">
+      <Query>
+        <DataSourceName>Local</DataSourceName>
+        <CommandText>SELECT SECRET_QUERY_TEXT</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="Id"><DataField>Id</DataField><rd:TypeName>System.Int64</rd:TypeName></Field>
+        <Field Name="Label"><DataField>Label</DataField><rd:TypeName>System.String</rd:TypeName></Field>
+        <Field Name="Active"><DataField>Active</DataField><rd:TypeName>System.Boolean</rd:TypeName></Field>
+        <Field Name="Rank"><DataField>Rank</DataField><rd:TypeName>System.Int32</rd:TypeName></Field>
+        <Field Name="Amount"><DataField>Amount</DataField><rd:TypeName>System.Decimal</rd:TypeName></Field>
+        <Field Name="Ratio"><DataField>Ratio</DataField><rd:TypeName>System.Double</rd:TypeName></Field>
+        <Field Name="Created"><DataField>Created</DataField><rd:TypeName>System.DateTime</rd:TypeName></Field>
+        <Field Name="Customer"><DataField>CustomerName</DataField><rd:TypeName>System.String</rd:TypeName></Field>
+        <Field Name="RunningTotal"><Value>=Sum(Fields!Amount.Value)</Value><rd:TypeName>System.Decimal</rd:TypeName></Field>
+      </Fields>
+    </DataSet>
+    <DataSet Name="Sales">
+      <Fields>
+        <Field Name="Unknown"><DataField>Unknown</DataField><rd:TypeName>Custom.Money</rd:TypeName></Field>
+        <Field Name="Unbound"/>
+        <Field><DataField>Nameless</DataField></Field>
+        <Field Name="Duplicate"><DataField>Duplicate</DataField><rd:TypeName>System.String</rd:TypeName></Field>
+        <Field Name="Duplicate"><DataField>Duplicate</DataField><rd:TypeName>System.String</rd:TypeName></Field>
+      </Fields>
+    </DataSet>
+    <DataSet>
+      <Fields>
+        <Field Name="Lonely"><DataField>Lonely</DataField><rd:TypeName>System.String</rd:TypeName></Field>
+      </Fields>
+    </DataSet>
+  </DataSets>
+  <ReportParameters>
+    <ReportParameter Name="Limit">
+      <DataType>Integer</DataType>
+      <Nullable>true</Nullable>
+      <MultiValue>false</MultiValue>
+      <AllowBlank>false</AllowBlank>
+      <Hidden>true</Hidden>
+      <DefaultValue><Values><Value>SECRET_PARAMETER_DEFAULT</Value></Values></DefaultValue>
+    </ReportParameter>
+    <ReportParameter Name="Loose"><DataType>GUID</DataType></ReportParameter>
+    <ReportParameter><DataType>String</DataType></ReportParameter>
+  </ReportParameters>
+  <EmbeddedImages>
+    <EmbeddedImage Name="Logo">
+      <MIMEType>image/png</MIMEType>
+      <ImageData>SECRET_IMAGE_PNG</ImageData>
+    </EmbeddedImage>
+    <EmbeddedImage Name="Odd">
+      <MIMEType>application/x-secret</MIMEType>
+      <ImageData>SECRET_IMAGE_ODD</ImageData>
+    </EmbeddedImage>
+    <EmbeddedImage Name="Empty"><MIMEType>image/gif</MIMEType></EmbeddedImage>
+  </EmbeddedImages>
+  <ReportSections>
+    <ReportSection>
+      <Body>
+        <ReportItems><Textbox Name="Title"/></ReportItems>
+        <Height>2in</Height>
+      </Body>
+      <Width>6.5in</Width>
+      <Page>
+        <PageHeight>11in</PageHeight>
+        <PageWidth>8.5in</PageWidth>
+        <LeftMargin>1in</LeftMargin>
+        <RightMargin>1in</RightMargin>
+        <TopMargin>1in</TopMargin>
+        <BottomMargin>1in</BottomMargin>
+      </Page>
+    </ReportSection>
+  </ReportSections>
+</Report>

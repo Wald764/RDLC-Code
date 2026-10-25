@@ -1,0 +1,21 @@
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition" xmlns:ext="urn:rdlc-code:ext" xmlns:rd="http://schemas.microsoft.com/SQLServer/reporting/reportdesigner">
+<DataSets><DataSet Name="Orders"><Fields><Field Name="Label"><DataField>Label</DataField><rd:TypeName>System.String</rd:TypeName></Field></Fields></DataSet></DataSets>
+<ReportSections><ReportSection>
+<Body><Height>2in</Height><ReportItems>
+<Tablix Name="OrdersTable">
+<TablixBody><TablixColumns><TablixColumn><Width>1in</Width></TablixColumn></TablixColumns><TablixRows>
+<TablixRow><Height>0.3in</Height><TablixCells><TablixCell><CellContents><Textbox Name="LabelCell"><Paragraphs><Paragraph><TextRuns><TextRun><Value>=Fields!Label.Value</Value></TextRun></TextRuns></Paragraph></Paragraphs></Textbox></CellContents></TablixCell></TablixCells></TablixRow>
+</TablixRows></TablixBody>
+<TablixColumnHierarchy><TablixMembers><TablixMember/></TablixMembers></TablixColumnHierarchy>
+<TablixRowHierarchy><TablixMembers><TablixMember><Group Name="ByLabel"><GroupExpressions><GroupExpression>=Fields!Label.Value</GroupExpression></GroupExpressions></Group><TablixHeader><CellContents><Textbox Name="GroupHeader"/></CellContents></TablixHeader><TablixMembers><TablixMember><Group Name="Details"/></TablixMember></TablixMembers></TablixMember></TablixMembers></TablixRowHierarchy>
+<DataSetName>Orders</DataSetName><Top>0in</Top><Left>0in</Left><Width>2in</Width><Height>0.3in</Height>
+</Tablix>
+<Rectangle Name="Box"><ReportItems><Textbox Name="Nested"/></ReportItems></Rectangle>
+<Rectangle><ReportItems><ext:Widget Name="Foreign"><ext:Child/></ext:Widget></ReportItems></Rectangle>
+<Chart Name="Opaque"><ReportItems><Textbox Name="Hidden"/></ReportItems></Chart>
+<Rectangle Name="Duplicate"/><Rectangle Name="Duplicate"/>
+<Textbox Name="BodyTitle"/><Textbox/>
+</ReportItems></Body><Width>6.5in</Width>
+<Page><PageHeader><ReportItems><Textbox Name="PageTitle"/></ReportItems></PageHeader></Page>
+</ReportSection></ReportSections>
+</Report>

@@ -68,6 +68,7 @@ test('bootstrap: real Desktop insertion, source oracle, Undo, semantics and pixe
     launch: 'unrun',
     nativeInput: 'unrun',
     angular: 'unrun',
+    geometry: 'unrun',
     source: 'unrun',
     undo: 'unrun',
     accessibility: 'unrun',
@@ -123,6 +124,41 @@ test('bootstrap: real Desktop insertion, source oracle, Undo, semantics and pixe
       frame.getByRole('textbox', { name: 'Name', exact: true }),
     ).toHaveValue('Textbox1');
     capabilities.angular = 'passed';
+    capabilities.geometry = 'failed';
+    await expect(frame.locator('.page')).toHaveCSS(
+      'transform',
+      'matrix(1, 0, 0, 1, 0, 0)',
+    );
+    const item = frame.locator('.body > .item[data-kind="textbox"]');
+    await expect(item).toHaveCount(1);
+    await expect(item).toBeVisible();
+    const geometry = await item.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const body = element.parentElement!.getBoundingClientRect();
+      return {
+        left: bounds.left - body.left,
+        top: bounds.top - body.top,
+        width: bounds.width,
+        height: bounds.height,
+      };
+    });
+    // Independent CSS-pixel oracle: 96px/in and 72pt/in at the fresh 100% zoom.
+    const expectedGeometry = {
+      left: (20 * 96) / 72,
+      top: (20 * 96) / 72,
+      width: 96,
+      height: 24,
+    };
+    await writeFile(
+      join(artifacts, 'inserted-geometry.json'),
+      `${JSON.stringify({ actual: geometry, expected: expectedGeometry, toleranceCssPx: 0.1 }, null, 2)}\n`,
+    );
+    for (const key of ['left', 'top', 'width', 'height'] as const)
+      expect(
+        Math.abs(geometry[key] - expectedGeometry[key]),
+        key,
+      ).toBeLessThanOrEqual(0.1);
+    capabilities.geometry = 'passed';
     capabilities.source = 'failed';
     await driver.page.keyboard.press(`${modifier}+s`);
     await expect.poll(() => readFile(fixture, 'utf8')).toBe(expected);

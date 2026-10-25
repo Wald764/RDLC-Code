@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { rm } from 'node:fs/promises';
+import { basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { history, observe, replaceSource, until } from './session-checks.js';
 import { FailingFileSystem } from './failing-file-system.js';
@@ -17,6 +18,12 @@ import { toPoints } from '@rdlc/report-model/geometry';
 import { WindowClipboard } from '../../apps/vscode-extension/src/clipboard.js';
 import { memory, view } from './clipboard.test.js';
 import { DocumentSession } from '../../apps/vscode-extension/src/document-session.js';
+import {
+  RdlcEditorProvider,
+  activateHistoryTarget,
+} from '../../apps/vscode-extension/src/editor-provider.js';
+import { openActiveDesigner } from '../../apps/vscode-extension/src/commands/open-source.js';
+import { SidebarHostContext } from '../../apps/vscode-extension/src/sidebar/host-context.js';
 import type { HostMessage } from '@rdlc/report-model/protocol';
 
 async function directManipulation(): Promise<void> {
@@ -392,6 +399,8 @@ async function mixedHistory(): Promise<void> {
 }
 
 export async function run(): Promise<void> {
+  await sourceOnlyOpening();
+  await editorSessionInit();
   await mvpTextboxJourney();
   await guardedHistoryTargets('\n');
   await guardedHistoryTargets('\r\n');
@@ -967,4 +976,624 @@ async function arrangement(): Promise<void> {
   } finally {
     view.dispose();
   }
+}
+
+/**
+ * Close every editor this test owns and prove each one is gone before the
+ * temporary directory is removed: a surviving tab keeps the platform file
+ * watcher on that directory and the removal fails with EPERM on Windows.
+ * Every owned document is reverted through the promptless revert-and-close
+ * command, so nothing can pause on an unsaved-changes dialog.
+ */
+export async function closeOwnedEditors(directory: string): Promise<unknown[]> {
+  const problems: unknown[] = [];
+  // Compare on the unique temporary directory name: the host may expose the
+  // short or the long form of the parent path, and both must still match.
+  const marker = `/${basename(directory).toLowerCase()}/`;
+  const inside = (uri: vscode.Uri): boolean =>
+    uri.scheme === 'file' &&
+    uri.fsPath.toLowerCase().replace(/\\/g, '/').includes(marker);
+  const tabs = () =>
+    vscode.window.tabGroups.all
+      .flatMap((group) => group.tabs)
+      .filter((tab) => {
+        const input = tab.input;
+        return (
+          (input instanceof vscode.TabInputText ||
+            input instanceof vscode.TabInputCustom) &&
+          inside(input.uri)
+        );
+      });
+  // One pass closes one generation of editors. A document can own several
+  // (source tab and designer tab, or a source tab per group), so repeat until
+  // nothing is left instead of assuming a single close removed everything.
+  const deadline = Date.now() + 5000;
+  let survivors = tabs();
+  let passes = 0;
+  while (survivors.length > 0 && passes < 5 && Date.now() < deadline) {
+    passes++;
+    for (const tab of survivors)
+      if (tab.input instanceof vscode.TabInputCustom) {
+        try {
+          await vscode.window.tabGroups.close([tab], true);
+        } catch (error) {
+          problems.push(error);
+        }
+      }
+    for (const entry of vscode.workspace.textDocuments.filter((document) =>
+      inside(document.uri),
+    )) {
+      if (entry.isClosed) continue;
+      try {
+        await vscode.window.showTextDocument(entry);
+        await vscode.commands.executeCommand(
+          'workbench.action.revertAndCloseActiveEditor',
+        );
+      } catch (error) {
+        problems.push(error);
+      }
+    }
+    survivors = tabs();
+    if (survivors.length > 0)
+      await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  while (survivors.length > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    survivors = tabs();
+  }
+  if (survivors.length > 0)
+    problems.push(
+      new Error(
+        `Editors are still open after close: ${survivors
+          .map((tab) => tab.label)
+          .join(', ')}`,
+      ),
+    );
+  return problems;
+}
+
+/**
+ * Narrow interception of this extension instance's command API: only the
+ * product's `vscode.openWith` for one document is redirected to the test's
+ * owned viewType, so the product's own open implementation runs while the
+ * panel it opens stays observable. VS Code hands every extension its own API
+ * object, so this sees only calls made through this test's instance — the
+ * production extension's own `rdlcCode.openDesigner` command is deliberately
+ * not involved. Every other command is delegated untouched and `restore()`
+ * puts the original back.
+ */
+function interceptDesignerOpen(
+  uri: vscode.Uri,
+  ownedViewType: string,
+): { readonly requests: string[]; restore(): void } {
+  const commands = vscode.commands as {
+    executeCommand: typeof vscode.commands.executeCommand;
+  };
+  const delegate = commands.executeCommand;
+  const requests: string[] = [];
+  const intercepted = (command: string, ...args: unknown[]) => {
+    if (command === 'vscode.openWith' && String(args[0]) === uri.toString()) {
+      requests.push(String(args[1]));
+      return delegate('vscode.openWith', uri, ownedViewType, ...args.slice(2));
+    }
+    return delegate(command, ...args);
+  };
+  try {
+    commands.executeCommand =
+      intercepted as typeof vscode.commands.executeCommand;
+  } catch (error) {
+    throw new Error(
+      `This extension's command API cannot be intercepted: ${String(error)}`,
+    );
+  }
+  if (commands.executeCommand === delegate)
+    throw new Error(
+      "This extension's command API did not accept the interceptor.",
+    );
+  return {
+    requests,
+    restore: () => {
+      commands.executeCommand = delegate;
+    },
+  };
+}
+
+/**
+ * T052: editable A starts with only its source editor. Inspection and Code XML
+ * stay host-side, an explicit Angular-dependent action opens A's own designer
+ * exactly once through the existing public custom-editor path, and a disposed
+ * panel is never rebound over its replacement.
+ */
+async function sourceOnlyOpening(): Promise<void> {
+  const source = readFileSync(
+    resolve(__dirname, '../../../tests/fixtures/interactive/mixed.rdlc'),
+    'utf8',
+  );
+  const directory = mkdtempSync(join(tmpdir(), 'rdlc-open-once-'));
+  const file = join(directory, 'a.rdlc');
+  const otherFile = join(directory, 'b.rdlc');
+  const notesFile = join(directory, 'notes.txt');
+  writeFileSync(file, source);
+  writeFileSync(otherFile, source);
+  writeFileSync(notesFile, 'plain notes, never a report\n');
+  const document = await vscode.workspace.openTextDocument(file);
+  const other = await vscode.workspace.openTextDocument(otherFile);
+  const notes = await vscode.workspace.openTextDocument(notesFile);
+  await vscode.window.showTextDocument(document);
+
+  const owned = 'rdlcTests.sourceOnlyOpening';
+  const host = new SidebarHostContext();
+  // Owned so cleanup can dispose the real panels before removing the directory.
+  const resolved: vscode.WebviewPanel[] = [];
+  let registration: vscode.Disposable | null = null;
+  let restoreCommands: (() => void) | null = null;
+  let failed = false;
+  let failure: unknown;
+  try {
+    const extension = vscode.extensions.all.find(
+      (entry) => entry.packageJSON.name === 'rdlc-code',
+    );
+    assert.ok(
+      extension,
+      'the development extension ships the packaged designer',
+    );
+    const inner = new RdlcEditorProvider(extension.extensionUri, host);
+    let resolveFailure: unknown;
+    registration = vscode.window.registerCustomEditorProvider(
+      owned,
+      {
+        resolveCustomTextEditor(target, panel) {
+          resolved.push(panel);
+          try {
+            inner.resolveCustomTextEditor(target, panel);
+          } catch (error) {
+            // Recorded for the assertion below, still rethrown for VS Code.
+            resolveFailure = error;
+            throw error;
+          }
+        },
+      },
+      {
+        supportsMultipleEditorsPerDocument: true,
+        webviewOptions: { retainContextWhenHidden: true },
+      },
+    );
+    // The product's own open path; only the panel's viewType is redirected.
+    const open = interceptDesignerOpen(document.uri, owned);
+    restoreCommands = open.restore;
+    const marker = `/${basename(directory).toLowerCase()}/`;
+    const inside = (uri: vscode.Uri): boolean =>
+      uri.scheme === 'file' &&
+      uri.fsPath.toLowerCase().replace(/\\/g, '/').includes(marker);
+    const designers = () =>
+      vscode.window.tabGroups.all
+        .flatMap((group) => group.tabs)
+        .filter((tab) => {
+          const input = tab.input;
+          return (
+            input instanceof vscode.TabInputCustom &&
+            input.viewType === owned &&
+            inside(input.uri)
+          );
+        });
+    const facts = () => {
+      const evaluation = host.evaluation;
+      assert.ok(evaluation, 'the host keeps the active report evaluation');
+      return evaluation;
+    };
+    const documentId = host.registry.context().documentId;
+    const terminated: {
+      requestId: string;
+      reason: string;
+    }[] = [];
+    assert.equal(host.registry.context().state, 'editable');
+    assert.ok(documentId, 'A has a document lifetime');
+    assert.equal(host.registry.context().viewId, null);
+    assert.equal(designers().length, 0, 'A starts with only its source editor');
+
+    // Host-only inspection and Code XML open no designer and stay unbound.
+    const inspected = host.registry.capture('host-inspect', 'inspect', [
+      facts().sourceIds[0]!,
+    ]);
+    assert.ok(inspected.ok);
+    assert.equal(inspected.capture.viewId, null);
+    const opaque = facts().sourceIds.find((id) => !facts().ids.includes(id));
+    assert.ok(opaque, 'the fixture has source-only syntax');
+    await host.openSource(opaque);
+    assert.equal(designers().length, 0, 'Code XML opens no designer');
+    assert.equal(host.registry.context().viewId, null, 'source stays unbound');
+    host.registry.settle(inspected.capture);
+
+    // A mutation refused while the source is broken opens nothing either.
+    await replaceSource(document, '<Report');
+    await until(
+      () => host.registry.context().state === 'invalid-source',
+      'the host accepts the broken source',
+    );
+    assert.deepEqual(host.registry.capture('refused-create', 'create', []), {
+      ok: false,
+      reason: 'invalid-source',
+    });
+    assert.equal(designers().length, 0, 'a refused capture opens nothing');
+    await replaceSource(document, source);
+    await until(
+      () => host.registry.context().state === 'editable',
+      'the host accepts the valid source again',
+    );
+
+    // The restored source is byte-identical and clean, so the explicit open
+    // is the only thing this step does to A.
+    assert.equal(
+      document.getText(),
+      source,
+      'the restored source is byte-identical',
+    );
+    assert.equal(await document.save(), true, 'A saves back to its own bytes');
+    assert.equal(
+      document.isDirty,
+      false,
+      'A is clean before the explicit open',
+    );
+    const text = document.getText();
+    const version = document.version;
+
+    // The product's exported open implementation, called with this test's own
+    // command API instance so the only rewritten argument is the panel's
+    // viewType. The `rdlcCode.openDesigner` command itself is registered in
+    // the production extension's API instance and is not exercised here.
+    await vscode.window.showTextDocument(document);
+    assert.equal(
+      vscode.window.activeTextEditor?.document.uri.toString(),
+      document.uri.toString(),
+      'A is the active source editor before the explicit open',
+    );
+    await openActiveDesigner();
+    assert.deepEqual(
+      open.requests,
+      ['rdlcCode.designer'],
+      'the product implementation asks to open A exactly once',
+    );
+    await until(
+      () => resolved.length >= 1,
+      'the existing editor provider resolves',
+    );
+    assert.equal(
+      resolveFailure,
+      undefined,
+      `the existing editor provider resolved cleanly: ${String(resolveFailure)}`,
+    );
+    assert.equal(
+      resolved.length,
+      1,
+      'the existing editor provider resolves exactly once',
+    );
+    await until(
+      () => designers().length === 1,
+      'exactly one owned designer tab for A',
+    );
+    assert.equal(document.getText(), text, 'opening writes no report history');
+    assert.equal(document.version, version, 'opening writes no report version');
+
+    // Read the association back from A's own source editor: the product's own
+    // viewType would claim the panel tab, this test's one cannot.
+    await vscode.window.showTextDocument(document);
+    await until(
+      () => host.registry.context().viewId !== null,
+      'A binds its own opened panel',
+    );
+    const opened = host.registry.context().viewId!;
+    assert.equal(
+      host.registry.context().documentId,
+      documentId,
+      'the same document lifetime survives the open',
+    );
+
+    // A later action reuses the surviving panel instead of opening another.
+    const reused = host.registry.capture('reuse-select', 'select', [
+      facts().sourceIds[0]!,
+    ]);
+    assert.ok(reused.ok);
+    assert.equal(reused.capture.viewId, opened, 'the capture carries the view');
+    assert.deepEqual(host.registry.bind(reused.capture, opened), {
+      ok: false,
+      reason: 'already-bound',
+    });
+    host.registry.settle(reused.capture);
+    assert.deepEqual(
+      open.requests,
+      ['rdlcCode.designer'],
+      'reuse issues no second open',
+    );
+    assert.equal(designers().length, 1, 'reuse opens nothing');
+
+    // Disposal during use terminates the bound authority with no replacement.
+    const stop = host.registry.onDidTerminate((event) =>
+      terminated.push({
+        requestId: event.capture.requestId,
+        reason: event.reason,
+      }),
+    );
+    const pending = host.registry.capture('before-close', 'select', [
+      facts().sourceIds[0]!,
+    ]);
+    assert.ok(pending.ok);
+    assert.equal(pending.capture.viewId, opened);
+    resolved[0]!.dispose();
+    await until(
+      () => designers().length === 0,
+      'the disposed panel closes its tab',
+    );
+    // Back on A's source editor: the panel is gone, so is its association.
+    await vscode.window.showTextDocument(document);
+    await until(
+      () => host.registry.context().viewId === null,
+      'the disposed panel unbinds',
+    );
+    assert.deepEqual(
+      terminated.map((event) => `${event.requestId}:${event.reason}`),
+      ['before-close:view-disposed'],
+    );
+    assert.equal(host.registry.revalidate(pending.capture), 'disposed-view');
+    stop();
+
+    // A second explicit open creates a fresh panel; the dead capture stays dead.
+    await vscode.window.showTextDocument(document);
+    assert.equal(
+      vscode.window.activeTextEditor?.document.uri.toString(),
+      document.uri.toString(),
+      'A is the active source editor before the second open',
+    );
+    await openActiveDesigner();
+    assert.deepEqual(
+      open.requests,
+      ['rdlcCode.designer', 'rdlcCode.designer'],
+      'each explicit open issues one request',
+    );
+    await until(
+      () => resolved.length === 2,
+      'the reopened panel resolves once',
+    );
+    await vscode.window.showTextDocument(document);
+    await until(
+      () => host.registry.context().viewId !== null,
+      'the reopened panel registers',
+    );
+    const reopened = host.registry.context().viewId!;
+    assert.notEqual(reopened, opened, 'a disposed panel is never reused');
+    assert.deepEqual(host.registry.bind(pending.capture, reopened), {
+      ok: false,
+      reason: 'already-bound',
+    });
+    assert.equal(host.registry.revalidate(pending.capture), 'disposed-view');
+
+    // A source, A designer, B and non-report focus never cross authority.
+    host.registry.focusView(reopened);
+    assert.equal(host.registry.context().viewId, reopened);
+    host.registry.focusDocument(documentId!);
+    assert.equal(
+      host.registry.context().viewId,
+      reopened,
+      'source keeps the last surviving designer of A',
+    );
+    await vscode.window.showTextDocument(other);
+    assert.notEqual(host.registry.context().documentId, documentId);
+    assert.equal(
+      host.registry.context().viewId,
+      null,
+      'B never borrows A\u2019s view',
+    );
+    await vscode.window.showTextDocument(notes);
+    assert.equal(host.registry.context().state, 'no-report');
+    await vscode.window.showTextDocument(document);
+    const restored = host.registry.context();
+    assert.equal(restored.documentId, documentId);
+    assert.equal(restored.viewId, reopened, 'A reclaims its own designer');
+    assert.equal(designers().length, 1, 'routing opens nothing');
+    assert.equal(open.requests.length, 2, 'routing never reopens A');
+    assert.equal(document.getText(), text, 'routing writes no report history');
+  } catch (error) {
+    failed = true;
+    failure = error;
+  }
+  // The journey's own error must never be replaced by cleanup, and the temp
+  // directory must go in both cases: collect first, then report together.
+  const cleanup: unknown[] = [];
+  if (restoreCommands) {
+    try {
+      restoreCommands();
+    } catch (error) {
+      cleanup.push(error);
+    }
+  }
+  try {
+    registration?.dispose();
+    host.dispose();
+  } catch (error) {
+    cleanup.push(error);
+  }
+  // A live WebviewPanel keeps its document open, and that keeps the platform
+  // file watcher on the directory; dispose the owned panels before removing it.
+  for (const panel of resolved) {
+    try {
+      panel.dispose();
+    } catch (error) {
+      cleanup.push(error);
+    }
+  }
+  cleanup.push(...(await closeOwnedEditors(directory)));
+  try {
+    await rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    });
+  } catch (error) {
+    cleanup.push(error);
+  }
+  if (failed && cleanup.length)
+    throw new AggregateError(
+      [failure, ...cleanup],
+      'sourceOnlyOpening and cleanup failed',
+    );
+  if (failed) throw failure;
+  if (cleanup.length === 1) throw cleanup[0];
+  if (cleanup.length)
+    throw new AggregateError(cleanup, 'sourceOnlyOpening cleanup failed');
+}
+
+/**
+ * The editor provider's own composition: one DocumentSession per explicit
+ * open, an early accepted snapshot for that exact document version, and no
+ * report text or history written by opening itself.
+ */
+async function editorSessionInit(): Promise<void> {
+  const source = readFileSync(
+    resolve(__dirname, '../../../tests/fixtures/datasets/blank.rdlc'),
+    'utf8',
+  );
+  const directory = mkdtempSync(join(tmpdir(), 'rdlc-session-init-'));
+  const file = join(directory, 'report.rdlc');
+  writeFileSync(file, source);
+  const document = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(document);
+  const type = 'rdlcTests.sessionInit';
+  const host = new SidebarHostContext();
+  const resolved: string[] = [];
+  const sessions: { session: DocumentSession; messages: HostMessage[] }[] = [];
+  // Owned so cleanup can dispose the real panels before removing the directory.
+  const panels: vscode.WebviewPanel[] = [];
+  let registration: vscode.Disposable | null = null;
+  let restoreCommands: (() => void) | null = null;
+  let failed = false;
+  let failure: unknown;
+  try {
+    registration = vscode.window.registerCustomEditorProvider(
+      type,
+      {
+        resolveCustomTextEditor(target, panel) {
+          resolved.push(target.uri.toString());
+          panels.push(panel);
+          panel.webview.html = '<html><body>Session init proof</body></html>';
+          const session = new DocumentSession(
+            target,
+            undefined,
+            undefined,
+            () => activateHistoryTarget(target, panel, type),
+          );
+          const messages: HostMessage[] = [];
+          session.onMessage((message) => messages.push(message));
+          const sidebar = host.register(target, panel, session);
+          panel.onDidDispose(() => {
+            sidebar.dispose();
+            session.dispose();
+          });
+          sessions.push({ session, messages });
+          session.receive({ protocol: 2, kind: 'ready' });
+        },
+      },
+      { supportsMultipleEditorsPerDocument: true },
+    );
+    const open = interceptDesignerOpen(document.uri, type);
+    restoreCommands = open.restore;
+    assert.equal(host.registry.context().state, 'editable');
+    const text = document.getText();
+    const version = document.version;
+    // The product's exported open implementation on this test's own command
+    // API instance; only the panel's viewType is redirected.
+    await vscode.window.showTextDocument(document);
+    assert.equal(
+      vscode.window.activeTextEditor?.document.uri.toString(),
+      document.uri.toString(),
+      'the report is the active source editor before the explicit open',
+    );
+    await openActiveDesigner();
+    assert.deepEqual(
+      open.requests,
+      ['rdlcCode.designer'],
+      'the product implementation asks to open the report once',
+    );
+    await until(() => resolved.length === 1, 'one editor resolution');
+    await until(() => sessions.length === 1, 'one session');
+    // The panel tab took focus, so read the association from A's source editor.
+    await vscode.window.showTextDocument(document);
+    await until(
+      () => host.registry.context().viewId !== null,
+      'the session registers once',
+    );
+    await until(
+      () =>
+        sessions[0]!.messages.some(
+          (message) =>
+            message.kind === 'snapshot' && message.version === version,
+        ),
+      'the session publishes its accepted snapshot during init',
+    );
+    assert.equal(sessions[0]!.session.isReady, true, 'handshake completes');
+    assert.equal(document.getText(), text, 'opening writes no report text');
+    assert.equal(document.version, version, 'opening writes no history');
+    await vscode.window.showTextDocument(document);
+    await until(
+      () => host.registry.context().viewId !== null,
+      'A reclaims its own session',
+    );
+    assert.equal(
+      resolved.length,
+      1,
+      'focus changes never re-resolve the editor',
+    );
+    assert.deepEqual(
+      open.requests,
+      ['rdlcCode.designer'],
+      'focus changes never re-open the editor',
+    );
+  } catch (error) {
+    failed = true;
+    failure = error;
+  }
+  // The journey's own error must never be replaced by cleanup, and the temp
+  // directory must go in both cases: collect first, then report together.
+  const cleanup: unknown[] = [];
+  if (restoreCommands) {
+    try {
+      restoreCommands();
+    } catch (error) {
+      cleanup.push(error);
+    }
+  }
+  try {
+    registration?.dispose();
+    host.dispose();
+  } catch (error) {
+    cleanup.push(error);
+  }
+  // A live WebviewPanel keeps its document open, and that keeps the platform
+  // file watcher on the directory; dispose the owned panels before removing it.
+  for (const panel of panels) {
+    try {
+      panel.dispose();
+    } catch (error) {
+      cleanup.push(error);
+    }
+  }
+  cleanup.push(...(await closeOwnedEditors(directory)));
+  try {
+    await rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    });
+  } catch (error) {
+    cleanup.push(error);
+  }
+  if (failed && cleanup.length)
+    throw new AggregateError(
+      [failure, ...cleanup],
+      'editorSessionInit and cleanup failed',
+    );
+  if (failed) throw failure;
+  if (cleanup.length === 1) throw cleanup[0];
+  if (cleanup.length)
+    throw new AggregateError(cleanup, 'editorSessionInit cleanup failed');
 }

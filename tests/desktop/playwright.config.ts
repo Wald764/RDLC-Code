@@ -8,7 +8,8 @@ export default defineConfig({
   retries: 0,
   forbidOnly: true,
   timeout: 300_000,
-  globalTimeout: 1_800_000,
+  // An unsplit installed run (release, local) takes well over an hour.
+  globalTimeout: 7_200_000,
   outputDir: process.env.RDLC_DESKTOP_ARTIFACT_DIR
     ? `${process.env.RDLC_DESKTOP_ARTIFACT_DIR}/playwright`
     : '../../.vscode-test/desktop-artifacts/playwright',

@@ -1,11 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
 import type { AuthoringIntent } from '@rdlc/report-model/editing';
+import type { XmlNode } from '@rdlc/report-model/syntax';
 import { planAuthoringIntent } from '../../apps/vscode-extension/src/edit-controller.js';
 import { projectStructure } from '@rdlc/renderer/structure';
+import { projectNavigation } from '@rdlc/renderer/navigation';
+import { RDL_2016 } from '@rdlc/report-model/report';
 
 function author(
   source: string,
@@ -31,6 +35,50 @@ function author(
 const dataset = (report: ReturnType<typeof projectReport>) =>
   report.datasets[0]!.node.id;
 
+/** Walk parsed source so a snapshot ID is proven to address real XML. */
+function sourceNode(node: XmlNode, id: string): XmlNode | null {
+  if (node.id === id) return node;
+  for (const child of node.children) {
+    const found = sourceNode(child, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Data targets come from the accepted Data snapshot: exactly one dataset with
+ * that name, whose ID addresses real RDL source in its Data scope.
+ */
+function dataTarget(
+  syntax: ReturnType<typeof parse>,
+  projection: ReturnType<typeof projectReport>,
+  name: string | null,
+) {
+  const root = syntax.root;
+  assert.ok(root, 'report parses a root');
+  const matches = projectNavigation(syntax, projection).data.nodes.filter(
+    (node) => node.kind === 'dataset' && node.name === name,
+  );
+  assert.equal(
+    matches.length,
+    1,
+    `one accepted Data dataset named ${name ?? '<unnamed>'}`,
+  );
+  const target = matches[0]!;
+  assert.equal(target.parentId, null, 'a dataset is a top-level Data target');
+  const parsed = sourceNode(root, target.id);
+  assert.ok(parsed, `Data ID ${target.id} addresses a parsed source node`);
+  assert.equal(parsed.expandedName.namespaceUri, RDL_2016);
+  assert.equal(parsed.expandedName.localName, 'DataSet');
+  assert.equal(
+    parsed.attributes.find(
+      (attribute) => attribute.expandedName.localName === 'Name',
+    )?.value,
+    name,
+  );
+  return target;
+}
+
 test('contextual structure targets build a bound table and reopen exact local definitions and scoped expressions', () => {
   let source = readFileSync(
     'tests/fixtures/datasets/blank.rdlc',
@@ -50,10 +98,20 @@ test('contextual structure targets build a bound table and reopen exact local de
     const projection = projectReport(syntax);
     const unchanged = syntax.snapshot.source;
     const structure = projectStructure(syntax, projection);
-    const target = structure.nodes.find(
-      (node) => node.kind === kind && node.name === name,
-    )!;
-    assert.ok(target);
+    // Datasets and fields left the legacy Structure projection; Data owns them now.
+    assert.ok(
+      !structure.nodes.some(
+        (node) => node.kind === 'dataset' || node.kind === 'field',
+      ),
+      'legacy Structure excludes data definitions',
+    );
+    const target =
+      kind === 'dataset'
+        ? dataTarget(syntax, projection, name)
+        : structure.nodes.find(
+            (node) => node.kind === kind && node.name === name,
+          );
+    assert.ok(target, `${kind} target ${name ?? '<report>'}`);
     assert.equal(syntax.snapshot.source, unchanged);
     const outcome = author(source, () => target.id, payload);
     assert.equal(outcome.ok, true, JSON.stringify(outcome));
@@ -541,4 +599,207 @@ test('opaque expressions block a dataset deletion only when they spell its name'
     !refused.ok && refused.diagnostics[0]!.code,
     'REFERENCES_OPAQUE',
   );
+});
+
+/** Sorted namespace declarations: an accepted edit may never add, drop or rebind one. */
+const namespaceDeclarations = (source: string): string[] =>
+  (source.match(/xmlns(?::[\w.-]+)?\s*=\s*(?:"[^"]*"|'[^']*')/g) ?? []).sort();
+
+/** The smallest source element containing every patch, resolved from our own parse. */
+function editContainer(
+  root: XmlNode,
+  patches: readonly { readonly start: number; readonly end: number }[],
+): { readonly node: XmlNode; readonly parent: XmlNode | null } {
+  const nodes: XmlNode[] = [];
+  const parents = new Map<string, XmlNode | null>([[root.id, null]]);
+  const walk = (node: XmlNode): void => {
+    nodes.push(node);
+    for (const child of node.children) {
+      parents.set(child.id, node);
+      walk(child);
+    }
+  };
+  walk(root);
+  // Ranges are half-open: an empty insertion sits strictly inside its container.
+  const covers = (node: XmlNode, patch: { start: number; end: number }) =>
+    patch.start < patch.end
+      ? patch.start >= node.range.start && patch.end <= node.range.end
+      : patch.start > node.range.start && patch.start < node.range.end;
+  const covering = nodes.filter((node) =>
+    patches.every((patch) => covers(node, patch)),
+  );
+  assert.ok(covering.length > 0, 'the planned patch lies inside parsed source');
+  const node = covering.reduce((best, candidate) =>
+    candidate.range.end - candidate.range.start <
+    best.range.end - best.range.start
+      ? candidate
+      : best,
+  );
+  return { node, parent: parents.get(node.id) ?? null };
+}
+
+/**
+ * Every manifest-listed report keeps all source outside its one edited container
+ * byte-exact, with unrelated parent content and namespace declarations untouched;
+ * a capable report still refuses an invalid operation, and source-only or malformed
+ * reports refuse authoring outright instead of growing a candidate.
+ */
+test('manifest reports preserve source outside the edit container, unrelated parent content and namespaces', () => {
+  const manifest = JSON.parse(
+    readFileSync('tests/fixtures/manifest.json', 'utf8'),
+  ) as { fixtures: { readonly id: string; readonly path: string }[] };
+  assert.ok(
+    manifest.fixtures.length >= 12,
+    `manifest lists ${manifest.fixtures.length} reports`,
+  );
+  const sources = new Map<string, string>();
+  let preserved = 0;
+  let refused = 0;
+  let uncertain = 0;
+  for (const fixture of manifest.fixtures) {
+    const path = resolve('tests/fixtures', fixture.path);
+    const source = readFileSync(path, 'utf8');
+    sources.set(path, source);
+    const snapshot = {
+      uri: `fixture:${fixture.id}`,
+      version: 1,
+      source,
+      eol: '\n' as const,
+    };
+    const syntax = parse(snapshot);
+    const projection = projectReport(syntax);
+    assert.equal(syntax.snapshot.source, source, fixture.id);
+
+    if (projection.status !== 'editable') {
+      // Uncertainty refuses: no candidate, no plan, no compensating edit.
+      const outcome = planAuthoringIntent(snapshot, syntax, projection, {
+        requestId: `uncertain-${fixture.id}`,
+        baseVersion: 1,
+        targetId: syntax.root?.id ?? 'absent:1',
+        operation: 'author',
+        payload: { action: 'createTextbox', left: '0in', top: '0in' },
+      });
+      assert.ok(!outcome.ok, `${fixture.id}: source-only report refuses`);
+      assert.ok(outcome.diagnostics.length > 0, fixture.id);
+      assert.deepEqual(
+        Object.keys(outcome).sort(),
+        ['diagnostics', 'ok'],
+        `${fixture.id}: refusal carries no candidate`,
+      );
+      uncertain++;
+      continue;
+    }
+    const root = syntax.root;
+    assert.ok(root, `${fixture.id}: editable report parses a root`);
+    const author = (payload: AuthoringIntent['payload']) =>
+      planAuthoringIntent(snapshot, syntax, projection, {
+        requestId: `preserve-${fixture.id}`,
+        baseVersion: 1,
+        targetId: root.id,
+        operation: 'author',
+        payload,
+      });
+
+    const created = author({
+      action: 'createTextbox',
+      left: '0in',
+      top: '0in',
+    });
+    assert.ok(created.ok, `${fixture.id}: ${JSON.stringify(created)}`);
+    if (!created.ok) continue;
+    assert.ok(created.changed, `${fixture.id}: creation changed the source`);
+    const candidate = created.candidate;
+    const patches = [...created.plan.patches].sort((a, b) => a.start - b.start);
+    assert.ok(patches.length > 0, `${fixture.id}: creation plans a patch`);
+    let covered = 0;
+    for (const patch of patches) {
+      assert.ok(
+        patch.start >= covered && patch.end <= source.length,
+        `${fixture.id}: sorted non-overlapping patches inside the source`,
+      );
+      covered = patch.end;
+    }
+
+    // Independent expected footprint: only our own edit container may differ.
+    const { node: container, parent } = editContainer(root, patches);
+    const delta = candidate.length - source.length;
+    assert.equal(
+      candidate.slice(0, container.range.start),
+      source.slice(0, container.range.start),
+      `${fixture.id}: bytes before the edited container`,
+    );
+    assert.equal(
+      candidate.slice(container.range.end + delta),
+      source.slice(container.range.end),
+      `${fixture.id}: bytes after the edited container`,
+    );
+    for (const patch of patches)
+      assert.ok(
+        patch.start >= container.range.start &&
+          patch.end <= container.range.end,
+        `${fixture.id}: patch stays inside the edited container`,
+      );
+    assert.deepEqual(
+      namespaceDeclarations(candidate),
+      namespaceDeclarations(source),
+      `${fixture.id}: namespace declarations`,
+    );
+    assert.ok(parent, `${fixture.id}: the edited container has a parent`);
+    const unrelated = [
+      ...container.children,
+      ...parent.children.filter((child) => child.id !== container.id),
+    ];
+    assert.ok(
+      unrelated.some((node) => node.range.end > node.range.start),
+      `${fixture.id}: report has unrelated parent content`,
+    );
+    for (const node of unrelated) {
+      const untouched = source.slice(node.range.start, node.range.end);
+      if (!untouched) continue;
+      assert.ok(
+        candidate.includes(untouched),
+        `${fixture.id}: unrelated ${node.expandedName.localName} stays byte-exact`,
+      );
+    }
+
+    // The same capable fixture refuses an invalid operation with an empty footprint.
+    const invalid = author({
+      action: 'createTextbox',
+      left: '-1in',
+      top: '0in',
+    });
+    assert.ok(
+      !invalid.ok,
+      `${fixture.id}: capable report refuses a negative drop position`,
+    );
+    if (!invalid.ok) {
+      assert.ok(invalid.diagnostics.length > 0, fixture.id);
+      assert.deepEqual(
+        Object.keys(invalid).sort(),
+        ['diagnostics', 'ok'],
+        `${fixture.id}: refusal carries no plan`,
+      );
+    }
+    preserved++;
+    refused++;
+  }
+  assert.ok(
+    preserved >= 12,
+    `${preserved} manifest-listed reports preserved exactly`,
+  );
+  assert.equal(
+    refused,
+    preserved,
+    'every capable report also refused an invalid operation',
+  );
+  assert.ok(
+    uncertain >= 1,
+    `${uncertain} source-only reports refuse authoring`,
+  );
+  for (const [path, source] of sources)
+    assert.equal(
+      readFileSync(path, 'utf8'),
+      source,
+      `${path}: fixture source untouched`,
+    );
 });

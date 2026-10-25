@@ -20,6 +20,8 @@ import {
   STRACE_ARGS,
   sweepHostBlockingRules,
   unexpectedEvents,
+  WINDOWS_BLOCKING_REQUIREMENT,
+  WINDOWS_CAPTURE_REQUIREMENT,
 } from './security-observer.js';
 
 const TRACE = [
@@ -89,16 +91,43 @@ test('URL sanitization keeps only the origin', () => {
 
 test('non-Linux native capture fails closed instead of claiming observation', async () => {
   const capability = detectNativeCapability('win32');
+  // No tool is implemented, so nothing can read as a proven control.
   assert.equal(capability.tool, null);
   assert.equal(capability.launch.supported, false);
   assert.equal(capability.attach.supported, false);
-  assert.match(capability.launch.reason, /No unprivileged native/);
+  assert.equal(capability.launch.reason, WINDOWS_CAPTURE_REQUIREMENT);
+  assert.equal(capability.attach.reason, WINDOWS_CAPTURE_REQUIREMENT);
+  assert.match(capability.launch.reason, /elevated ETW kernel session/);
+  assert.match(capability.launch.reason, /bounded ETL consumer/);
+  assert.ok(
+    Object.values(capability.launch.controls).every((value) => !value),
+    'an unsupported capability never carries proven controls',
+  );
+  assert.ok(Object.values(capability.attach.controls).every((value) => !value));
+  // Other non-Linux platforms keep the generic fail-closed reason.
+  assert.equal(detectNativeCapability('darwin').launch.supported, false);
+  assert.match(
+    detectNativeCapability('darwin').launch.reason ?? '',
+    /No unprivileged native/,
+  );
   await assert.rejects(
     startTracedCommand(
       { command: process.execPath, args: ['-e', ''] },
       capability,
     ),
     SecurityObserverUnsupportedError,
+  );
+});
+
+test('Windows host blocking fails closed with the WFP rule and positive control named', async () => {
+  assert.match(WINDOWS_BLOCKING_REQUIREMENT, /Windows Filtering Platform/);
+  assert.match(WINDOWS_BLOCKING_REQUIREMENT, /administrator/);
+  assert.match(WINDOWS_BLOCKING_REQUIREMENT, /positive control/);
+  await assert.rejects(
+    enableHostBlocking({ platform: 'win32', uid: 0, hasIpv6: false }),
+    (error: unknown) =>
+      error instanceof SecurityObserverUnsupportedError &&
+      error.message === WINDOWS_BLOCKING_REQUIREMENT,
   );
 });
 
@@ -439,9 +468,30 @@ test('network classification flags non-loopback inet/inet6 and allows loopback a
       'connect(5<TCPv6:[6]>, {sa_family=AF_INET6, sin6_port=htons(443), inet_pton(AF_INET6, "2001:db8::1", &sin6_addr)}, 28) = -1 ENETUNREACH (Network is unreachable)',
       true,
     ],
+    [
+      'connect(5<TCPv6:[6]>, {sa_family=AF_INET6, sin6_port=htons(443), inet_pton(AF_INET6, "::1234", &sin6_addr)}, 28) = -1 ENETUNREACH (Network is unreachable)',
+      true,
+    ],
+    [
+      'connect(5<TCPv6:[6]>, {sa_family=AF_INET6, sin6_port=htons(9222), inet_pton(AF_INET6, "::1", &sin6_addr)}, 28) = 0',
+      false,
+    ],
   ];
   for (const [text, expected] of cases)
     assert.equal(classify(text), expected, text);
+});
+
+test('unrecognized outgoing network addresses fail closed rather than disappear from the oracle', () => {
+  for (const line of [
+    'connect(3, {sa_family=AF_FUTURE, destination="unknown"}, 16) = -1 EINVAL (Invalid argument)',
+    'sendto(3, "payload", 7, 0, NULL, 0) = 7',
+    'sendmsg(3, {msg_name=NULL, msg_namelen=0}, 0) = 7',
+  ]) {
+    const { events } = parseStraceLog(call(line), { allowed: ALLOWED });
+    assert.equal(events.length, 1, line);
+    assert.equal(events[0]!.unexpected, true, line);
+    assert.equal(unexpectedEvents(events).length, 1, line);
+  }
 });
 
 test('harness-only positive control: a canary outside the allowlist is detected, an allowed twin is not', () => {
@@ -646,13 +696,6 @@ test('host blocking is proven by counter deltas around the probe, never by summi
     /Host-level outbound blocking is unavailable: .*denied: ip6tables -I/,
   );
   assert.ok(denied.calls.some((c) => c.includes('iptables -D OUTPUT')));
-
-  await assert.rejects(
-    enableHostBlocking({ platform: 'win32', uid: 0, hasIpv6: false }),
-    (error: unknown) =>
-      error instanceof SecurityObserverUnsupportedError &&
-      /not implemented for win32/.test(error.message),
-  );
 });
 
 test('IPv6 blocking needs a real ip6tables counter delta; no IPv6 is recorded as unavailable', async () => {

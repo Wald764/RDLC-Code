@@ -1,0 +1,627 @@
+{
+  "schemaVersion": 1,
+  "description": "Frozen, hand-authored oracle for tests/fixtures/sidebar/data*.rdlc (US3 T033). Entries are in native Data source order and carry the authored opening/closing tag so tests can check real ranges independently of the projector. `parent` is the parent key inside projectNavigation's Data projection, `category` is the synthetic category the entry must be listed under, `authoring` is the expected eligibility of the properties/author capabilities (absent means the specification does not decide it), `opaque` marks foreign/lookalike entries that must stay non-authorable and `noDetails` requires the metadata allowlist entry to stay absent. The synthetic category keys are deliberately not fixed here: the specification requires synthetic, stable, non-XML UI keys, not a particular spelling. `manifestEntries` are registration-ready fixtures/manifest.json entries for the fixture owner; this file itself is never read by the manifest suite.",
+  "version": 7,
+  "categories": [
+    { "semantic": "datasets", "label": "Datasets / Fields" },
+    { "semantic": "parameters", "label": "Parameters" },
+    { "semantic": "images", "label": "Embedded Images" },
+    { "semantic": "sources", "label": "Data Sources" }
+  ],
+  "allowedDetailKeys": [
+    "type",
+    "classification",
+    "mime",
+    "hasPayload",
+    "hasQuery",
+    "source",
+    "nullable",
+    "multiValue",
+    "allowBlank",
+    "hidden"
+  ],
+  "allowedOperations": ["inspect", "source", "select", "properties", "author"],
+  "fixtures": {
+    "supported": {
+      "path": "sidebar/data.rdlc",
+      "uri": "fixture:sidebar-data",
+      "status": "editable",
+      "entries": [
+        {
+          "key": "src-local",
+          "kind": "data-source",
+          "category": "sources",
+          "parent": null,
+          "element": "DataSource",
+          "name": "Local",
+          "open": "<DataSource Name=\"Local\">",
+          "close": "</DataSource>",
+          "details": { "source": "inline" },
+          "authoring": false
+        },
+        {
+          "key": "src-shared",
+          "kind": "data-source",
+          "category": "sources",
+          "parent": null,
+          "element": "DataSource",
+          "name": "Shared",
+          "open": "<DataSource Name=\"Shared\">",
+          "close": "</DataSource>",
+          "details": { "source": "shared" },
+          "authoring": false
+        },
+        {
+          "key": "ds-sales",
+          "kind": "dataset",
+          "category": "datasets",
+          "parent": null,
+          "element": "DataSet",
+          "name": "Sales",
+          "open": "<DataSet Name=\"Sales\">",
+          "close": "</DataSet>",
+          "details": { "hasQuery": true },
+          "authoring": true
+        },
+        {
+          "key": "f-id",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-sales",
+          "element": "Field",
+          "name": "Id",
+          "open": "<Field Name=\"Id\">",
+          "close": "</Field>",
+          "details": { "type": "Int64", "classification": "local" },
+          "authoring": true
+        },
+        {
+          "key": "f-label",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-sales",
+          "element": "Field",
+          "name": "Label",
+          "open": "<Field Name=\"Label\">",
+          "close": "</Field>",
+          "details": { "type": "text", "classification": "local" },
+          "authoring": true
+        },
+        {
+          "key": "f-active",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-sales",
+          "element": "Field",
+          "name": "Active",
+          "open": "<Field Name=\"Active\">",
+          "close": "</Field>",
+          "details": { "type": "Boolean", "classification": "local" },
+          "authoring": true
+        },
+        {
+          "key": "f-rank",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-sales",
+          "element": "Field",
+          "name": "Rank",
+          "open": "<Field Name=\"Rank\">",
+          "close": "</Field>",
+          "details": { "type": "Int32", "classification": "local" },
+          "authoring": true
+        },
+        {
+          "key": "f-amount",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-sales",
+          "element": "Field",
+          "name": "Amount",
+          "open": "<Field Name=\"Amount\">",
+          "close": "</Field>",
+          "details": { "type": "decimal", "classification": "local" },
+          "authoring": true
+        },
+        {
+          "key": "f-ratio",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-sales",
+          "element": "Field",
+          "name": "Ratio",
+          "open": "<Field Name=\"Ratio\">",
+          "close": "</Field>",
+          "details": { "type": "double", "classification": "local" },
+          "authoring": true
+        },
+        {
+          "key": "f-created",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-sales",
+          "element": "Field",
+          "name": "Created",
+          "open": "<Field Name=\"Created\">",
+          "close": "</Field>",
+          "details": { "type": "date/time", "classification": "local" },
+          "authoring": true
+        },
+        {
+          "key": "f-customer",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-sales",
+          "element": "Field",
+          "name": "Customer",
+          "open": "<Field Name=\"Customer\">",
+          "close": "</Field>",
+          "details": { "type": "text", "classification": "mapped" },
+          "authoring": true
+        },
+        {
+          "key": "f-running-total",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-sales",
+          "element": "Field",
+          "name": "RunningTotal",
+          "open": "<Field Name=\"RunningTotal\">",
+          "close": "</Field>",
+          "details": { "type": "decimal", "classification": "calculated" },
+          "authoring": false
+        },
+        {
+          "key": "ds-sales-duplicate",
+          "kind": "dataset",
+          "category": "datasets",
+          "parent": null,
+          "element": "DataSet",
+          "name": "Sales",
+          "open": "<DataSet Name=\"Sales\">",
+          "close": "</DataSet>",
+          "details": { "hasQuery": false },
+          "authoring": true
+        },
+        {
+          "key": "f-unknown",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-sales-duplicate",
+          "element": "Field",
+          "name": "Unknown",
+          "open": "<Field Name=\"Unknown\">",
+          "close": "</Field>",
+          "details": { "classification": "unsupported" },
+          "authoring": false
+        },
+        {
+          "key": "f-unbound",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-sales-duplicate",
+          "element": "Field",
+          "name": "Unbound",
+          "open": "<Field Name=\"Unbound\"/>",
+          "details": { "classification": "unsupported" },
+          "authoring": false
+        },
+        {
+          "key": "f-nameless",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-sales-duplicate",
+          "element": "Field",
+          "name": null,
+          "open": "<Field>",
+          "close": "</Field>",
+          "details": { "classification": "unsupported" },
+          "authoring": false
+        },
+        {
+          "key": "f-duplicate-1",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-sales-duplicate",
+          "element": "Field",
+          "name": "Duplicate",
+          "open": "<Field Name=\"Duplicate\">",
+          "close": "</Field>",
+          "details": { "type": "text", "classification": "local" },
+          "authoring": true
+        },
+        {
+          "key": "f-duplicate-2",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-sales-duplicate",
+          "element": "Field",
+          "name": "Duplicate",
+          "open": "<Field Name=\"Duplicate\">",
+          "close": "</Field>",
+          "details": { "type": "text", "classification": "local" },
+          "authoring": true
+        },
+        {
+          "key": "ds-unnamed",
+          "kind": "dataset",
+          "category": "datasets",
+          "parent": null,
+          "element": "DataSet",
+          "name": null,
+          "open": "<DataSet>",
+          "close": "</DataSet>",
+          "details": { "hasQuery": false },
+          "authoring": true
+        },
+        {
+          "key": "f-lonely",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-unnamed",
+          "element": "Field",
+          "name": "Lonely",
+          "open": "<Field Name=\"Lonely\">",
+          "close": "</Field>",
+          "details": { "type": "text", "classification": "local" },
+          "authoring": true
+        },
+        {
+          "key": "p-limit",
+          "kind": "parameter",
+          "category": "parameters",
+          "parent": null,
+          "element": "ReportParameter",
+          "name": "Limit",
+          "open": "<ReportParameter Name=\"Limit\">",
+          "close": "</ReportParameter>",
+          "details": {
+            "type": "Integer",
+            "nullable": true,
+            "multiValue": false,
+            "allowBlank": false,
+            "hidden": true
+          },
+          "authoring": false
+        },
+        {
+          "key": "p-loose",
+          "kind": "parameter",
+          "category": "parameters",
+          "parent": null,
+          "element": "ReportParameter",
+          "name": "Loose",
+          "open": "<ReportParameter Name=\"Loose\">",
+          "close": "</ReportParameter>",
+          "details": {},
+          "authoring": false
+        },
+        {
+          "key": "p-nameless",
+          "kind": "parameter",
+          "category": "parameters",
+          "parent": null,
+          "element": "ReportParameter",
+          "name": null,
+          "open": "<ReportParameter>",
+          "close": "</ReportParameter>",
+          "details": { "type": "String" },
+          "authoring": false
+        },
+        {
+          "key": "img-logo",
+          "kind": "embedded-image",
+          "category": "images",
+          "parent": null,
+          "element": "EmbeddedImage",
+          "name": "Logo",
+          "open": "<EmbeddedImage Name=\"Logo\">",
+          "close": "</EmbeddedImage>",
+          "details": { "hasPayload": true, "mime": "image/png" },
+          "authoring": false
+        },
+        {
+          "key": "img-odd",
+          "kind": "embedded-image",
+          "category": "images",
+          "parent": null,
+          "element": "EmbeddedImage",
+          "name": "Odd",
+          "open": "<EmbeddedImage Name=\"Odd\">",
+          "close": "</EmbeddedImage>",
+          "details": { "hasPayload": true },
+          "authoring": false
+        },
+        {
+          "key": "img-empty",
+          "kind": "embedded-image",
+          "category": "images",
+          "parent": null,
+          "element": "EmbeddedImage",
+          "name": "Empty",
+          "open": "<EmbeddedImage Name=\"Empty\">",
+          "close": "</EmbeddedImage>",
+          "details": { "hasPayload": false, "mime": "image/gif" },
+          "authoring": false
+        }
+      ]
+    },
+    "sourceOnly": {
+      "path": "sidebar/data-source-only.rdlc",
+      "uri": "fixture:sidebar-data-source-only",
+      "status": "source-only",
+      "entries": [
+        {
+          "key": "src-legacy",
+          "kind": "data-source",
+          "category": "sources",
+          "parent": null,
+          "element": "DataSource",
+          "name": "Legacy",
+          "open": "<DataSource Name=\"Legacy\">",
+          "close": "</DataSource>",
+          "details": { "source": "inline" },
+          "authoring": false
+        },
+        {
+          "key": "ds-orders",
+          "kind": "dataset",
+          "category": "datasets",
+          "parent": null,
+          "element": "DataSet",
+          "name": "Orders",
+          "open": "<DataSet Name=\"Orders\">",
+          "close": "</DataSet>",
+          "details": { "hasQuery": true },
+          "authoring": false
+        },
+        {
+          "key": "f-id",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-orders",
+          "element": "Field",
+          "name": "Id",
+          "open": "<Field Name=\"Id\">",
+          "close": "</Field>",
+          "details": { "type": "Int64", "classification": "local" },
+          "authoring": false
+        },
+        {
+          "key": "f-total",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-orders",
+          "element": "Field",
+          "name": "Total",
+          "open": "<Field Name=\"Total\">",
+          "close": "</Field>",
+          "details": { "type": "decimal", "classification": "calculated" },
+          "authoring": false
+        },
+        {
+          "key": "p-since",
+          "kind": "parameter",
+          "category": "parameters",
+          "parent": null,
+          "element": "ReportParameter",
+          "name": "Since",
+          "open": "<ReportParameter Name=\"Since\">",
+          "close": "</ReportParameter>",
+          "details": { "type": "DateTime", "hidden": true },
+          "authoring": false
+        },
+        {
+          "key": "img-mark",
+          "kind": "embedded-image",
+          "category": "images",
+          "parent": null,
+          "element": "EmbeddedImage",
+          "name": "Mark",
+          "open": "<EmbeddedImage Name=\"Mark\">",
+          "close": "</EmbeddedImage>",
+          "details": { "hasPayload": true, "mime": "image/png" },
+          "authoring": false
+        }
+      ]
+    },
+    "empty": {
+      "path": "sidebar/data-empty.rdlc",
+      "uri": "fixture:sidebar-data-empty",
+      "status": "editable",
+      "entries": []
+    },
+    "opaque": {
+      "path": "sidebar/data-opaque.rdlc",
+      "uri": "fixture:sidebar-data-opaque",
+      "status": "editable",
+      "entries": [
+        {
+          "key": "src-secret",
+          "kind": "data-source",
+          "category": "sources",
+          "parent": null,
+          "element": "DataSource",
+          "name": "Secret",
+          "open": "<DataSource Name=\"Secret\">",
+          "close": "</DataSource>",
+          "details": { "source": "inline" },
+          "authoring": false
+        },
+        {
+          "key": "ds-lookalike",
+          "kind": "dataset",
+          "category": "datasets",
+          "parent": null,
+          "element": "DataSet",
+          "name": "Lookalike",
+          "open": "<DataSet Name=\"Lookalike\">",
+          "close": "</DataSet>",
+          "details": { "hasQuery": false },
+          "authoring": true
+        },
+        {
+          "key": "f-real",
+          "kind": "field",
+          "category": "datasets",
+          "parent": "ds-lookalike",
+          "element": "Field",
+          "name": "Real",
+          "open": "<Field Name=\"Real\">",
+          "close": "</Field>",
+          "details": { "type": "text", "classification": "local" },
+          "authoring": true
+        },
+        {
+          "key": "f-ghost",
+          "kind": "opaque",
+          "category": "datasets",
+          "parent": "ds-lookalike",
+          "element": "Field",
+          "ns": "urn:rdlc-code:ext",
+          "name": "Ghost",
+          "open": "<ext:Field Name=\"Ghost\">",
+          "close": "</ext:Field>",
+          "opaque": true,
+          "noDetails": true,
+          "authoring": false
+        },
+        {
+          "key": "ds-foreign-collection",
+          "kind": "opaque",
+          "category": "datasets",
+          "parent": null,
+          "element": "DataSet",
+          "ns": "urn:rdlc-code:ext",
+          "name": "ForeignCollection",
+          "open": "<ext:DataSet Name=\"ForeignCollection\">",
+          "close": "</ext:DataSet>",
+          "opaque": true,
+          "noDetails": true,
+          "authoring": false
+        }
+      ]
+    }
+  },
+  "secrets": {
+    "supported": [
+      "SECRET_CONNECTION_STRING",
+      "SECRET_QUERY_TEXT",
+      "SECRET_PARAMETER_DEFAULT",
+      "SECRET_IMAGE_PNG",
+      "SECRET_IMAGE_ODD"
+    ],
+    "sourceOnly": [
+      "SECRET_LEGACY_CONNECTION",
+      "SECRET_LEGACY_QUERY",
+      "SECRET_LEGACY_DEFAULT",
+      "SECRET_LEGACY_IMAGE"
+    ],
+    "empty": [],
+    "opaque": [
+      "SECRET_OPAQUE_CONNECTION",
+      "SECRET_OPAQUE_CREDENTIALS",
+      "SECRET_OPAQUE_BINDING",
+      "SECRET_OPAQUE_QUERY"
+    ]
+  },
+  "manifestEntries": [
+    {
+      "id": "sidebar-data",
+      "path": "sidebar/data.rdlc",
+      "expected": "sidebar/data.expected.json",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.3-report.md",
+        "vendor/02-structures/2.321-datasources.md",
+        "vendor/02-structures/2.322-datasource.md",
+        "vendor/02-structures/2.323-connectionproperties.md",
+        "vendor/02-structures/2.324-datasets.md",
+        "vendor/02-structures/2.325-dataset.md",
+        "vendor/02-structures/2.327-fields.md",
+        "vendor/02-structures/2.328-field.md",
+        "vendor/02-structures/2.307-reportparameters.md",
+        "vendor/02-structures/2.308-reportparameter.md",
+        "vendor/02-structures/2.305-embeddedimages.md",
+        "vendor/02-structures/2.306-embeddedimage.md",
+        "vendor/02-structures/2.341.4-data-types.md"
+      ],
+      "operation": "none; read-only native Report Data oracle for category membership, source order, inert metadata, capability facts and sentinel payload exclusion",
+      "editFootprint": [],
+      "expectedDiagnostics": [],
+      "preservation": "Query text, connection strings, parameter defaults and image payloads stay inert source; duplicate and unnamed definitions stay identifiable and every untouched span remains byte-exact",
+      "consumerEvidence": ["packages/renderer/src/data.test.ts"]
+    },
+    {
+      "id": "sidebar-data-source-only",
+      "path": "sidebar/data-source-only.rdlc",
+      "expected": "sidebar/data.expected.json",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2008/01/reportdefinition",
+      "status": "unsupported",
+      "capabilities": ["source"],
+      "citations": [
+        "vendor/02-structures/2.3-report.md",
+        "vendor/02-structures/2.324-datasets.md",
+        "vendor/02-structures/2.328-field.md",
+        "vendor/02-structures/2.308-reportparameter.md",
+        "vendor/02-structures/2.306-embeddedimage.md"
+      ],
+      "operation": "none; read-only source-only Report Data oracle for inspection-only capabilities with complete inert metadata",
+      "editFootprint": [],
+      "expectedDiagnostics": ["REPORT_SOURCE_ONLY"],
+      "preservation": "The 2008/01 profile stays source-only without conversion; query, default value and image payload sentinels never reach labels or metadata",
+      "consumerEvidence": ["packages/renderer/src/data.test.ts"]
+    },
+    {
+      "id": "sidebar-data-empty",
+      "path": "sidebar/data-empty.rdlc",
+      "expected": "sidebar/data.expected.json",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.3-report.md",
+        "vendor/02-structures/2.3.14-report.datasets.md",
+        "vendor/02-structures/2.3.20-report.embeddedimages.md",
+        "vendor/02-structures/2.3.15-report.datasources.md",
+        "vendor/02-structures/2.3.34-report.reportparameters.md"
+      ],
+      "operation": "none; read-only empty-category oracle so an editable report with no definitions stays distinguishable from an incomplete inventory",
+      "editFootprint": [],
+      "expectedDiagnostics": [],
+      "preservation": "Empty DataSources/EmbeddedImages collections and absent DataSets/ReportParameters remain exact; no definition, category entry or query is invented",
+      "consumerEvidence": ["packages/renderer/src/data.test.ts"]
+    },
+    {
+      "id": "sidebar-data-opaque",
+      "path": "sidebar/data-opaque.rdlc",
+      "expected": "sidebar/data.expected.json",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.3-report.md",
+        "vendor/02-structures/2.324-datasets.md",
+        "vendor/02-structures/2.325-dataset.md",
+        "vendor/02-structures/2.328-field.md",
+        "vendor/02-structures/2.322-datasource.md",
+        "vendor/01-introduction/1.7-vendor-extensible-fields.md"
+      ],
+      "operation": "none; read-only opaque/lookalike Report Data oracle for foreign data definitions, foreign query/connection lookalikes and sentinel exclusion",
+      "editFootprint": [],
+      "expectedDiagnostics": [],
+      "preservation": "Foreign-namespace data definitions stay opaque inspection-only nodes with no metadata, no foreign query or credential is read or executed, and no lookalike gains a supported kind or authoring capability",
+      "consumerEvidence": ["packages/renderer/src/data.test.ts"]
+    }
+  ]
+}

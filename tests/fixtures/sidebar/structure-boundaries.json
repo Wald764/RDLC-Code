@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "description": "Boundary descriptors consumed by packages/renderer/src/structure.test.ts and navigation.test.ts so the sidebar suites assert the shared budgets instead of magic numbers. Values follow specs/005-native-sidebar-integration/research.md section 4 and the parser/transport budgets recorded there.",
+  "navigation": {
+    "sharedEntryCap": 2000,
+    "initialSplit": 1000,
+    "emittedLevels": 32,
+    "firstOverflowingEntry": 2001
+  },
+  "parser": {
+    "maxSourceCodeUnits": 16777216,
+    "maxElements": 100000,
+    "maxDepth": 256
+  },
+  "transport": {
+    "snapshotBytes": 8388608,
+    "snapshotValues": 131072,
+    "messageBytes": 65536,
+    "messageValues": 8192,
+    "jsonDepth": 20,
+    "requestsPerSession": 1024
+  }
+}

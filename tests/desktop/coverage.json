@@ -28,7 +28,9 @@
     {
       "capability": "native-drag",
       "rowId": "US4.6",
-      "assertions": ["tests/desktop/native-drag.spec.ts::US4.6-probe"],
+      "assertions": [
+        "tests/desktop/native-drag.spec.ts::native drag: observe public TreeView custom MIME delivery and cancellation"
+      ],
       "requiredPassing": [
         "tests/desktop/components.spec.ts::US4.6-activation-fallback"
       ],
@@ -46,7 +48,8 @@
       "oracle": "One rdlcCode container with exactly rdlcCode.structure/data/components is reachable in one Activity Bar activation before any designer; no-report guidance and New/Open Report actions are present; Explorer contribution is unchanged.",
       "tests": [
         "tests/desktop/workspace.spec.ts::US1.1-container-before-designer",
-        "tests/package/sidebar.test.ts::US1.1-contribution"
+        "tests/desktop/workspace.spec.ts::US1.1-new-open-report",
+        "tests/package/sidebar.test.ts::the native report workspace contributes three local views without replacing Explorer"
       ]
     },
     {
@@ -59,7 +62,7 @@
       "oracle": "All three view descriptions equal the active report label, the central designer remains visible/editable, and Angular navigation is not expanded by default (zero duplicate expanded panels).",
       "tests": [
         "tests/desktop/workspace.spec.ts::US1.2-active-report-labels",
-        "apps/designer/src/app/editor/editor.component.spec.ts::US1.2-default-compact"
+        "apps/designer/src/app/editor/editor.component.spec.ts::defaults absent navigation preferences to compact/closed and keeps inspector, toolbar and status"
       ],
       "requiredArtifacts": ["workspace-screenshot"]
     },
@@ -91,6 +94,7 @@
       "requires": ["FR-005", "FR-006"],
       "areas": ["AT-02"],
       "fixtures": [
+        "sidebar-structure",
         "grouped-table-scoped-totals",
         "textbox-supported",
         "textbox-supported-opaque",
@@ -98,7 +102,8 @@
       ],
       "oracle": "Projection equals the fixture oracle: present sections/body/header/footer, containers, items, table body/rows/cells, row/column members/groups in source order with real names/types/capability; absent sections and runtime rows never appear.",
       "tests": [
-        "packages/renderer/src/structure.test.ts::US2.1-real-ancestry",
+        "packages/renderer/src/structure.test.ts::sidebar structure fixture matches the frozen hierarchy and slices, without a data branch",
+        "packages/renderer/src/navigation.test.ts::sidebar navigation matches the frozen hierarchy with expanded names, source order and truthful capabilities",
         "tests/desktop/structure.spec.ts::US2.1-native-projection"
       ]
     },
@@ -111,7 +116,7 @@
       "fixtures": ["textbox-supported", "interactive-mixed"],
       "oracle": "Native activation selects the same logical body target in canvas and inspector; the known-bounds target is centered within reachable scroll at unchanged zoom (<=1 CSS px center error); oversized targets use the reachable center.",
       "tests": [
-        "apps/designer/src/app/editor/selection.spec.ts::US2.2-exclusive-selection",
+        "apps/designer/src/app/editor/selection.spec.ts::joins scene IDs and keeps data, cells and body membership exclusive",
         "tests/desktop/structure.spec.ts::US2.2-known-bounds-center"
       ],
       "requiredArtifacts": ["geometry-samples"]
@@ -125,7 +130,8 @@
       "fixtures": ["interactive-mixed", "grouped-table-scoped-totals"],
       "oracle": "Canvas/body multi-selection yields exact native membership and one primary target, expands only its ancestors, preserves unrelated expansion and does not move keyboard focus.",
       "tests": [
-        "apps/designer/src/app/editor/selection.spec.ts::US2.3-primary-membership",
+        "apps/designer/src/app/editor/selection.spec.ts::toggles membership, promotes the last remaining member and keeps cells exclusive",
+        "apps/designer/src/app/editor/selection.spec.ts::preserves expansion for unnamed report/sections/section/body only, never other unnamed kinds",
         "tests/desktop/structure.spec.ts::US2.3-reveal-ancestors"
       ],
       "requiredArtifacts": ["selection-screenshot"]
@@ -139,7 +145,7 @@
       "fixtures": ["grouped-table-scoped-totals", "textbox-supported-opaque"],
       "oracle": "Cell identity stays distinct from the table and rendered child; structural/preserved targets expose details and current Code XML without a fabricated canvas selection or bounds.",
       "tests": [
-        "apps/designer/src/app/editor/selection.spec.ts::US2.4-cell-identity",
+        "apps/designer/src/app/editor/selection.spec.ts::joins scene IDs and keeps data, cells and body membership exclusive",
         "tests/desktop/structure.spec.ts::US2.4-no-fabricated-bounds"
       ]
     },
@@ -153,7 +159,7 @@
       "oracle": "Context menus expose only supported existing actions; Code XML reveals the host-verified current range; supported mutations retain existing guards and one native Undo step; stale ranges are refused.",
       "tests": [
         "tests/desktop/structure.spec.ts::US2.5-context-actions",
-        "tests/vscode/synchronization.test.ts::US2.5-current-source-range"
+        "tests/vscode/synchronization.test.ts::run"
       ]
     },
     {
@@ -164,10 +170,7 @@
       "areas": ["AT-02", "AT-06"],
       "fixtures": ["textbox-supported", "grouped-table-scoped-totals"],
       "oracle": "Accepted source/designer/Undo/reload changes refresh the projection automatically; expansion/selection survive only through unambiguous correspondence; deleted/ambiguous targets are cleared with feedback.",
-      "tests": [
-        "packages/renderer/src/structure.test.ts::US2.6-refresh-correspondence",
-        "tests/desktop/structure.spec.ts::US2.6-refresh"
-      ]
+      "tests": ["tests/desktop/structure.spec.ts::US2.6-refresh"]
     },
     {
       "id": "US3.1",
@@ -175,10 +178,18 @@
       "source": "spec.md US3.1",
       "requires": ["FR-012"],
       "areas": ["AT-04", "AT-02"],
-      "fixtures": ["local-seven-types", "local-preserved-metadata"],
+      "fixtures": [
+        "sidebar-data",
+        "sidebar-data-source-only",
+        "sidebar-data-empty",
+        "sidebar-data-opaque",
+        "local-seven-types",
+        "local-preserved-metadata"
+      ],
       "oracle": "Report Data lists every identifiable dataset/field, parameter, embedded image and data source under the correct labeled category with real identity and editable/preservation-only status; empty categories explicitly say none exist.",
       "tests": [
-        "packages/renderer/src/data.test.ts::US3.1-inventory",
+        "packages/renderer/src/data.test.ts::Report Data lists every definition at its real source location with inert metadata",
+        "packages/renderer/src/data.test.ts::Report Data lists every definition under a fixed synthetic category",
         "tests/desktop/data.spec.ts::US3.1-category-contents"
       ]
     },
@@ -192,7 +203,7 @@
       "oracle": "Add/Edit/Rename/Delete route through the existing inspector or guarded command; all seven field types are creatable and changes persist exactly on save/reopen with draft/pending/reference behavior unchanged.",
       "tests": [
         "tests/desktop/data.spec.ts::US3.2-add-edit-delete",
-        "tests/compatibility/datasets.test.ts::US3.2-seven-field-types"
+        "tests/compatibility/datasets.test.ts::query-free local dataset projects all seven exact designer type mappings"
       ]
     },
     {
@@ -204,7 +215,8 @@
       "fixtures": ["local-preserved-metadata", "local-seven-types"],
       "oracle": "Preserved definitions expose bounded textual metadata and source only; no decoder/query/expression/connection/resource access occurs; labels, tooltips and logs omit image payloads, query bodies and connection secrets.",
       "tests": [
-        "packages/renderer/src/data.test.ts::US3.3-inert-metadata",
+        "packages/renderer/src/data.test.ts::Report Data lists every definition at its real source location with inert metadata",
+        "packages/renderer/src/data.test.ts::Report Data capability facts follow the existing field guards",
         "tests/desktop/data.spec.ts::US3.3-inspect-only"
       ],
       "requiredArtifacts": ["payload-exclusion-log"]
@@ -222,7 +234,7 @@
       "oracle": "A destructive data operation either applies one complete safe edit or refuses with an actionable reason; zero partial source changes and accepted references remain intact.",
       "tests": [
         "tests/desktop/data.spec.ts::US3.4-reference-refusal",
-        "tests/compatibility/datasets.test.ts::US3.4-atomic-refusal"
+        "tests/compatibility/datasets.test.ts::existing queries, calculated fields, foreign prefixes and unknown types remain source-bound"
       ]
     },
     {
@@ -234,8 +246,8 @@
       "fixtures": ["local-seven-types"],
       "oracle": "Accepted dataset selection/creation agrees in Report Data and the existing inspector, creates no canvas object and does not scroll or fabricate canvas bounds.",
       "tests": [
-        "tests/desktop/data.spec.ts::US3.5-selection-agreement",
-        "tests/compatibility/datasets.test.ts::US3.5-inspector-sync"
+        "apps/designer/src/app/editor/editor.component.spec.ts::selects an accepted dataset definition without a geometry selection",
+        "tests/desktop/data.spec.ts::US3.5-selection-agreement"
       ]
     },
     {
@@ -247,8 +259,8 @@
       "fixtures": ["local-blank"],
       "oracle": "Components shows exactly eleven unique canonical kinds in Report items/Containers/Data with coherent icons and concise unavailable reasons; only Textbox, Table and Dataset are creatable.",
       "tests": [
-        "packages/report-model/src/components.test.ts::US4.1-eleven-kinds",
-        "apps/designer/src/app/editor/components-catalog.component.spec.ts::US4.1-categories"
+        "packages/report-model/src/components.test.ts::one inert catalog has exactly eleven unique kinds and three creators",
+        "apps/designer/src/app/editor/components-catalog.component.spec.ts::has eleven unique honest cards with category-preserving case-insensitive search and recovery"
       ]
     },
     {
@@ -313,7 +325,7 @@
       "fixtures": ["local-blank", "textbox-supported"],
       "oracle": "Drag probe evidence is recorded; only a passing full 004 drop contract enables drag. Otherwise no drag affordance is advertised, activation stays complete, and 004 in-designer drag remains reachable through the fallback.",
       "tests": [
-        "tests/desktop/native-drag.spec.ts::US4.6-probe",
+        "tests/desktop/native-drag.spec.ts::native drag: observe public TreeView custom MIME delivery and cancellation",
         "tests/desktop/components.spec.ts::US4.6-activation-fallback"
       ],
       "requiredArtifacts": ["drag-probe"]
@@ -328,7 +340,7 @@
       "oracle": "Across 100 active A/B/source/designer switches, labels, nodes, selection and commands follow the active report document/version; no action targets a same-named object in the other report.",
       "tests": [
         "tests/desktop/context.spec.ts::US5.1-switches",
-        "tests/vscode/synchronization.test.ts::US5.1-context"
+        "tests/vscode/synchronization.test.ts::run"
       ],
       "requiredArtifacts": ["race-log"]
     },
@@ -361,7 +373,7 @@
       "fixtures": ["interactive-mixed", "textbox-supported"],
       "oracle": "A request captured for A/version N is refused after change, close or view replacement; it is never rebased to N+1, retried or redirected to B, and reports an accessible reason.",
       "tests": [
-        "tests/vscode/synchronization.test.ts::US5.4-stale-refusal",
+        "tests/vscode/synchronization.test.ts::run",
         "tests/desktop/context.spec.ts::US5.4-disposal"
       ],
       "requiredArtifacts": ["race-log"]
@@ -386,7 +398,7 @@
       "oracle": "XML edits, native history and clean/dirty external changes publish the accepted state to all views; stale previews/drafts cannot overwrite it and unsaved work survives conflict/save/Apply failure.",
       "tests": [
         "tests/desktop/context.spec.ts::US5.6-external-changes",
-        "tests/vscode/lifecycle.test.ts::US5.6-unsaved-work"
+        "tests/vscode/lifecycle.test.ts::run"
       ]
     },
     {
@@ -462,7 +474,7 @@
       "fixtures": ["local-blank"],
       "oracle": "Manifest/VSIX contains one Activity Bar container rdlcCode with the supplied logo bytes and exactly three named views; activation works before a designer and adds no Explorer replacement.",
       "tests": [
-        "tests/package/sidebar.test.ts::FR-001-contribution",
+        "tests/package/sidebar.test.ts::activation does not depend on resolving a custom editor",
         "tests/desktop/workspace.spec.ts::FR-001-activation"
       ]
     },
@@ -486,6 +498,7 @@
       "oracle": "Each view exposes real report identity plus loading/no-report/empty/no-match/invalid/source-only/truncated states with meaningful local next actions; no stale actionable node is shown.",
       "tests": [
         "tests/desktop/workspace.spec.ts::FR-003-state-coverage",
+        "tests/vscode/sidebar-loading.test.ts::run",
         "tests/desktop/accessibility.spec.ts::FR-003-state-labels"
       ]
     },
@@ -498,7 +511,7 @@
       "fixtures": ["textbox-supported"],
       "oracle": "Native views are the default navigation; Angular navigation is collapsed by default; canvas/inspector/toolbar/status/source and 003/004 workflows remain; the explicit compact fallback keeps in-designer drag reachable without forced reopening.",
       "tests": [
-        "apps/designer/src/app/editor/editor.component.spec.ts::FR-004-default-compact",
+        "apps/designer/src/app/editor/editor.component.spec.ts::defaults absent navigation preferences to compact/closed and keeps inspector, toolbar and status",
         "tests/desktop/workspace.spec.ts::FR-004-fallback"
       ]
     },
@@ -514,7 +527,9 @@
         "interactive-optional-geometry"
       ],
       "oracle": "Projection uses only real authored nodes in source order with accurate ancestry; presentation categories carry no XML identity, and no absent section, fake group or runtime row is emitted.",
-      "tests": ["packages/renderer/src/structure.test.ts::FR-005-real-nodes"]
+      "tests": [
+        "packages/renderer/src/structure.test.ts::sidebar structure fixture matches the frozen hierarchy and slices, without a data branch"
+      ]
     },
     {
       "id": "FR-006",
@@ -525,8 +540,10 @@
       "fixtures": ["grouped-table-scoped-totals", "lexical-extensions"],
       "oracle": "Each node exposes real type/name/theme-aware icon/capability/source identity; 2,000-entry and 32-level limits plus inherited parser/transport budgets hold, with explicit source-accessible truncation and no silent omission.",
       "tests": [
-        "packages/renderer/src/structure.test.ts::FR-006-node-metadata",
-        "apps/vscode-extension/src/navigation-budget.test.ts::FR-006-budgets"
+        "packages/renderer/src/navigation.test.ts::sidebar navigation matches the frozen hierarchy with expanded names, source order and truthful capabilities",
+        "apps/vscode-extension/src/navigation-budget.test.ts::the fair initial split spends 1,000 entries each and transfers unused capacity",
+        "apps/vscode-extension/src/navigation-budget.test.ts::both projections stop at 32 emitted levels and say so per projection",
+        "tests/vscode/navigation-budget.test.ts::run"
       ]
     },
     {
@@ -538,7 +555,7 @@
       "fixtures": ["interactive-mixed", "grouped-table-scoped-totals"],
       "oracle": "Tree/canvas/inspector selection synchronizes both ways with exact body membership and one primary; cell/structural/data modes remain exclusive and programmatic reveal generates no user action or feedback loop.",
       "tests": [
-        "apps/designer/src/app/editor/selection.spec.ts::FR-007-exclusive-sync"
+        "apps/designer/src/app/editor/selection.spec.ts::joins scene IDs and keeps data, cells and body membership exclusive"
       ]
     },
     {
@@ -551,7 +568,7 @@
       "oracle": "Known-bounds activation centers/reveals at unchanged zoom within reachable scroll; canvas selection reveals native ancestors without focus theft; unknown/data/structural targets perform no canvas navigation or rectangle creation.",
       "tests": [
         "tests/desktop/structure.spec.ts::FR-008-center",
-        "apps/designer/src/app/editor/viewport.spec.ts::FR-008-unknown-bounds"
+        "apps/designer/src/app/editor/viewport.spec.ts::reveals overflow without moving already visible bounds"
       ]
     },
     {
@@ -589,7 +606,7 @@
       "areas": ["AT-02"],
       "fixtures": ["textbox-supported-opaque", "local-preserved-metadata"],
       "oracle": "Code XML opens the authoritative current host document at a host-verified range for the selected node, including preserved/opaque content; stale ranges are refused and never applied to another document/version.",
-      "tests": ["tests/vscode/synchronization.test.ts::FR-011-source-range"]
+      "tests": ["tests/vscode/synchronization.test.ts::run"]
     },
     {
       "id": "FR-012",
@@ -599,7 +616,10 @@
       "areas": ["AT-04"],
       "fixtures": ["local-seven-types", "local-preserved-metadata"],
       "oracle": "Report Data lists Datasets/Fields, Parameters, Embedded Images and Data Sources, including preserved entries, as navigation categories with no inserted structure and no duplicate editable dataset branch in Structure.",
-      "tests": ["packages/renderer/src/data.test.ts::FR-012-inventory"]
+      "tests": [
+        "packages/renderer/src/data.test.ts::Report Data lists every definition at its real source location with inert metadata",
+        "packages/renderer/src/data.test.ts::Report Data lists every definition under a fixed synthetic category"
+      ]
     },
     {
       "id": "FR-013",
@@ -609,7 +629,10 @@
       "areas": ["AT-04"],
       "fixtures": ["local-seven-types", "local-preserved-metadata"],
       "oracle": "Dataset/field create/edit/rename/remove/type-change reuse existing contextual capability and reference protection for all seven field types; other definitions stay inspect/source-only with no new mutation semantics.",
-      "tests": ["tests/compatibility/datasets.test.ts::FR-013-seven-types"]
+      "tests": [
+        "tests/compatibility/datasets.test.ts::query-free local dataset projects all seven exact designer type mappings",
+        "tests/compatibility/datasets.test.ts::existing queries, calculated fields, foreign prefixes and unknown types remain source-bound"
+      ]
     },
     {
       "id": "FR-014",
@@ -620,7 +643,7 @@
       "fixtures": ["local-preserved-metadata", "local-seven-types"],
       "oracle": "Preserved definitions are exposed only as bounded inert text/source; no image decode, query/expression execution, connection, entity resolution or resource fetch occurs, and secrets/image/query payloads never enter routine output.",
       "tests": [
-        "packages/renderer/src/data.test.ts::FR-014-inert",
+        "packages/renderer/src/data.test.ts::Report Data lists every definition at its real source location with inert metadata",
         "tests/desktop/offline.spec.ts::FR-014-no-fetch"
       ],
       "requiredArtifacts": ["payload-exclusion-log", "network-attempts"]
@@ -634,7 +657,7 @@
       "fixtures": ["local-blank"],
       "oracle": "The catalog exposes exactly eleven canonical unique kinds in Report items/Containers/Data with compact icon-label rows, case-insensitive filtering, truthful unavailable matches, Clear Filter on no results and complete action capability facts.",
       "tests": [
-        "packages/report-model/src/components.test.ts::FR-015-eleven-kinds"
+        "packages/report-model/src/components.test.ts::one inert catalog has exactly eleven unique kinds and three creators"
       ]
     },
     {
@@ -666,7 +689,7 @@
       "fixtures": ["local-blank", "textbox-supported"],
       "oracle": "Native drag is enabled/advertised only after an official-API probe and full 004 drop-contract automation passes; otherwise the limitation is recorded, instructions replace the affordance and existing 004 drag remains reachable.",
       "tests": [
-        "tests/desktop/native-drag.spec.ts::FR-018-probe",
+        "tests/desktop/native-drag.spec.ts::native drag: observe public TreeView custom MIME delivery and cancellation",
         "tests/desktop/components.spec.ts::FR-018-fallback"
       ],
       "requiredArtifacts": ["drag-probe"]
@@ -709,7 +732,7 @@
       "areas": ["AT-06"],
       "fixtures": ["interactive-mixed", "textbox-supported"],
       "oracle": "Every action verifies original report identity/version/view/target/capability after awaits; stale, disposed, ambiguous, read-only or incompatible requests refuse without retry or reinterpretation.",
-      "tests": ["tests/vscode/synchronization.test.ts::FR-022-recheck"],
+      "tests": ["tests/vscode/synchronization.test.ts::run"],
       "requiredArtifacts": ["race-log"]
     },
     {
@@ -721,7 +744,7 @@
       "fixtures": ["interactive-mixed"],
       "oracle": "Accepted selection/creation results correlate with request/version in either arrival order; outdated delivery and duplicate echoes are ignored; cancel/refusal restores the accepted native selection.",
       "tests": [
-        "apps/designer/src/app/editor/selection.spec.ts::FR-023-correlation",
+        "apps/designer/src/app/editor/selection.spec.ts::maps all members and primary by proven IDs only at the matching version",
         "tests/desktop/context.spec.ts::FR-023-orders"
       ]
     },
@@ -733,7 +756,7 @@
       "areas": ["AT-06", "AT-09"],
       "fixtures": ["interactive-mixed", "local-preserved-metadata"],
       "oracle": "One accepted content change equals one native Undo/Redo step through the shared queue; selection/expansion/filter/reveal/cancel/refusal/no-op add no edit, dirty state or history.",
-      "tests": ["tests/vscode/sidebar-history.test.ts::FR-024-one-undo"],
+      "tests": ["tests/vscode/sidebar-history.test.ts::run"],
       "requiredArtifacts": ["history-states"]
     },
     {
@@ -747,7 +770,7 @@
         "local-preserved-metadata"
       ],
       "oracle": "XML edits/history/clean reload/dirty conflict/Save/Save As/failures retain source-authoritative behavior and unsaved work across views; obsolete drafts/previews are invalidated with explanation and cannot overwrite independent edits.",
-      "tests": ["tests/vscode/lifecycle.test.ts::FR-025-preserve"]
+      "tests": ["tests/vscode/lifecycle.test.ts::run"]
     },
     {
       "id": "FR-026",
@@ -804,7 +827,7 @@
       "fixtures": ["local-preserved-metadata"],
       "oracle": "Installed workflows operate offline under existing trust/isolation with no added runtime server, execution/resource-fetch path, dependency or broader report compatibility.",
       "tests": [
-        "tests/package/offline.test.ts::FR-030-offline",
+        "tests/package/offline.test.ts::packaged interactive workflows have no network, storage or code-execution channel",
         "tests/desktop/offline.spec.ts::FR-030-trust"
       ],
       "requiredArtifacts": ["network-attempts"]
@@ -818,8 +841,8 @@
       "fixtures": ["local-preserved-metadata", "lexical-extensions"],
       "oracle": "Every mutation preserves exact text outside its footprint and unrelated namespace/reference content inside affected parents; native Undo restores exact prior text; uncertainty refuses and no schema conversion/whole-document rewrite occurs.",
       "tests": [
-        "tests/roundtrip/authoring.test.ts::FR-031-footprint",
-        "tests/vscode/sidebar-history.test.ts::FR-031-undo"
+        "tests/roundtrip/authoring.test.ts::manifest reports preserve source outside the edit container, unrelated parent content and namespaces",
+        "tests/vscode/sidebar-history.test.ts::run"
       ],
       "requiredArtifacts": ["history-states"]
     },
@@ -832,8 +855,8 @@
       "fixtures": ["local-blank"],
       "oracle": "Every scenario/FR/edge/SC maps to executable assertions and reproducible fixtures with real Desktop interaction/visual/regression proof; compile, mocks, uncompared screenshots or human confirmation never substitute.",
       "tests": [
-        "tests/desktop/coverage.spec.ts::FR-032-traceability",
-        "tests/desktop/bootstrap.spec.ts::FR-032-real-workbench"
+        "tests/desktop/coverage.spec.ts::coverage: every requirement names an executable assertion in the current candidate",
+        "tests/desktop/bootstrap.spec.ts::bootstrap: real Desktop insertion, source oracle, Undo, semantics and pixels"
       ]
     },
     {
@@ -844,7 +867,12 @@
       "areas": ["AT-09"],
       "fixtures": ["local-blank"],
       "oracle": "Required suites run from root commands and GitHub Actions including installed-VSIX checks; quality/release gates, minimum/stable matrix, frozen dependencies and same-artifact release guarantees are preserved; missing/failed evidence blocks completion.",
-      "tests": ["tests/release/sidebar-gates.test.ts::FR-033-gates"]
+      "tests": [
+        "tests/release/sidebar-gates.test.ts::the required aggregate depends on quality, the desktop matrix and the visual job",
+        "tests/release/sidebar-gates.test.ts::the desktop job keeps the six-entry OS and minimum/stable matrix",
+        "tests/release/sidebar-gates.test.ts::every matrix entry runs the functional and installed journeys fail-closed",
+        "tests/release/sidebar-gates.test.ts::both workflows install frozen and never weaken a required gate"
+      ]
     },
     {
       "id": "FR-034",
@@ -855,8 +883,8 @@
       "fixtures": ["local-blank"],
       "oracle": "Evidence records candidate/environment/fixtures/executed assertions/artifacts; unimplemented/unrun/failed/blocked behavior is explicitly unvalidated; only a conditional drag may be unavailable with probe and activation/fallback proof.",
       "tests": [
-        "tests/desktop/evidence.test.ts::FR-034-fail-closed",
-        "tests/desktop/coverage.spec.ts::FR-034-evidence-consistency"
+        "tests/desktop/evidence.test.ts::validation requires a freshly recomputed current candidate and rejects fabricated manifests",
+        "tests/desktop/evidence.test.ts::evidence validation stays unvalidated for absent, unrun and failed assertions"
       ]
     },
     {
@@ -868,7 +896,7 @@
       "fixtures": ["local-blank", "textbox-supported"],
       "oracle": "Untitled/Save As follows the host current document identity, retains safe context, never identifies by basename and clears obsolete identities.",
       "tests": [
-        "tests/vscode/synchronization.test.ts::EDGE-01-untitled-save-as",
+        "apps/vscode-extension/src/sidebar-context.test.ts::Save As follows the real lifetime and invalidates obsolete captures",
         "tests/desktop/context.spec.ts::EDGE-01-identity"
       ]
     },
@@ -881,8 +909,8 @@
       "fixtures": ["grouped-table-scoped-totals", "interactive-mixed"],
       "oracle": "Version-local target identity governs commands; cross-version reconciliation occurs only through accepted mappings or unique kind/name/ancestry, otherwise selection clears with feedback.",
       "tests": [
-        "packages/renderer/src/structure.test.ts::EDGE-02-identity",
-        "apps/designer/src/app/editor/selection.spec.ts::EDGE-02-mapping"
+        "packages/renderer/src/structure.test.ts::sidebar structure fixture matches the frozen hierarchy and slices, without a data branch",
+        "apps/designer/src/app/editor/selection.spec.ts::corresponds Data definitions by expanded type, name and ancestry — never by name alone"
       ]
     },
     {
@@ -894,7 +922,7 @@
       "fixtures": ["interactive-mixed"],
       "oracle": "Mixed tree selection retains exclusive cell/data/structural modes, performs no unsupported bulk edit and restores the last accepted selection when a combination is refused.",
       "tests": [
-        "apps/designer/src/app/editor/selection.spec.ts::EDGE-03-exclusive",
+        "apps/designer/src/app/editor/selection.spec.ts::joins scene IDs and keeps data, cells and body membership exclusive",
         "tests/desktop/structure.spec.ts::EDGE-03-refusal"
       ]
     },
@@ -907,8 +935,8 @@
       "fixtures": ["unsupported-xml11", "textbox-unsupported-profile"],
       "oracle": "Source-only/multi-section reports expose safely identifiable real structure/data with explicit limitations, disabled visual mutations and retained source access; the schema is never converted.",
       "tests": [
-        "packages/renderer/src/structure.test.ts::EDGE-04-source-only",
-        "packages/renderer/src/data.test.ts::EDGE-04-preserved"
+        "packages/renderer/src/structure.test.ts::source-only sections and preserved nesting stay honest; malformed syntax invents nothing",
+        "packages/renderer/src/data.test.ts::Report Data capability facts follow the existing field guards"
       ]
     },
     {
@@ -920,7 +948,7 @@
       "fixtures": ["malformed", "unsafe-dtd"],
       "oracle": "Malformed/unsafe/exhausted input shows diagnostic/source guidance, clears stale actionable nodes, never presents the prior snapshot as current and never executes declarations/entities.",
       "tests": [
-        "packages/renderer/src/structure.test.ts::EDGE-05-parser-limits",
+        "packages/renderer/src/structure.test.ts::source-only sections and preserved nesting stay honest; malformed syntax invents nothing",
         "tests/desktop/offline.spec.ts::EDGE-05-inert"
       ],
       "requiredArtifacts": ["network-attempts"]
@@ -934,8 +962,8 @@
       "fixtures": ["textbox-supported-opaque", "interactive-clipboard-opaque"],
       "oracle": "Truncated/opaque coverage is explicitly labeled incomplete with source access, invents no descendants, claims no complete inventory, and canvas selection outside the displayed subset remains valid.",
       "tests": [
-        "apps/vscode-extension/src/navigation-budget.test.ts::EDGE-06-truncation",
-        "packages/renderer/src/structure.test.ts::EDGE-06-opaque"
+        "apps/vscode-extension/src/navigation-budget.test.ts::both projections stop at 32 emitted levels and say so per projection",
+        "packages/renderer/src/structure.test.ts::deep preserved containment truncates at the emitted-depth boundary without fabricating bounds or children"
       ]
     },
     {
@@ -947,7 +975,7 @@
       "fixtures": ["interactive-optional-geometry", "textbox-supported"],
       "oracle": "No guessed geometry: only known bounds reveal/center without zoom or XML change; unknown/zero/oversized targets use details/source and reachable-center behavior without fabricating rectangles.",
       "tests": [
-        "apps/designer/src/app/editor/viewport.spec.ts::EDGE-07-bounds",
+        "apps/designer/src/app/editor/viewport.spec.ts::fits the largest zoom within 25–400% and leaves oversized bounds scrollable",
         "tests/desktop/structure.spec.ts::EDGE-07-reachable-center"
       ]
     },
@@ -972,10 +1000,7 @@
       "areas": ["AT-03", "AT-06"],
       "fixtures": ["interactive-mixed"],
       "oracle": "Only the current bound document/view/version affects visible state; repeated state is idempotent, produces no focus bounce or repeated mutation, and rejected delivery settles without retry.",
-      "tests": [
-        "apps/designer/src/app/editor/selection.spec.ts::EDGE-09-idempotent",
-        "tests/desktop/context.spec.ts::EDGE-09-rejected"
-      ],
+      "tests": ["tests/desktop/context.spec.ts::EDGE-09-rejected"],
       "requiredArtifacts": ["race-log"]
     },
     {
@@ -988,7 +1013,7 @@
       "oracle": "Full accessible labels/source stay available while rows remain compact; image payloads, connection secrets and query bodies never enter tooltips, logs or transfer for display.",
       "tests": [
         "tests/desktop/accessibility.spec.ts::EDGE-10-long-labels",
-        "packages/renderer/src/data.test.ts::EDGE-10-payload-exclusion"
+        "packages/renderer/src/data.test.ts::Report Data lists every definition at its real source location with inert metadata"
       ],
       "requiredArtifacts": ["payload-exclusion-log", "focus-tree"]
     },
@@ -1004,8 +1029,8 @@
       ],
       "oracle": "Read-only/failed apply/save/dirty conflict refuses safely, retains accepted unsaved content and host recovery, and performs no forced reload, disk overwrite or compensating mutation.",
       "tests": [
-        "tests/desktop/context.spec.ts::EDGE-11-readonly-conflict",
-        "tests/vscode/lifecycle.test.ts::EDGE-11-save-failure"
+        "tests/vscode/lifecycle.test.ts::run",
+        "tests/desktop/context.spec.ts::EDGE-11-readonly-conflict"
       ]
     },
     {
@@ -1033,8 +1058,9 @@
       ],
       "oracle": "Across the representative corpus, 100% of expected identifiable nodes within limits appear with correct parent/type/source location, and 100% of omitted/opaque cases name their limitation instead of claiming completeness.",
       "tests": [
-        "packages/renderer/src/structure.test.ts::SC-002-expected-corpus",
-        "packages/renderer/src/data.test.ts::SC-002-data-corpus"
+        "packages/renderer/src/structure.test.ts::sidebar structure fixture matches the frozen hierarchy and slices, without a data branch",
+        "packages/renderer/src/data.test.ts::Report Data lists every definition at its real source location with inert metadata",
+        "packages/renderer/src/data.test.ts::foreign lookalikes never gain a supported definition and never vanish"
       ]
     },
     {
@@ -1045,10 +1071,7 @@
       "areas": ["AT-03", "AT-08"],
       "fixtures": ["interactive-mixed", "textbox-supported"],
       "oracle": "100 alternating native/canvas selections agree on target/membership/primary; >=95 become visibly correct within 200ms with zero focus bounces, document changes or selection loops.",
-      "tests": [
-        "apps/designer/src/app/editor/selection.spec.ts::SC-003-agreement",
-        "tests/desktop/structure.spec.ts::SC-003-timing"
-      ],
+      "tests": ["tests/desktop/structure.spec.ts::SC-003-timing"],
       "requiredArtifacts": ["selection-timing", "selection-screenshot"]
     },
     {
@@ -1119,8 +1142,8 @@
       ],
       "oracle": "Inherited >=12-report corpus: view-only/refused/no-op/cancelled cases preserve exact text, accepted edits preserve their authorized footprint, and twenty mixed edits undo/redo individually to exact expected states with zero silent loss.",
       "tests": [
-        "tests/roundtrip/authoring.test.ts::SC-008-preservation",
-        "tests/vscode/sidebar-history.test.ts::SC-008-twenty-states"
+        "tests/roundtrip/authoring.test.ts::manifest reports preserve source outside the edit container, unrelated parent content and namespaces",
+        "tests/vscode/sidebar-history.test.ts::run"
       ],
       "requiredArtifacts": ["history-states"]
     },
@@ -1134,7 +1157,7 @@
       "oracle": "Every installed supported journey with blocked network produces zero report-triggered external requests, query/data accesses, entity resolutions or code/expression executions while preserved definitions stay unchanged.",
       "tests": [
         "tests/desktop/offline.spec.ts::SC-009-monitored-offline",
-        "tests/desktop/security-observer.spec.ts::SC-009-positive-control"
+        "tests/desktop/security-observer.spec.ts::security observer: real trust states, host tree and webview attempts fail closed"
       ],
       "requiredArtifacts": ["network-attempts"]
     },
@@ -1147,8 +1170,8 @@
       "fixtures": ["local-blank"],
       "oracle": "Every mandatory acceptance case has an executed passing assertion for the same candidate/environment before validation; missing evidence and failed visual comparisons block completion without human sign-off substitute.",
       "tests": [
-        "tests/desktop/coverage.spec.ts::SC-010-same-candidate",
-        "tests/desktop/evidence.test.ts::SC-010-fail-closed"
+        "tests/desktop/evidence.test.ts::changed fingerprint, VSIX bytes, environment or fixture corpus cannot reuse evidence",
+        "tests/desktop/evidence.test.ts::pixel references exist only for the pinned reference environment"
       ]
     },
     {
@@ -1164,10 +1187,16 @@
       ],
       "oracle": "Existing creation/page/text/property/data/column/cell/group/scoped-total validation and safe deletion/rename still pass; saved/reopened fields and expressions are exact; no runtime-fidelity claim is added.",
       "tests": [
-        "tests/compatibility/datasets.test.ts::REG-01-datasets",
-        "tests/compatibility/tables.test.ts::REG-01-tables",
-        "tests/compatibility/textboxes.test.ts::REG-01-textboxes",
-        "tests/roundtrip/authoring.test.ts::REG-01-authoring"
+        "tests/compatibility/datasets.test.ts::query-free local dataset projects all seven exact designer type mappings",
+        "tests/compatibility/datasets.test.ts::existing queries, calculated fields, foreign prefixes and unknown types remain source-bound",
+        "tests/compatibility/tables.test.ts::table projection reconciles per-row cells, static columns and hierarchy leaves",
+        "tests/compatibility/tables.test.ts::unbound tables stay structural and need a dataset only when several exist (MS-RDL 2.23.10)",
+        "tests/compatibility/textboxes.test.ts::supported textbox projects exactly one paragraph/run value with editable properties",
+        "tests/compatibility/textboxes.test.ts::rich text and expression geometry stay preservation-only while the item stays visible",
+        "tests/roundtrip/authoring.test.ts::blank report authoring covers page bounds, textbox deletion, all field types and group add/change/remove",
+        "tests/roundtrip/authoring.test.ts::unreferenced dataset/field rename and removal retain untouched source exactly",
+        "tests/roundtrip/authoring.test.ts::table columns, groups and scoped total rows are synchronized atomically",
+        "tests/roundtrip/authoring.test.ts::contextual structure targets build a bound table and reopen exact local definitions and scoped expressions"
       ]
     },
     {
@@ -1183,10 +1212,14 @@
       ],
       "oracle": "Eight handles, proportional table resize, primary/body multi-selection, align/distribute, nudge/repeat, pan/scroll/zoom, grid/guide/Alt, clipboard/duplicate/reference refusal and cancellation retain prior results.",
       "tests": [
-        "tests/roundtrip/arrangement.test.ts::REG-02-arrangement",
-        "tests/roundtrip/clipboard.test.ts::REG-02-clipboard",
-        "tests/roundtrip/precision.test.ts::REG-02-precision",
-        "tests/roundtrip/interactive.test.ts::REG-02-interactive"
+        "tests/roundtrip/arrangement.test.ts::mixed textbox/table group movement preserves offsets, sizes, metadata and ordered mappings",
+        "tests/roundtrip/arrangement.test.ts::whole-selection no-op retains source lexemes and invalid members refuse before planning",
+        "tests/roundtrip/clipboard.test.ts::copies complete subtrees in source order with internal remapping and literal annotations",
+        "tests/roundtrip/clipboard.test.ts::refuses unclassified metadata and unprovable dependencies without changes",
+        "tests/roundtrip/precision.test.ts::equivalent drags resolve to the same report-space move at every zoom",
+        "tests/roundtrip/precision.test.ts::1pt and 10pt nudges are exact and keep mixed source units",
+        "tests/roundtrip/interactive.test.ts::implicit dimensions materialize only on moved axes; no-op is byte exact",
+        "tests/roundtrip/interactive.test.ts::negative positions, zero sizes and non-body targets refuse atomically; overflow is allowed"
       ]
     },
     {
@@ -1198,7 +1231,9 @@
       "fixtures": ["interactive-mixed"],
       "oracle": "Toolbar/status/rulers/inspector, draft guards, responsive overlays/keyboard access, selection/unknown/opaque/truncated feedback, native history targeting, theme/focus and view-local preferences remain, with only the planned default navigation migration.",
       "tests": [
-        "apps/designer/src/app/editor/editor.component.spec.ts::REG-03-contextual-workspace"
+        "apps/designer/src/app/editor/editor.component.spec.ts::defaults absent navigation preferences to compact/closed and keeps inspector, toolbar and status",
+        "apps/designer/src/app/editor/editor.component.spec.ts::an independent version invalidates the stale draft with notice",
+        "apps/designer/src/app/editor/editor.component.spec.ts::explains limitations, offers item source access and suppresses handles"
       ]
     },
     {
@@ -1215,7 +1250,8 @@
       "oracle": "Automatic numbered names/gaps/preserved collisions, unbound static table creation/bind/rename, default position/dimensions, in-designer drop/fallback plus post-result selection, quiet draft banner, source-aware deletion, readable refusals, unnamed expansion-only correspondence and CRLF/LF normalization still pass.",
       "tests": [
         "tests/desktop/components.spec.ts::REG-04-creation",
-        "tests/roundtrip/interactive.test.ts::REG-04-fallback-drag"
+        "tests/roundtrip/interactive.test.ts::lexical markup, mixed units and line endings survive moves exactly outside geometry",
+        "tests/roundtrip/authoring.test.ts::creation inserts one named item at the drop position and refusals leave text unchanged"
       ]
     },
     {
@@ -1231,9 +1267,10 @@
       ],
       "oracle": "No-op exact equality, intended-only mutation/namespace preservation, one native history step, twenty-state exact restoration, native source changes, dirty close, save failure, external conflicts and split views remain lossless.",
       "tests": [
-        "tests/roundtrip/lexical.test.ts::REG-05-lexical",
-        "tests/vscode/lifecycle.test.ts::REG-05-lifecycle",
-        "tests/vscode/sidebar-history.test.ts::REG-05-history"
+        "tests/roundtrip/lexical.test.ts::cited lexical fixture has exact no-op coverage including BOM and foreign XML",
+        "tests/roundtrip/lexical.test.ts::a declared scalar footprint preserves all foreign XML and lexical surroundings",
+        "tests/vscode/lifecycle.test.ts::run",
+        "tests/vscode/sidebar-history.test.ts::run"
       ],
       "requiredArtifacts": ["history-states"]
     },
@@ -1246,9 +1283,10 @@
       "fixtures": ["unsafe-dtd", "malformed", "unsupported-xml11"],
       "oracle": "Bundled assets/icon/no test-network service, inert untrusted input, frozen-lockfile/root validation, current CI quality/OS/minimum/stable/package gates and same-VSIX release rules remain required and passing.",
       "tests": [
-        "tests/package/contents.test.ts::REG-06-assets",
-        "tests/package/offline.test.ts::REG-06-package-offline",
-        "tests/release/sidebar-gates.test.ts::REG-06-release-gates"
+        "tests/package/contents.test.ts::the actual VSIX contains exactly the reviewed production assets and identity",
+        "tests/package/offline.test.ts::packaged webview has nonce-bound local assets and denies network and executable resources",
+        "tests/release/sidebar-gates.test.ts::both workflows install frozen and never weaken a required gate",
+        "tests/release/sidebar-gates.test.ts::the canonical job certifies its own packaged bytes before release-artifact.js"
       ]
     }
   ]

@@ -1,0 +1,328 @@
+{
+  "schemaVersion": 1,
+  "description": "Frozen, hand-authored oracle for tests/fixtures/sidebar/structure.rdlc. Entries are in native source order and carry the authored opening/closing tag so tests can check real ranges independently of the projector. `kind` is the projectNavigation vocabulary and `structureKind` overrides it where the legacy projectStructure vocabulary still differs (`row`/`cell`). `parent` is the parent key both projections must report and `ns` overrides the report namespace for foreign elements. `preserved` is projectStructure's preservation-only reason, which it also inherits from a preservation-only ancestor; `opaque` is projectNavigation's per-node mutation eligibility, so a cell textbox under a preservation-only table stays `preserved: true` yet `opaque: false`. Entries flagged `legacyOnly` are the retained legacy data-selection branch: projectStructure keeps emitting them until the US3 migration, projectNavigation excludes them from Structure.",
+  "uri": "fixture:sidebar-structure",
+  "version": 7,
+  "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+  "sourceOnlyNamespace": "http://schemas.microsoft.com/sqlserver/reporting/2008/01/reportdefinition",
+  "absent": ["footer", "parameter", "embedded-image", "data-source"],
+  "absentNames": ["Hidden", "Child"],
+  "structure": [
+    {
+      "key": "report",
+      "kind": "report",
+      "parent": null,
+      "element": "Report",
+      "name": null,
+      "open": "<Report xmlns=\"http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition\" xmlns:ext=\"urn:rdlc-code:ext\" xmlns:rd=\"http://schemas.microsoft.com/SQLServer/reporting/reportdesigner\">",
+      "close": "</Report>",
+      "preserved": false
+    },
+    {
+      "key": "legacy-dataset",
+      "kind": "dataset",
+      "parent": "report",
+      "element": "DataSet",
+      "name": "Orders",
+      "open": "<DataSet Name=\"Orders\">",
+      "close": "</DataSet>",
+      "legacyOnly": true,
+      "preserved": false,
+      "opaque": false
+    },
+    {
+      "key": "legacy-field",
+      "kind": "field",
+      "parent": "legacy-dataset",
+      "element": "Field",
+      "name": "Label",
+      "open": "<Field Name=\"Label\">",
+      "close": "</Field>",
+      "legacyOnly": true,
+      "preserved": false,
+      "opaque": false
+    },
+    {
+      "key": "sections",
+      "kind": "sections",
+      "parent": "report",
+      "element": "ReportSections",
+      "name": null,
+      "open": "<ReportSections>",
+      "close": "</ReportSections>",
+      "preserved": false
+    },
+    {
+      "key": "section",
+      "kind": "section",
+      "parent": "sections",
+      "element": "ReportSection",
+      "name": null,
+      "open": "<ReportSection>",
+      "close": "</ReportSection>",
+      "preserved": false
+    },
+    {
+      "key": "body",
+      "kind": "body",
+      "parent": "section",
+      "element": "Body",
+      "name": null,
+      "open": "<Body>",
+      "close": "</Body>",
+      "preserved": false
+    },
+    {
+      "key": "table",
+      "kind": "table",
+      "parent": "body",
+      "element": "Tablix",
+      "name": "OrdersTable",
+      "open": "<Tablix Name=\"OrdersTable\">",
+      "close": "</Tablix>",
+      "preserved": true,
+      "opaque": true
+    },
+    {
+      "key": "table-body",
+      "kind": "table-body",
+      "parent": "table",
+      "element": "TablixBody",
+      "name": null,
+      "open": "<TablixBody>",
+      "close": "</TablixBody>"
+    },
+    {
+      "key": "row",
+      "kind": "table-row",
+      "structureKind": "row",
+      "parent": "table-body",
+      "element": "TablixRow",
+      "name": null,
+      "open": "<TablixRow>",
+      "close": "</TablixRow>"
+    },
+    {
+      "key": "cell",
+      "kind": "table-cell",
+      "structureKind": "cell",
+      "parent": "row",
+      "element": "TablixCell",
+      "name": null,
+      "open": "<TablixCell>",
+      "close": "</TablixCell>"
+    },
+    {
+      "key": "cell-textbox",
+      "kind": "textbox",
+      "parent": "cell",
+      "element": "Textbox",
+      "name": "LabelCell",
+      "open": "<Textbox Name=\"LabelCell\">",
+      "close": "</Textbox>",
+      "preserved": true,
+      "opaque": false
+    },
+    {
+      "key": "column-member",
+      "kind": "member",
+      "parent": "table",
+      "element": "TablixMember",
+      "name": null,
+      "open": "<TablixMember/>"
+    },
+    {
+      "key": "row-member",
+      "kind": "member",
+      "parent": "table",
+      "element": "TablixMember",
+      "name": null,
+      "open": "<TablixMember>",
+      "close": "</TablixMember>"
+    },
+    {
+      "key": "row-group",
+      "kind": "group",
+      "parent": "row-member",
+      "element": "Group",
+      "name": "ByLabel",
+      "open": "<Group Name=\"ByLabel\">",
+      "close": "</Group>"
+    },
+    {
+      "key": "member-header",
+      "kind": "member-header",
+      "parent": "row-member",
+      "element": "TablixHeader",
+      "name": null,
+      "open": "<TablixHeader>",
+      "close": "</TablixHeader>"
+    },
+    {
+      "key": "header-textbox",
+      "kind": "textbox",
+      "parent": "member-header",
+      "element": "Textbox",
+      "name": "GroupHeader",
+      "open": "<Textbox Name=\"GroupHeader\"/>",
+      "preserved": true,
+      "opaque": false
+    },
+    {
+      "key": "detail-member",
+      "kind": "member",
+      "parent": "row-member",
+      "element": "TablixMember",
+      "name": null,
+      "open": "<TablixMember>",
+      "close": "</TablixMember>"
+    },
+    {
+      "key": "detail-group",
+      "kind": "group",
+      "parent": "detail-member",
+      "element": "Group",
+      "name": "Details",
+      "open": "<Group Name=\"Details\"/>"
+    },
+    {
+      "key": "box",
+      "kind": "container",
+      "parent": "body",
+      "element": "Rectangle",
+      "name": "Box",
+      "open": "<Rectangle Name=\"Box\">",
+      "close": "</Rectangle>",
+      "preserved": true,
+      "opaque": true
+    },
+    {
+      "key": "nested-textbox",
+      "kind": "textbox",
+      "parent": "box",
+      "element": "Textbox",
+      "name": "Nested",
+      "open": "<Textbox Name=\"Nested\"/>",
+      "preserved": true,
+      "opaque": true
+    },
+    {
+      "key": "unnamed-rectangle",
+      "kind": "container",
+      "parent": "body",
+      "element": "Rectangle",
+      "name": null,
+      "open": "<Rectangle>",
+      "close": "</Rectangle>",
+      "preserved": true,
+      "opaque": true
+    },
+    {
+      "key": "foreign-widget",
+      "kind": "preserved",
+      "parent": "unnamed-rectangle",
+      "element": "Widget",
+      "ns": "urn:rdlc-code:ext",
+      "name": "Foreign",
+      "open": "<ext:Widget Name=\"Foreign\">",
+      "close": "</ext:Widget>",
+      "preserved": true,
+      "opaque": true
+    },
+    {
+      "key": "unknown-chart",
+      "kind": "preserved",
+      "parent": "body",
+      "element": "Chart",
+      "name": "Opaque",
+      "open": "<Chart Name=\"Opaque\">",
+      "close": "</Chart>",
+      "preserved": true,
+      "opaque": true
+    },
+    {
+      "key": "duplicate-box-1",
+      "kind": "container",
+      "parent": "body",
+      "element": "Rectangle",
+      "name": "Duplicate",
+      "open": "<Rectangle Name=\"Duplicate\"/>",
+      "preserved": true,
+      "opaque": true
+    },
+    {
+      "key": "duplicate-box-2",
+      "kind": "container",
+      "parent": "body",
+      "element": "Rectangle",
+      "name": "Duplicate",
+      "open": "<Rectangle Name=\"Duplicate\"/>",
+      "preserved": true,
+      "opaque": true
+    },
+    {
+      "key": "body-textbox",
+      "kind": "textbox",
+      "parent": "body",
+      "element": "Textbox",
+      "name": "BodyTitle",
+      "open": "<Textbox Name=\"BodyTitle\"/>",
+      "preserved": false,
+      "opaque": false
+    },
+    {
+      "key": "unnamed-textbox",
+      "kind": "textbox",
+      "parent": "body",
+      "element": "Textbox",
+      "name": null,
+      "open": "<Textbox/>",
+      "preserved": false,
+      "opaque": false
+    },
+    {
+      "key": "page-header",
+      "kind": "header",
+      "parent": "section",
+      "element": "PageHeader",
+      "name": null,
+      "open": "<PageHeader>",
+      "close": "</PageHeader>",
+      "preserved": false
+    },
+    {
+      "key": "page-header-textbox",
+      "kind": "textbox",
+      "parent": "page-header",
+      "element": "Textbox",
+      "name": "PageTitle",
+      "open": "<Textbox Name=\"PageTitle\"/>",
+      "preserved": true,
+      "opaque": true
+    }
+  ],
+  "data": [
+    {
+      "key": "dataset",
+      "kind": "dataset",
+      "parent": null,
+      "element": "DataSet",
+      "name": "Orders",
+      "open": "<DataSet Name=\"Orders\">",
+      "close": "</DataSet>",
+      "opaque": false,
+      "details": { "hasQuery": false }
+    },
+    {
+      "key": "field",
+      "kind": "field",
+      "parent": "dataset",
+      "element": "Field",
+      "name": "Label",
+      "open": "<Field Name=\"Label\">",
+      "close": "</Field>",
+      "opaque": false,
+      "details": { "type": "text", "classification": "local" }
+    }
+  ]
+}

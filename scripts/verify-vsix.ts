@@ -14,6 +14,10 @@ const { readZip } = createRequire(import.meta.url)(
 };
 export const readVsix = (path: string) => readZip(path, () => true);
 
+// Desktop validation tooling is development-only and must never ship.
+const desktopTooling =
+  /(?:^|\/)(?:tests\/(?:desktop|vscode)|harness|drag-probe|playwright|\.vscode-test)(?:[/.-]|$)/i;
+
 export function verifyVsix(entries: ReadonlyMap<string, Buffer>): void {
   const root = JSON.parse(readFileSync('package.json', 'utf8'));
   const expected = JSON.parse(
@@ -41,6 +45,12 @@ export function verifyVsix(entries: ReadonlyMap<string, Buffer>): void {
     );
   }
   assert.doesNotMatch(xml, /TargetPlatform=/, 'Package must be universal');
+  for (const path of entries.keys())
+    assert.doesNotMatch(
+      path,
+      desktopTooling,
+      `Desktop tooling in package: ${path}`,
+    );
   const allowed = new Map<string, Buffer>();
   const add = (source: string, target: string) => {
     for (const entry of readdirSync(source, { withFileTypes: true })) {

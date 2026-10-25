@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { readVsix, verifyVsix } from '../../scripts/verify-vsix.js';
 
@@ -16,6 +17,26 @@ test('the actual VSIX contains exactly the reviewed production assets and identi
       verifyVsix(new Map([...entries, [path, Buffer.from('secret')]])),
     );
   }
+  // Desktop tooling must be rejected explicitly, even under reviewed directories.
+  for (const path of [
+    'extension/tests/desktop/run-tests.js',
+    'extension/build/tests/vscode/harness/index.js',
+    'extension/build/drag-probe.js',
+    'extension/media/drag-probe.svg',
+    'extension/node_modules/playwright/index.js',
+    'extension/.vscode-test/settings.json',
+  ])
+    assert.throws(
+      () => verifyVsix(new Map([...entries, [path, Buffer.from('x')]])),
+      /Desktop tooling/,
+      path,
+    );
+  assert.equal(
+    createHash('sha256')
+      .update(entries.get('extension/media/rdlc-activity.svg')!)
+      .digest('hex'),
+    '5edf5dcf6c5155ecde4efc9dbb977aa9421cf28f89e64f7fce17d1aec0bdca9e',
+  );
   for (const path of [
     'extension/build/designer/3rdpartylicenses.txt',
     'extension/media/rdlc-logo.png',

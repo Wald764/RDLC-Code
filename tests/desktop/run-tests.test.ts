@@ -9,7 +9,9 @@ import {
   deriveSecurityObserverCapability,
   desktopArguments,
   desktopPlaywrightArguments,
+  FUNCTIONAL_CAPABILITIES as FUNCTIONAL,
   mergeProbeCapabilities,
+  DESKTOP_GROUPS,
   requiredDesktopSuites,
   runDesktop,
   sweepAfterRun,
@@ -35,17 +37,6 @@ const referenceEnvironment: EnvironmentIdentity = {
     reportZoom: 100,
   },
 };
-
-const FUNCTIONAL = [
-  'launch',
-  'nativeInput',
-  'angular',
-  'source',
-  'undo',
-  'accessibility',
-  'securityObserver',
-  'cleanup',
-];
 
 function makeProbe(environment: EnvironmentIdentity, screenshot = 'passed') {
   return {
@@ -240,11 +231,12 @@ test('Desktop reports reject missing, empty, skipped, flaky or failed execution'
 });
 
 test('Desktop modes preserve pnpm separators and reject ambiguous or unknown flags', () => {
-  assert.deepEqual(desktopArguments(['--', '--probe', '--packaged']), {
+  assert.deepEqual(desktopArguments(['--', '--probe', '--packaged'], {}), {
     probe: true,
     packaged: true,
     visual: false,
     updateBaselines: false,
+    group: null,
   });
   assert.throws(() => desktopArguments(['--update-snapshots']), /Unknown/);
   assert.throws(
@@ -256,6 +248,29 @@ test('Desktop modes preserve pnpm separators and reject ambiguous or unknown fla
     'security-observer.spec.ts',
     'native-drag.spec.ts',
   ]);
+});
+
+test('CI groups partition the functional journeys without dropping one', () => {
+  const all = requiredDesktopSuites(desktopArguments([], {}));
+  assert.equal(all.length, 11);
+  const parts = Object.keys(DESKTOP_GROUPS).map((group) =>
+    requiredDesktopSuites(
+      desktopArguments(['--packaged'], { RDLC_DESKTOP_GROUP: group }),
+    ),
+  );
+  assert.deepEqual(parts.flat().sort(), [...all].sort(), 'union is complete');
+  assert.equal(new Set(parts.flat()).size, all.length, 'groups are disjoint');
+  assert.throws(
+    () => desktopArguments([], { RDLC_DESKTOP_GROUP: 'visual' }),
+    /Unknown RDLC_DESKTOP_GROUP/,
+  );
+  // Probe and visual modes keep their own fixed suites in any group job.
+  assert.deepEqual(
+    requiredDesktopSuites(
+      desktopArguments(['--probe'], { RDLC_DESKTOP_GROUP: 'core' }),
+    ),
+    ['bootstrap.spec.ts', 'security-observer.spec.ts', 'native-drag.spec.ts'],
+  );
 });
 
 test('baseline generation is explicit, isolated and never automatic in CI', () => {

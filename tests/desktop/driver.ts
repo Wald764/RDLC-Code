@@ -39,6 +39,8 @@ export interface DesktopLaunchOptions {
   readonly testHarness?: boolean;
   /** Folder opened in the window; defaults to the repository root. */
   readonly workspaceDir?: string;
+  /** Node inspector port for the extension host (test delay hooks only). */
+  readonly inspectExtensions?: number;
 }
 
 export interface DesktopPaths {
@@ -73,6 +75,8 @@ const FRAME_TIMEOUT = 60_000;
 const COMMAND_TIMEOUT = 30_000;
 const CAPTURE_TIMEOUT = 30_000;
 const TRACE_TIMEOUT = 15_000;
+// The 100-switch journey exports over 400MB; allow its archive to finish before closing Electron.
+const TRACE_STOP_TIMEOUT = 120_000;
 const CLOSE_TIMEOUT = 15_000;
 const PROFILE_REMOVE_TIMEOUT = 15_000;
 const INSTALL_TIMEOUT = 120_000;
@@ -147,6 +151,7 @@ export function validateDesktopOptions(
       vsixPath,
       ...workspaceDir,
       ...(options.testHarness ? { testHarness: true } : {}),
+      ...inspector(options),
     };
   }
   if (options.vsixPath) {
@@ -159,7 +164,18 @@ export function validateDesktopOptions(
     artifactDir: resolve(options.artifactDir),
     ...workspaceDir,
     ...(options.testHarness ? { testHarness: true } : {}),
+    ...inspector(options),
   };
+}
+
+function inspector(
+  options: DesktopLaunchOptions,
+): Pick<DesktopLaunchOptions, 'inspectExtensions'> {
+  const port = options.inspectExtensions;
+  if (port === undefined) return {};
+  if (!Number.isInteger(port) || port < 1024 || port > 65535)
+    throw new Error(`Extension inspector port is invalid: ${port}`);
+  return { inspectExtensions: port };
 }
 
 export function desktopPaths(
@@ -206,6 +222,8 @@ export function desktopLaunchArgs(
     args.push(
       `--extensionDevelopmentPath=${join(root, 'tests', 'vscode', 'harness')}`,
     );
+  if (options.inspectExtensions !== undefined)
+    args.push(`--inspect-extensions=${options.inspectExtensions}`);
   args.push(paths.workspaceDir);
   return args;
 }
@@ -285,7 +303,11 @@ async function commandListed(page: Page, id: string): Promise<boolean> {
     .waitFor({ state: 'visible', timeout: 5_000 })
     .then(() => true)
     .catch(() => false);
-  await page.keyboard.press('Escape');
+  await withTimeout(
+    page.keyboard.press('Escape'),
+    COMMAND_TIMEOUT,
+    'Command palette dismissal',
+  );
   return available;
 }
 
@@ -558,7 +580,7 @@ function readFocus(): Record<string, unknown> | null {
   };
 }
 
-async function workbenchLocation(
+export async function workbenchLocation(
   contexts: () => BrowserContext[],
   timeoutMs: number,
 ): Promise<{ context: BrowserContext; page: Page }> {
@@ -571,10 +593,15 @@ async function workbenchLocation(
         seen.add(page.url());
         if (page.url().startsWith('devtools://')) continue;
         page.setDefaultTimeout(1_000);
-        const count = await page
-          .locator('.monaco-workbench')
-          .count()
-          .catch(() => 0);
+        // count() takes no timeout and setDefaultTimeout does not apply to it,
+        // so a hung page query would otherwise outlive the deadline and strand
+        // the launch. Bounded by what remains of the caller's deadline; the
+        // catch keeps counts at 0 so other windows and the URL diagnostic stay.
+        const count = await withTimeout(
+          page.locator('.monaco-workbench').count(),
+          Math.min(1_000, Math.max(1, deadline - Date.now())),
+          'Workbench locator count',
+        ).catch(() => 0);
         if (count > 0) return { context, page };
       }
     }
@@ -735,6 +762,62 @@ async function startTrace(context: BrowserContext): Promise<boolean> {
     throw new Error(
       `Mandatory Desktop trace capture failed: ${describeError(error)}`,
       { cause: error },
+    );
+  }
+}
+
+/**
+ * One palette round trip: open the command palette, run `id` and confirm the
+ * palette closed. Every caller (specs and the trust helpers) shares it, so its
+ * recovery is shared too: a transport that stops answering must not turn a
+ * failed command into an unbounded wait.
+ */
+export async function workbenchCommand(page: Page, id: string): Promise<void> {
+  if (!id.trim()) throw new Error('Command id must not be empty');
+  await page.bringToFront();
+  // Ctrl+P has just closed; its hidden input must not swallow the shortcut.
+  await page
+    .locator('.quick-input-widget:visible')
+    .waitFor({ state: 'hidden', timeout: 5_000 })
+    .catch(() => {});
+  // A focused webview iframe owns the keyboard; return focus to the workbench.
+  await page.evaluate(() => {
+    (document.activeElement as HTMLElement | null)?.blur();
+  });
+  const shortcut =
+    process.platform === 'darwin' ? 'Meta+Shift+P' : 'Control+Shift+P';
+  await page.keyboard.press(shortcut);
+  const input = page.locator(
+    '.quick-input-widget:visible .quick-input-box input',
+  );
+  await input.waitFor({ state: 'visible', timeout: COMMAND_TIMEOUT });
+  await page.keyboard.type(id, { delay: 10 });
+  const rows = page.locator(
+    '.quick-input-widget:visible .quick-input-list .monaco-list-row',
+  );
+  await rows
+    .filter({ hasText: id })
+    .first()
+    .click({ timeout: COMMAND_TIMEOUT });
+  try {
+    await input.waitFor({ state: 'hidden', timeout: COMMAND_TIMEOUT });
+  } catch (error) {
+    // The palette stayed open: dismiss it, and keep both failures when the
+    // dismissal itself hangs or fails (the unresponsive-transport case).
+    try {
+      await withTimeout(
+        page.keyboard.press('Escape'),
+        COMMAND_TIMEOUT,
+        'Command palette recovery',
+      );
+    } catch (recovery) {
+      throw new AggregateError(
+        [error, recovery],
+        `Command palette did not execute ${id}: ${describeError(error)}`,
+      );
+    }
+    throw new Error(
+      `Command palette did not execute ${id}: ${describeError(error)}`,
     );
   }
 }
@@ -926,7 +1009,7 @@ export async function launchDesktop(
             try {
               await withTimeout(
                 workbenchContext.tracing.stop({ path: tracePath }),
-                TRACE_TIMEOUT,
+                TRACE_STOP_TIMEOUT,
                 'Trace stop',
               );
               identity['tracePath'] = tracePath;
@@ -1007,42 +1090,8 @@ export async function launchDesktop(
       return frame;
     };
 
-    const command = async (id: string): Promise<void> => {
-      if (!id.trim()) throw new Error('Command id must not be empty');
-      await workbenchPage.bringToFront();
-      // Ctrl+P has just closed; its hidden input must not swallow the shortcut.
-      await workbenchPage
-        .locator('.quick-input-widget:visible')
-        .waitFor({ state: 'hidden', timeout: 5_000 })
-        .catch(() => {});
-      // A focused webview iframe owns the keyboard; return focus to the workbench.
-      await workbenchPage.evaluate(() => {
-        (document.activeElement as HTMLElement | null)?.blur();
-      });
-      const shortcut =
-        process.platform === 'darwin' ? 'Meta+Shift+P' : 'Control+Shift+P';
-      await workbenchPage.keyboard.press(shortcut);
-      const input = workbenchPage.locator(
-        '.quick-input-widget:visible .quick-input-box input',
-      );
-      await input.waitFor({ state: 'visible', timeout: COMMAND_TIMEOUT });
-      await workbenchPage.keyboard.type(id, { delay: 10 });
-      const rows = workbenchPage.locator(
-        '.quick-input-widget:visible .quick-input-list .monaco-list-row',
-      );
-      await rows
-        .filter({ hasText: id })
-        .first()
-        .click({ timeout: COMMAND_TIMEOUT });
-      try {
-        await input.waitFor({ state: 'hidden', timeout: COMMAND_TIMEOUT });
-      } catch (error) {
-        await workbenchPage.keyboard.press('Escape');
-        throw new Error(
-          `Command palette did not execute ${id}: ${describeError(error)}`,
-        );
-      }
-    };
+    const command = (id: string): Promise<void> =>
+      workbenchCommand(workbenchPage, id);
 
     const capture = async (name: string): Promise<void> => {
       if (!name.trim()) throw new Error('Capture name must not be empty');
@@ -1074,11 +1123,21 @@ export async function launchDesktop(
           record['focus'] = await workbenchPage.evaluate(readFocus);
           const frame = await findDesignerFrame(workbenchPage, 2_000);
           if (!frame) return;
+          const root = frame.locator('rdlc-root');
+          let visible = await root.isVisible();
+          for (
+            let ancestor: Frame | null = frame;
+            visible && ancestor?.parentFrame();
+            ancestor = ancestor.parentFrame()
+          )
+            visible = await (await ancestor.frameElement()).isVisible();
           record['designer'] = {
             url: frame.url(),
             focus: await frame.evaluate(readFocus),
+            visible,
           };
-          const root = frame.locator('rdlc-root');
+          // A source editor may be active while its retained designer frame is hidden.
+          if (!visible) return;
           await root.screenshot({
             path: join(directory, 'designer.png'),
             timeout: CAPTURE_TIMEOUT,

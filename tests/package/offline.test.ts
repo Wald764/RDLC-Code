@@ -83,3 +83,57 @@ test('malicious local and remote entity declarations are rejected without source
     assert.equal(parsed.snapshot.source, source);
   }
 });
+
+test('US6.4-offline', async () => {
+  // Static inspection of the packaged candidate's bundled content only: a
+  // static scan is never runtime proof of offline behavior. The installed
+  // journeys are observed at runtime by tests/desktop/offline.spec.ts.
+  const { version } = JSON.parse(readFileSync('package.json', 'utf8')) as {
+    version: string;
+  };
+  const entries = await readVsix(`dist/rdlc-code-${version}.vsix`);
+  const host = entries.get('extension/build/extension.cjs')!.toString();
+  // The bounded inert data inventory ships inside the bundle: definitions are
+  // read from the packaged source and never fetched or decoded at runtime.
+  for (const label of [
+    'Datasets / Fields',
+    'Parameters',
+    'Embedded Images',
+    'Data Sources',
+  ])
+    assert.ok(
+      host.includes(label),
+      `the bundled data inventory is missing ${label}`,
+    );
+  // No dynamic-code, worker, decode or network channel in any packaged asset.
+  for (const [path, bytes] of entries) {
+    if (!/\.(?:js|cjs|html|css)$/.test(path)) continue;
+    const text = bytes.toString();
+    assert.doesNotMatch(
+      text,
+      /\b(?:eval\(|new Function|WebAssembly|importScripts|new Worker|SharedWorker|atob\()/,
+      path,
+    );
+    assert.doesNotMatch(
+      text,
+      /\b(?:fetch\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon|import\()/,
+      path,
+    );
+    // Hostile fixture payloads are test inputs, never shipped content.
+    assert.doesNotMatch(
+      text,
+      /__RDLC_CANARY|never-fetch|CanaryImage|SECRET_|SELECT untouched|offline-secret/,
+      path,
+    );
+  }
+  // No third-party runtime dependency backs those workflows.
+  const manifest = JSON.parse(
+    entries.get('extension/package.json')!.toString(),
+  ) as { dependencies?: Record<string, string> };
+  const dependencies = Object.values(manifest.dependencies ?? {});
+  assert.ok(dependencies.length > 0, 'the packaged dependencies are missing');
+  assert.ok(
+    dependencies.every((value) => value === 'workspace:*'),
+    `unexpected packaged runtime dependency: ${dependencies.filter((value) => value !== 'workspace:*').join(', ')}`,
+  );
+});
