@@ -179,6 +179,9 @@ function inspector(
 }
 
 /** Unix socket paths are limited to 104 bytes on macOS (108 on Linux). */
+/** Workbench content size the journeys are written against. */
+const WINDOW_CONTENT_SIZE = { width: 1440, height: 900 } as const;
+
 const SOCKET_PATH_LIMIT = 103;
 
 export function desktopPaths(
@@ -947,6 +950,21 @@ export async function launchDesktop(
       'VS Code workbench',
     );
     page.setDefaultTimeout(COMMAND_TIMEOUT);
+    // One window geometry on every host: a 1024x768 CI desktop otherwise puts
+    // the workbench and designer into their narrow layouts.
+    if (app)
+      await withTimeout(
+        app.evaluate(({ BrowserWindow }, size) => {
+          const window = BrowserWindow.getAllWindows().find(
+            (candidate: { isDestroyed(): boolean }) => !candidate.isDestroyed(),
+          );
+          if (!window) return;
+          if (window.isMaximized()) window.unmaximize();
+          window.setContentSize(size.width, size.height);
+        }, WINDOW_CONTENT_SIZE),
+        COMMAND_TIMEOUT,
+        'Desktop window size',
+      );
     const workbenchPage = page;
     const workbenchContext = context;
     const actualTransport = transport;

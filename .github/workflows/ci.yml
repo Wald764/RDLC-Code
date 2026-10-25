@@ -77,6 +77,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm package
+      # The default 1024x768 runner desktop cannot hold the 1440x900 workbench.
+      - name: Use a 1920x1080 Windows desktop
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
       # Host suites and the capability probe run once per OS/version, in core.
       - if: runner.os == 'Linux' && matrix.group == 'core'
         run: xvfb-run -a pnpm test:vscode
@@ -139,14 +144,14 @@ jobs:
       - name: Run installed Desktop journeys on Windows and macOS
         if: runner.os != 'Linux'
         run: pnpm test:e2e --packaged
-      # Per-session driver traces run to gigabytes per job; failing tests keep
-      # their own Playwright trace, screenshot and error context.
-      - name: Drop per-session driver traces before upload
+      # Driver and Playwright traces run to gigabytes per job; failing tests
+      # keep their screenshot, error context and JSON report.
+      - name: Drop Desktop traces before upload
         if: always()
         shell: bash
         run: |
           if [ -d .vscode-test/desktop-artifacts ]; then
-            find .vscode-test/desktop-artifacts -name 'trace-*.zip' -delete
+            find .vscode-test/desktop-artifacts -name '*.zip' -delete
           fi
       - name: Upload Desktop run evidence
         if: always()

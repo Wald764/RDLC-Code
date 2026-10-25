@@ -630,7 +630,10 @@ async function armOpeningHold(port: number): Promise<{
   await send('Debugger.enable');
   // Both the installed VSIX and the development build load build/extension.cjs.
   const script = scripts.find((entry) => {
-    const url = decodeURIComponent(entry.url).replaceAll('\\', '/');
+    // Checkout paths keep their case (CI: /home/runner/work/RDLC-Code/...).
+    const url = decodeURIComponent(entry.url)
+      .replaceAll('\\', '/')
+      .toLowerCase();
     return url.endsWith('/build/extension.cjs') && url.includes('rdlc');
   });
   expect(script, 'the extension bundle is loaded').toBeDefined();

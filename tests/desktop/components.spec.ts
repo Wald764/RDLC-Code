@@ -545,11 +545,14 @@ async function expectSource(
 async function compactCatalog(frame: Frame): Promise<void> {
   const card = frame.locator('[data-card="Textbox"]');
   const tab = frame.getByRole('tab', { name: 'Components', exact: true });
-  if (!(await card.isVisible()) && !(await tab.isVisible()))
+  if (await card.isVisible()) return;
+  if (!(await tab.isVisible()))
     await frame
       .getByRole('button', { name: 'Components', exact: true })
       .click();
-  if (await tab.isVisible()) await tab.click();
+  // The panel opens asynchronously and may restore its Structure tab.
+  await expect(tab).toBeVisible();
+  if ((await tab.getAttribute('aria-selected')) !== 'true') await tab.click();
   await expect(card).toBeVisible();
 }
 
@@ -1141,12 +1144,13 @@ test('FR-017-keyboard', async () => {
     await focusRow(ctx.page, /^Dataset, Insert/);
     await ctx.page.keyboard.press('Enter');
     await expect(createdNotice(frame, 'DataSet1')).toHaveCount(1);
-    await save(ctx);
-    await expect.poll(() => bytes(ctx, 'report.rdlc')).toBe(datasetMade);
     await expect(frame.locator('.feedback #report-refusal')).toHaveCount(0);
+    // Focus first: saving blurs the webview.
     const datasetName = frame.getByRole('textbox', { name: 'Dataset name' });
     await expect(datasetName).toHaveValue('DataSet1');
     await expect(datasetName).toBeFocused();
+    await save(ctx);
+    await expect.poll(() => bytes(ctx, 'report.rdlc')).toBe(datasetMade);
     await undo(frame);
     await save(ctx);
     await expectSource(ctx, 'report.rdlc', original);
@@ -1210,6 +1214,10 @@ test('FR-018-fallback', async () => {
       original,
       textboxXml('Textbox1', '260pt', '30pt'),
     );
+    // The drop's edit is asynchronous: wait for it before saving.
+    await expect(
+      ctx.page.locator('.monaco-workbench .tab.dirty'),
+    ).not.toHaveCount(0);
     await save(ctx);
     await expect.poll(() => bytes(ctx, 'report.rdlc')).toBe(snapped);
     await expect(editorTabs(ctx.page)).toHaveCount(tabs);
