@@ -1,4 +1,9 @@
 {
+  "model": "claude-opus-5-5",
+  "env": {
+    "CLAUDE_CODE_FORK_SUBAGENT": "0",
+    "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1"
+  },
   "enabledPlugins": {
     "ponytail@ponytail": true
   }

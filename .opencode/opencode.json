@@ -1,1 +1,27 @@
-{ "plugins": ["@dietrichgebert/ponytail"] }
+
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode-go/kimi-k2.7-code",
+  "agents": {
+    "explore": {
+      "model": "opencode-go/mimo-v2.6-flash"
+    },
+    "general": {
+      "model": "opencode-go/mimo-v2.6-flash"
+    },
+    "quality-review": {
+      "description": "Independent final code quality reviewer",
+      "mode": "subagent",
+      "model": "opencode-go/glm-5.3-flash",
+      "system": "{file:./prompts/quality-review.md}",
+      "permissions": [
+        {
+          "action": "edit",
+          "resource": "*",
+          "effect": "deny"
+        }
+      ]
+    }
+  },
+  "plugins": ["@dietrichgebert/ponytail"]
+}
