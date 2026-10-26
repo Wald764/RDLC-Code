@@ -1171,7 +1171,10 @@ test('FR-030-trust', async () => {
         await ensureDesigner(driver);
         await focusView(driver, 'Report Data');
         await expect(
-          driver.page.getByRole('treeitem', { name: /Existing/ }),
+          driver.page.getByRole('treeitem', {
+            name: 'DataSet: Existing',
+            exact: true,
+          }),
         ).toBeVisible();
         expect(await readText(join(fixture.dir, 'preserved.rdlc'))).toBe(
           await readFile(
@@ -1479,7 +1482,10 @@ test('FR-014-no-fetch', async () => {
         await openFixture(driver, join(fixture.dir, 'preserved.rdlc'));
         await focusView(driver, 'Report Data');
         await expect(
-          driver.page.getByRole('treeitem', { name: /Existing/ }),
+          driver.page.getByRole('treeitem', {
+            name: 'DataSet: Existing',
+            exact: true,
+          }),
         ).toBeVisible();
         await expect(
           driver.page.getByRole('treeitem', { name: /Calculated/ }),
