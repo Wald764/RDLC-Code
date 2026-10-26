@@ -508,6 +508,44 @@ test('unrecognized outgoing network addresses fail closed rather than disappear 
   }
 });
 
+test('addressless sends are classified by the connected peer -yy records on the fd', () => {
+  const cases: [string, boolean | undefined][] = [
+    ['sendto(3<UNIX-STREAM:[272961->272962]>, "x", 1, 0, NULL, 0) = 1', false],
+    [
+      'sendmsg(5<UNIX-STREAM:[10->11,"/run/user/1000/bus"]>, {msg_name=NULL, msg_namelen=0}, 0) = 7',
+      false,
+    ],
+    [
+      'sendto(5<UNIX-STREAM:[10->11,"/var/run/docker.sock"]>, "x", 1, 0, NULL, 0) = 1',
+      true,
+    ],
+    ['sendto(6<UNIX-DGRAM:[12]>, "x", 1, 0, NULL, 0) = 1', true],
+    [
+      'sendto(6<UNIX-STREAM:[10->11,"/tmp/a]b"]>, "x", 1, 0, NULL, 0) = 1',
+      true,
+    ],
+    ['sendto(7<NETLINK:[ROUTE:4321]>, "x", 1, 0, NULL, 0) = 1', false],
+    [
+      'sendto(8<TCP:[127.0.0.1:4000->127.0.0.1:9222]>, "x", 1, 0, NULL, 0) = 1',
+      false,
+    ],
+    [
+      'sendto(8<TCPv6:[[::1]:4000->[::1]:9222]>, "x", 1, 0, NULL, 0) = 1',
+      false,
+    ],
+    [
+      'sendto(9<TCP:[10.0.0.2:4000->203.0.113.9:443]>, "x", 1, 0, NULL, 0) = 1',
+      true,
+    ],
+    ['sendto(10<UDP:[0.0.0.0:5353]>, "x", 1, 0, NULL, 0) = 1', true],
+  ];
+  for (const [line, expected] of cases) {
+    const { events } = parseStraceLog(call(line), { allowed: ALLOWED });
+    assert.equal(events.length, 1, line);
+    assert.equal(events[0]!.unexpected, expected, line);
+  }
+});
+
 test('harness-only positive control: a canary outside the allowlist is detected, an allowed twin is not', () => {
   const canary =
     'openat(AT_FDCWD</work/fixture>, "/tmp/rdlc-canary-abc/canary.dat", O_RDONLY) = 3</tmp/rdlc-canary-abc/canary.dat>';

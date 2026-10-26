@@ -988,13 +988,46 @@ function classifyUnexpected(
   const ipv6 = /inet_pton\(AF_INET6, "([^"]+)"/.exec(args)?.[1];
   if (ipv6) return !/^(?:::1$|::ffff:127\.)/i.test(ipv6);
   const unix = UNIX_SOCKET.exec(args);
+  if (unix)
+    return unixSocketUnexpected(unix[1] === '@', unix[2] ?? '', context);
+  if (args.includes('sun_path=')) return true;
+  const connected = connectedPeerUnexpected(args, context);
+  if (connected !== undefined) return connected;
   // An outgoing attempt without a proven destination cannot certify an empty violation set.
-  return unix
-    ? unixSocketUnexpected(unix[1] === '@', unix[2] ?? '', context)
-    : args.includes('sun_path=') ||
-        ['connect', 'sendto', 'sendmsg'].includes(operation)
-      ? true
-      : undefined;
+  return ['connect', 'sendto', 'sendmsg'].includes(operation)
+    ? true
+    : undefined;
+}
+
+/** -yy decorates the socket fd with its peer: `3<UNIX-STREAM:[1->2,"/run/user/1000/bus"]>`. */
+const SOCKET_FD = /^\d+<([A-Za-z0-9]+)(?:-[A-Z]+)?:\[(.*?)\]>/;
+
+/**
+ * Addressless sends on a connected socket reach the peer recorded on the fd.
+ * Unix peers are local (named ones go through the unix socket rules), netlink
+ * talks to the kernel, and inet peers must be loopback. -yy names only the
+ * sender's own bound path, so the observed connect() is what enforces a unix
+ * destination; a send on a socket connected before tracing escapes that rule.
+ */
+function connectedPeerUnexpected(
+  args: string,
+  context: ClassifyContext,
+): boolean | undefined {
+  const fd = SOCKET_FD.exec(args);
+  if (!fd) return undefined;
+  const [, family = '', detail = ''] = fd;
+  if (family === 'NETLINK') return false;
+  if (family === 'UNIX') {
+    const path = /,"(@?)([^"]*)"$/.exec(detail);
+    if (path)
+      return unixSocketUnexpected(path[1] === '@', path[2] ?? '', context);
+    // A name that did not parse (such as one holding `]` or `"`) fails closed.
+    return detail.includes(',"') || !detail.includes('->');
+  }
+  if (!/^(?:TCP|UDP)(?:v6)?$/.test(family)) return undefined;
+  const peer = detail.split('->')[1];
+  if (peer === undefined) return undefined;
+  return !/^(?:127\.|\[::1\]:|\[::ffff:127\.)/i.test(peer);
 }
 
 /**
