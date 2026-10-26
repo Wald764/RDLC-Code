@@ -15,6 +15,7 @@ test('the authentication probe packages only the fixed inert test identity and b
   try {
     const context = { commit: 'a'.repeat(40), runId: '123' };
     const record = await packageAuthTest(directory, context);
+    assert.equal(record.tools.node, process.versions.node);
     assert.equal(record.identity, 'Wald764.rdlc-code-auth-test');
     assert.equal(record.version, '0.0.4');
     assert.equal(record.commit, context.commit);

@@ -103,8 +103,7 @@ export async function packageAuthTest(
   assert.match(context.commit, /^[a-f0-9]{40}$/);
   assert.match(context.runId, /^[1-9][0-9]*$/);
   authMetadata();
-  const node = readFileSync('.node-version', 'utf8').trim();
-  assert.equal(process.versions.node, node, 'Use the pinned build Node');
+  const node = process.versions.node;
   assert.equal(
     JSON.parse(
       readFileSync(
@@ -149,6 +148,11 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
+  assert.equal(
+    process.versions.node,
+    readFileSync('.node-version', 'utf8').trim(),
+    'Use the pinned build Node',
+  );
   assert.equal(
     process.env.MARKETPLACE_PUBLISHER,
     'Wald764',
