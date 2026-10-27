@@ -727,17 +727,17 @@ async function palette(
   );
   await input.waitFor({ state: 'visible', timeout: 15_000 });
   await page.keyboard.type(command, { delay: 10 });
-  // Captured before Enter: it still targets the first row once the prompt
-  // changes, so the assertion is about the executed command row only.
+  // Fuzzy ranking can put other commands first on a fresh profile, so the row
+  // is selected by its exact label and clicked rather than taking Enter.
+  const exact = new RegExp(
+    `^\\s*${command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`,
+  );
   const first = page
     .locator('.quick-input-widget:visible .quick-input-list .monaco-list-row')
+    .filter({ has: page.locator('.label-name').filter({ hasText: exact }) })
     .first();
-  await expect(first, `palette first row for ${command}`).toContainText(
-    command,
-  );
-  await input.press('Enter');
-  // The command row must be gone, but the widget itself legitimately stays
-  // open when the command opens its own input (Preferences: Color Theme).
+  await expect(first, `palette row for ${command}`).toBeVisible();
+  await first.click();
   await expect(first.filter({ hasText: command })).toBeHidden();
 }
 
