@@ -35,6 +35,44 @@ rejection, configured/unconfigured/conflicting authentication, full destination
 inventories, draft asset conflicts, failed-job discovery of prior uploads and
 missing/expired provenance. These test results are not hosted failure injections.
 
+## Regenerating the Desktop pixel references
+
+`tests/desktop/baselines/` holds the only pixel references, valid for one pinned
+environment: Ubuntu 24.04, VS Code 1.142.0 (build `6d62b1d5...`), a 1440x1000 display
+at DPR 1, `en_US.UTF-8`, UTC and the fonts reported by `fc-list` after installing
+`fontconfig fonts-dejavu-core locales`. Other OS and VS Code combinations never
+compare pixels (`referenceEnvironmentReasons` in `tests/desktop/evidence.ts`):
+`bootstrap.spec.ts` records "non-reference environment" there and does not use the
+reference.
+
+| File under `tests/desktop/baselines/`               | Consumed by                                                    |
+| --------------------------------------------------- | -------------------------------------------------------------- |
+| `bootstrap/bootstrap.png`                           | `bootstrap.spec.ts` in the Linux 1.142.0 `desktop` `core` jobs |
+| `bootstrap/bootstrap.metadata.json`                 | `visual.spec.ts` (all three tests) in the `visual` job         |
+| `themes/<theme>-{activitybar,sidebar,designer}.png` | `visual.spec.ts` `US6.2-themes` in the `visual` job            |
+| `reference-environment.txt` (informational record)  | Humans only                                                    |
+
+The metadata records the observed OS image id (`ubuntu-24.04`, from `/etc/os-release`,
+not the runner `ImageVersion`), VS Code version, build and executable hash, locale,
+timezone, display and the exact `fc-list` family list. A runner image update that
+changes the installed font families, or a VS Code binary change, makes the
+`visual` job fail on the metadata comparison; regenerate in that case.
+
+To regenerate:
+
+1. Run the manual **Desktop baselines** workflow (`.github/workflows/baselines.yml`,
+   `workflow_dispatch`) on the branch. It repeats the provisioning of the `visual`
+   job, runs `pnpm test:e2e --update-baselines` (bootstrap reference and metadata,
+   with `RDLC_ALLOW_CI_BASELINE_UPDATE=1`), generates the theme references with
+   Playwright `--update-snapshots=all`, uploads the `desktop-baselines` artifact and
+   then re-runs `pnpm test:visual` in comparison mode as a stability check.
+2. Download `desktop-baselines`, review the images, extract it so its files land at
+   `tests/desktop/baselines/`, and commit them.
+
+The workflow never commits or pushes, and `ci.yml` never updates references.
+Generating on a developer machine is refused unless the platform and VS Code version
+match the reference environment, and the fonts must match the recorded list.
+
 ## Optional follow-ups accepted as unrun
 
 - Exercise fork and same-repository PR secret isolation, without exposing secrets.

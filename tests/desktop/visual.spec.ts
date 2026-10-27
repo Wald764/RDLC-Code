@@ -250,8 +250,14 @@ async function assertReferenceEnvironment(ctx: Ctx): Promise<void> {
   ).toEqual({ ...TOLERANCES });
 }
 
-/** Reference baselines must exist before a comparison can pass; never written here. */
+/**
+ * Reference baselines must exist before a comparison can pass. This gate never
+ * writes them; only an explicit reference-generation run (the runner's
+ * RDLC_DESKTOP_UPDATE_BASELINES plus Playwright --update-snapshots=all, refused
+ * in CI without RDLC_ALLOW_CI_BASELINE_UPDATE=1) skips it so they can be created.
+ */
 function requireBaselines(paths: readonly string[]): void {
+  if (process.env.RDLC_DESKTOP_UPDATE_BASELINES === 'true') return;
   const root = process.env.RDLC_DESKTOP_ROOT ?? process.cwd();
   const missing = paths.filter(
     (path) => !existsSync(resolve(root, BASELINE_ROOT, path)),

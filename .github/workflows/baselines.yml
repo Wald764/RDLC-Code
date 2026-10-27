@@ -1,0 +1,104 @@
+name: Desktop baselines
+
+# Manual reference generation for the pinned visual environment. It reproduces
+# the `visual` job of ci.yml exactly (ubuntu-24.04, VS Code 1.142.0, 1440x1000x24
+# xvfb screen, en_US.UTF-8, UTC, same font packages) and uploads the generated
+# references as an artifact. It never commits or pushes: download the artifact,
+# review the images and commit them under tests/desktop/baselines/.
+# See docs/validation/github-actions.md.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: baselines-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    name: Generate pinned references
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      VSCODE_VERSION: '1.142.0'
+      TZ: UTC
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@9fd676a19091d4595eefd76e4bd31c97133911f1 # v4.2.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            .node-version
+            package.json
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # Keep this step identical to the `visual` job of ci.yml.
+      - name: Provision and record the reference candidate environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core locales
+          sudo locale-gen en_US.UTF-8
+          mkdir -p .vscode-test/desktop-artifacts
+          {
+            echo "image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            grep -E '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release
+            dpkg-query -W -f='${Package} ${Version}\n' fontconfig fonts-dejavu-core locales
+            echo "vscode: ${VSCODE_VERSION}"
+            echo "display: 1440x1000 dpr=1"
+            echo "locale: ${LANG} timezone: ${TZ}"
+          } | tee .vscode-test/desktop-artifacts/reference-environment.txt
+      # Writes bootstrap/bootstrap.png and bootstrap/bootstrap.metadata.json. The
+      # metadata records the observed environment that every visual comparison
+      # (visual.spec.ts) and the Linux 1.142.0 bootstrap comparison check against.
+      - name: Generate the bootstrap reference and metadata
+        env:
+          CI: 'true'
+          RDLC_ALLOW_CI_BASELINE_UPDATE: '1'
+        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e --update-baselines
+      # --update-baselines only runs bootstrap.spec.ts, so the theme references
+      # are written by the same Playwright configuration directly. visual.spec.ts
+      # skips its missing-reference gate only while RDLC_DESKTOP_UPDATE_BASELINES
+      # is true and still checks the environment against the metadata just written.
+      - name: Generate the theme references
+        env:
+          RDLC_DESKTOP_ROOT: ${{ github.workspace }}
+          RDLC_DESKTOP_ARTIFACT_DIR: ${{ github.workspace }}/.vscode-test/desktop-artifacts/baseline-themes
+          RDLC_DESKTOP_PACKAGED: 'false'
+          RDLC_DESKTOP_UPDATE_BASELINES: 'true'
+        run: >
+          xvfb-run -a -s "-screen 0 1440x1000x24"
+          pnpm exec playwright test --config tests/desktop/playwright.config.ts
+          --update-snapshots=all visual.spec.ts --grep "US6.2-themes"
+      - name: Record the reference environment next to the references
+        run: |
+          cp .vscode-test/desktop-artifacts/reference-environment.txt tests/desktop/baselines/reference-environment.txt
+          find tests/desktop/baselines -type f | sort
+      - name: Upload the generated references
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-baselines
+          path: tests/desktop/baselines/**
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload generation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-baselines-evidence-${{ github.run_id }}
+          path: .vscode-test/desktop-artifacts/**
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 7
+      # Self-check: a fresh launch must reproduce the references it just wrote,
+      # with no update flag. A failure here means the references are unstable.
+      - name: Verify the generated references (comparison mode)
+        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:visual
