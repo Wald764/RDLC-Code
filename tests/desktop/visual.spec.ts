@@ -1037,6 +1037,10 @@ test('SC-006-contrast', async () => {
       const frame = await openDesigner(ctx);
       await frame.locator('.item[data-item="0"]').click();
       await expect(frame.locator('.item.primary')).toHaveCount(1);
+      // The status footer only spans the canvas column, which the inline
+      // inspector narrows; without the primary side bar the text has room.
+      await palette(page, 'View: Close Primary Side Bar', frame);
+      await expect(page.locator('.part.sidebar')).toBeHidden();
       // The inspector (geometry note and properties form) is inline from
       // 800 px of workspace width (aria-expanded already "true") and a hidden
       // overlay below it, so it is opened only when it is not yet shown.
