@@ -755,6 +755,25 @@ select:focus-visible,
     border-color: var(--vscode-focusBorder, #f38518);
   }
 }
+/*
+ * The authored page stays white in every theme, and the Dark High Contrast
+ * focus border (#f38518) only reaches 2.57:1 against it. Two-tone boundary:
+ * a black stroke touches the page (21:1 on white) and the theme focus border
+ * rings it, so the stroke remains visible against the dark workspace too.
+ */
+:host-context(.vscode-high-contrast:not(.vscode-high-contrast-light)) {
+  .selection-frame,
+  .handle,
+  .marquee,
+  .preview {
+    border-color: #000;
+    box-shadow: 0 0 0 1px var(--vscode-focusBorder, #f38518);
+  }
+  .item.selected {
+    outline-color: #000;
+    box-shadow: inset 0 0 0 3px var(--vscode-focusBorder, #f38518);
+  }
+}
 @media (forced-colors: active) {
   .item.selected,
   .selection-frame,
