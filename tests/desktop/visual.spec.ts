@@ -132,13 +132,13 @@ const THEMES: readonly Theme[] = [
     webview: 'vscode-dark',
   },
   {
-    label: 'High Contrast',
+    label: 'Dark High Contrast',
     slug: 'high-contrast',
     workbench: 'hc-black',
     webview: 'vscode-high-contrast',
   },
   {
-    label: 'High Contrast Light',
+    label: 'Light High Contrast',
     slug: 'high-contrast-light',
     workbench: 'hc-light',
     webview: 'vscode-high-contrast-light',
