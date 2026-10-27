@@ -198,6 +198,9 @@ export class SecurityObserverUnsupportedError extends Error {
 /**
  * -yy decodes fd arguments to paths, so dirfd-relative and relative file
  * accesses can be resolved; -s 4096 keeps whole PATH_MAX paths untruncated.
+ * The second -e removes the receive calls from the set: they are never an
+ * outbound attempt, and Chromium's IPC polling made them ~80% of the trace
+ * (hundreds of thousands of lines per journey with their 4096-byte payloads).
  */
 export const STRACE_ARGS = [
   '-f',
@@ -207,6 +210,8 @@ export const STRACE_ARGS = [
   '4096',
   '-e',
   'trace=%network,%file,%process',
+  '-e',
+  'trace=!recvfrom,recvmsg,recvmmsg',
 ] as const;
 
 const DEFAULT_MAX_DURATION = 60_000;
@@ -268,7 +273,21 @@ const NETWORK_CALLS = new Set([
   'getsockopt',
 ]);
 
+/** Inbound only: never an outbound attempt, whatever address or peer the fd carries. */
+const RECEIVE_CALLS = new Set(['recvfrom', 'recvmsg', 'recvmmsg']);
+
+/** Socket state and options: they query or tune an fd and put nothing on the wire. */
+const SOCKET_STATE_CALLS = new Set([
+  'getsockname',
+  'getpeername',
+  'getsockopt',
+  'setsockopt',
+  'shutdown',
+]);
+
 const EXEC_CALLS = new Set(['execve', 'execveat']);
+
+const PROCESS_SPAWN_CALLS = new Set(['clone', 'clone3', 'fork', 'vfork']);
 
 const PROCESS_CALLS = new Set([
   'clone',
@@ -495,14 +514,15 @@ function parseStraceLine(line: string): StraceLine | null {
     const header = trimmed.slice(0, resultIndex + 1);
     const result = trimmed.slice(resultIndex + marker.length);
     const resumed =
-      /^<\.\.\.\s+([A-Za-z_][A-Za-z0-9_]*)\s+resumed>(.*)\)$/.exec(header);
-    if (resumed?.[1] !== undefined) {
-      const prefix = /^(?:(\d+)\s+)?(?:(\d+(?:\.\d+)?)\s+)?/.exec(header);
+      /^(?:(\d+)\s+)?(?:(\d+(?:\.\d+)?)\s+)?<\.\.\.\s+([A-Za-z_][A-Za-z0-9_]*)\s+resumed>(.*)\)$/s.exec(
+        header,
+      );
+    if (resumed?.[3] !== undefined) {
       return {
-        pid: prefix?.[1] ? Number(prefix[1]) : null,
-        atMs: parseTimestamp(prefix?.[2]),
-        operation: resumed[1],
-        args: resumed[2] ?? '',
+        pid: resumed[1] ? Number(resumed[1]) : null,
+        atMs: parseTimestamp(resumed[2]),
+        operation: resumed[3],
+        args: resumed[4] ?? '',
         result,
         unfinished: false,
         resumed: true,
@@ -653,11 +673,21 @@ export const RUNTIME_PATHS: readonly string[] = [
   '/etc/localtime',
   '/etc/fonts',
   '/etc/ssl/certs',
+  '/etc/ssl/cert.pem',
+  '/usr/share/ca-certificates',
   '/etc/nsswitch.conf',
   '/etc/hosts',
   '/etc/resolv.conf',
   '/etc/machine-id',
   '/etc/os-release',
+  // Enterprise policy files VS Code checks at startup (absent on a plain runner).
+  '/etc/vscode/policy.json',
+  '/etc/github-copilot/managed-settings.json',
+  // jemalloc (ripgrep) reads its configuration and kernel hints when it starts.
+  '/etc/malloc.conf',
+  '/etc/_rjem_malloc.conf',
+  '/proc/sys/vm/overcommit_memory',
+  '/sys/kernel/mm/transparent_hugepage/enabled',
   '/etc/passwd',
   '/etc/group',
   '/usr/lib',
@@ -813,11 +843,18 @@ function resolveSlot(
   dirfd: string | undefined,
   path: string | null,
   relativeBase: boolean,
+  cwd: string | null,
 ): string | null | undefined {
   if (path === null) return null;
   if (PROC_MAGIC_PARENT.test(path.replace(/\/{2,}/g, '/'))) return null;
   if (path.startsWith('/')) return normalPath(path);
-  const base = relativeBase ? fdPath(dirfd) : null;
+  // A plain (non-*at) call resolves against the process cwd, known only from
+  // an earlier chdir or AT_FDCWD<cwd> of the same pid; otherwise fail closed.
+  if (!relativeBase)
+    return cwd !== null && path !== ''
+      ? normalPath(posix.join(cwd, path))
+      : null;
+  const base = fdPath(dirfd);
   if (base === null) return null;
   if (!base.startsWith('/')) return path === '' ? undefined : null;
   return normalPath(path === '' ? base : posix.join(base, path));
@@ -826,6 +863,7 @@ function resolveSlot(
 function resolvedPaths(
   operation: string,
   args: string,
+  cwd: string | null,
 ): readonly (string | null | undefined)[] | undefined {
   const slots = FILE_PATH_SLOTS[operation];
   if (!slots) return undefined;
@@ -837,9 +875,9 @@ function resolvedPaths(
       return [];
     }
     if (slot === 'p')
-      return [resolveSlot(undefined, quotedPath(tokens[index++]), false)];
+      return [resolveSlot(undefined, quotedPath(tokens[index++]), false, cwd)];
     const dirfd = tokens[index++];
-    return [resolveSlot(dirfd, quotedPath(tokens[index++]), true)];
+    return [resolveSlot(dirfd, quotedPath(tokens[index++]), true, cwd)];
   });
 }
 
@@ -847,6 +885,8 @@ interface ClassifyContext {
   readonly allowed: AllowedAccess;
   readonly pid: number | null;
   readonly pids: ReadonlySet<number>;
+  /** The calling pid's working directory when the trace has shown it. */
+  readonly cwd: string | null;
 }
 
 function isWrite(operation: string, args: string): boolean {
@@ -925,6 +965,70 @@ function isAllowedProc(
   return !write && PROC_DIRS.has(entry);
 }
 
+/**
+ * Files directory walkers look for in every ancestor of the folder they search:
+ * ripgrep (VS Code search and file discovery) reads the ignore files of all
+ * parent directories and checks each one for a repository marker.
+ */
+const ANCESTOR_IGNORE_FILES = [
+  '.gitignore',
+  '.ignore',
+  '.rgignore',
+  '.jj',
+  '.git',
+  '.git/info/exclude',
+];
+/** Node module resolution stats `node_modules/[@scope/]name` in every ancestor of the install. */
+const NODE_MODULE_PROBE = /^(.*)\/node_modules(?:\/(?:@[^/]+\/)?[^/]+)?$/;
+/**
+ * Agent-customization folders (user level) that the chat features look for
+ * under the home directory. Only metadata of the folders themselves is probed
+ * (never their subtrees): they may hold credentials, so touching anything
+ * below them, even a stat, stays unexpected.
+ */
+const HOME_CUSTOMIZATION_DIRS = [
+  '.claude',
+  '.copilot',
+  '.agents',
+  '.vscode/agent-plugins',
+];
+/** Home files VS Code reads for its runtime arguments (read-only, no secrets). */
+const HOME_RUNTIME_FILES = ['.vscode/argv.json'];
+
+/**
+ * Read-only probes of locations around the allowed roots that benign host
+ * software walks while it works inside them. Each is a specific name below an
+ * ancestor of a root or below the home directory, never a blanket allowance,
+ * and the denylist has already been applied by the caller.
+ */
+function isAllowedProbe(
+  path: string,
+  operation: string,
+  write: boolean,
+  context: ClassifyContext,
+): boolean {
+  if (write) return false;
+  const { open, readOnly = [], home: configuredHome } = context.allowed;
+  const roots = [...open, ...readOnly];
+  const home = normalPath((configuredHome ?? homedir()).replace(/\\/g, '/'));
+  if (HOME_RUNTIME_FILES.some((file) => path === `${home}/${file}`))
+    return true;
+  const metadata = METADATA_CALLS.has(operation);
+  if (metadata) {
+    if (HOME_CUSTOMIZATION_DIRS.some((dir) => path === `${home}/${dir}`))
+      return true;
+    const node = NODE_MODULE_PROBE.exec(path);
+    if (node?.[1] !== undefined && isAncestorOf(node[1] || '/', roots))
+      return true;
+  }
+  if (!metadata && !operation.startsWith('open')) return false;
+  return ANCESTOR_IGNORE_FILES.some(
+    (name) =>
+      path.endsWith(`/${name}`) &&
+      isAncestorOf(path.slice(0, -name.length - 1) || '/', roots),
+  );
+}
+
 function isAllowedFile(
   path: string,
   operation: string,
@@ -939,6 +1043,7 @@ function isAllowedFile(
     isAncestorOf(path, [...open, ...readOnly])
   )
     return true;
+  if (isAllowedProbe(path, operation, write, context)) return true;
   return isAllowedProc(path, operation, write, context);
 }
 
@@ -970,7 +1075,7 @@ function classifyUnexpected(
   if (OTHER_FILE_CALLS.has(operation) && !(operation in FILE_PATH_SLOTS))
     return true;
   if (channel === 'file' || channel === 'exec') {
-    const paths = resolvedPaths(operation, args);
+    const paths = resolvedPaths(operation, args, context.cwd);
     if (!paths) return undefined;
     if (paths.some((path) => path === null)) return true;
     const write = isWrite(operation, args);
@@ -983,6 +1088,14 @@ function classifyUnexpected(
     });
   }
   if (channel !== 'network') return undefined;
+  // Receiving and socket queries put nothing on the wire; any address they show
+  // is the sender's or the local one (strace -yy decodes it), not a destination.
+  if (RECEIVE_CALLS.has(operation) || SOCKET_STATE_CALLS.has(operation))
+    return false;
+  // connect() on a datagram socket only records the default peer in the kernel
+  // (Chromium uses it to discover its local route); a later send is classified
+  // on its own by the peer.
+  if (operation === 'connect' && isDatagramSocket(args)) return false;
   const ipv4 = /inet_addr\("([^"]+)"\)/.exec(args)?.[1];
   if (ipv4) return !ipv4.startsWith('127.');
   const ipv6 = /inet_pton\(AF_INET6, "([^"]+)"/.exec(args)?.[1];
@@ -994,13 +1107,22 @@ function classifyUnexpected(
   const connected = connectedPeerUnexpected(args, context);
   if (connected !== undefined) return connected;
   // An outgoing attempt without a proven destination cannot certify an empty violation set.
-  return ['connect', 'sendto', 'sendmsg'].includes(operation)
+  // Known limitation: write/writev on a socket fd are not in %network, so a
+  // plain write() to a connected socket is never traced (not added on purpose:
+  // %file/%desc tracing of every write would flood the trace).
+  return ['connect', 'sendto', 'sendmsg', 'sendmmsg'].includes(operation)
     ? true
     : undefined;
 }
 
 /** -yy decorates the socket fd with its peer: `3<UNIX-STREAM:[1->2,"/run/user/1000/bus"]>`. */
 const SOCKET_FD = /^\d+<([A-Za-z0-9]+)(?:-[A-Z]+)?:\[(.*?)\]>/;
+
+/** The fd is a UDP socket as strace -yy decorates it, such as `5<UDPv6:[123]>`. */
+function isDatagramSocket(args: string): boolean {
+  const family = SOCKET_FD.exec(args)?.[1];
+  return family !== undefined && /^UDP(?:v6)?$/.test(family);
+}
 
 /**
  * Addressless sends on a connected socket reach the peer recorded on the fd.
@@ -1050,6 +1172,149 @@ export interface ParsedStrace {
   readonly truncated: boolean;
 }
 
+interface CwdRecord {
+  dir: string | undefined;
+}
+
+interface CloneEntry {
+  readonly parent: number;
+  /** CLONE_FS or CLONE_THREAD: the child and its parent share one cwd. */
+  readonly shares: boolean;
+  /** The flags could not be read: whether the cwd is shared or copied is unknown. */
+  readonly unknown: boolean;
+  created: boolean;
+}
+
+/** The comma-free `flags=A|B` list of a clone/clone3 call. */
+function cloneFlags(args: string): string | undefined {
+  return /flags=([A-Za-z0-9_|]+)/.exec(args)?.[1];
+}
+
+function sharesCwd(flags: string | undefined): boolean {
+  return (
+    flags !== undefined &&
+    flags
+      .split('|')
+      .some((flag) => flag === 'CLONE_FS' || flag === 'CLONE_THREAD')
+  );
+}
+
+/**
+ * Keeps the cwd that plain (non-*at) calls resolve against, per thread id.
+ * strace -yy prints the calling thread's cwd as `AT_FDCWD</dir>` (the truth at
+ * that moment); a successful chdir sets it; anything not provable (an
+ * unfinished chdir) forgets it so that relative paths fail closed. A child made
+ * with CLONE_FS or CLONE_THREAD shares its parent's mutable record, any other
+ * child copies it. A child's lines can precede the parent's `clone resumed`
+ * line, so a pre-scan of the whole log finds each child's parent and the
+ * record is created when the child is first seen (the parent is blocked inside
+ * clone until then), or at the clone result, whichever comes first.
+ */
+class CwdTracker {
+  private readonly records = new Map<number, CwdRecord>();
+  private readonly pending = new Map<number, CloneEntry[]>();
+  private readonly byLine = new Map<number, CloneEntry>();
+
+  constructor(lines: readonly (StraceLine | null)[]) {
+    const flags = new Map<number, string | undefined>();
+    lines.forEach((line, index) => {
+      if (
+        !line ||
+        line.pid === null ||
+        !PROCESS_SPAWN_CALLS.has(line.operation)
+      )
+        return;
+      if (line.unfinished) {
+        flags.set(line.pid, cloneFlags(line.args));
+        return;
+      }
+      const own = line.resumed ? flags.get(line.pid) : cloneFlags(line.args);
+      flags.delete(line.pid);
+      const child = /^(\d+)/.exec(line.result)?.[1];
+      if (child === undefined) return;
+      const entry: CloneEntry = {
+        parent: line.pid,
+        shares: sharesCwd(own),
+        // fork and vfork take no flags: always a copy.
+        unknown:
+          own === undefined &&
+          line.operation !== 'fork' &&
+          line.operation !== 'vfork',
+        created: false,
+      };
+      this.byLine.set(index, entry);
+      const queue = this.pending.get(Number(child)) ?? [];
+      queue.push(entry);
+      this.pending.set(Number(child), queue);
+    });
+  }
+
+  private recordFor(pid: number): CwdRecord {
+    let record = this.records.get(pid);
+    if (!record) {
+      record = { dir: undefined };
+      this.records.set(pid, record);
+    }
+    return record;
+  }
+
+  private materialize(entry: CloneEntry, child: number): void {
+    entry.created = true;
+    const parent = this.lookup(entry.parent) ?? this.recordFor(entry.parent);
+    // Unreadable flags fail closed: the child's cwd is unknown, never copied.
+    this.records.set(
+      child,
+      entry.shares ? parent : { dir: entry.unknown ? undefined : parent.dir },
+    );
+  }
+
+  private lookup(pid: number): CwdRecord | undefined {
+    const known = this.records.get(pid);
+    if (known) return known;
+    const entry = this.pending.get(pid)?.find((item) => !item.created);
+    if (!entry) return undefined;
+    this.materialize(entry, pid);
+    return this.records.get(pid);
+  }
+
+  /** The thread's cwd, or null when it is not provable. */
+  cwd(pid: number | null): string | null {
+    return pid === null ? null : (this.lookup(pid)?.dir ?? null);
+  }
+
+  observe(line: StraceLine): void {
+    if (line.pid === null || !line.args.startsWith('AT_FDCWD<')) return;
+    const dir = fdPath(splitArgs(line.args)[0]);
+    if (dir?.startsWith('/'))
+      (this.lookup(line.pid) ?? this.recordFor(line.pid)).dir = normalPath(dir);
+  }
+
+  follow(line: StraceLine, index: number): void {
+    const { pid } = line;
+    if (pid === null) return;
+    if (line.operation === 'exit' || line.operation === 'exit_group') {
+      this.records.delete(pid);
+      return;
+    }
+    if (line.operation === 'chdir' && !line.resumed) {
+      const record = this.lookup(pid) ?? this.recordFor(pid);
+      const target = quotedPath(splitArgs(line.args)[0]);
+      const base = record.dir;
+      if (line.unfinished || line.result.startsWith('-1')) {
+        if (line.unfinished) record.dir = undefined;
+      } else if (target?.startsWith('/')) record.dir = normalPath(target);
+      else if (target && base !== undefined)
+        record.dir = normalPath(posix.join(base, target));
+      else record.dir = undefined;
+      return;
+    }
+    const entry = this.byLine.get(index);
+    const child = /^(\d+)/.exec(line.result)?.[1];
+    if (!entry || child === undefined || entry.created) return;
+    this.materialize(entry, Number(child));
+  }
+}
+
 export function parseStraceLog(
   text: string,
   options: {
@@ -1070,25 +1335,39 @@ export function parseStraceLog(
     const pid = /^\s*(\d+)\s/.exec(line)?.[1];
     if (pid) pids.add(Number(pid));
   }
-  for (const line of lines) {
+  const parsedLines = lines.map(parseStraceLine);
+  const cwds = new CwdTracker(parsedLines);
+  for (const [index, parsed] of parsedLines.entries()) {
+    if (!parsed) continue;
+    // The unfinished half is the one classified event of an interrupted call;
+    // its resumed tail only completes the cwd bookkeeping (clone results).
+    if (parsed.resumed) {
+      cwds.follow(parsed, index);
+      continue;
+    }
     if (events.length >= maxEvents) {
       truncated = true;
       break;
     }
-    const parsed = parseStraceLine(line);
-    if (!parsed) continue;
     const channel = channelFor(parsed.operation);
     if (!channel) continue;
     const failed = parsed.result.startsWith('-1');
     const attempted = parsed.unfinished || parsed.result.startsWith('?');
+    cwds.observe(parsed);
     const unexpected = classifyUnexpected(
       channel,
       parsed.operation,
       parsed.args,
-      options.allowed && !parsed.resumed
-        ? { allowed: options.allowed, pid: parsed.pid, pids }
+      options.allowed
+        ? {
+            allowed: options.allowed,
+            pid: parsed.pid,
+            pids,
+            cwd: cwds.cwd(parsed.pid),
+          }
         : undefined,
     );
+    cwds.follow(parsed, index);
     events.push({
       atMs: parsed.atMs,
       source: 'host-process-tree',
@@ -1116,7 +1395,9 @@ function controlsFromEvents(
     network: events.some(
       (event) =>
         event.channel === 'network' &&
-        ['connect', 'sendto', 'sendmsg', 'socket'].includes(event.operation),
+        ['connect', 'sendto', 'sendmsg', 'sendmmsg', 'socket'].includes(
+          event.operation,
+        ),
     ),
     file: events.some(
       (event) => event.channel === 'file' && event.outcome === 'failed',

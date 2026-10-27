@@ -21,6 +21,7 @@ export const UNCLASSIFIED_NETWORK_OPERATIONS = [
   'connect',
   'sendto',
   'sendmsg',
+  'sendmmsg',
 ] as const;
 
 /** What `captureComplete` covers: host syscalls and webview network attempts only. */

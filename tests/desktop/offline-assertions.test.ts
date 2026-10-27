@@ -125,6 +125,14 @@ test('an outgoing connect with no classification fails closed, so the clean resu
   assert.equal(unexpectedEvents([unclassifiedConnect]).length, 0);
 });
 
+test('sendmmsg without a classification is an unclassified outgoing attempt', () => {
+  const sendmmsg: SecurityEvent = {
+    ...unclassifiedConnect,
+    operation: 'sendmmsg',
+  };
+  assert.equal(unclassifiedNetworkEvents([sendmmsg]).length, 1);
+});
+
 test('the recorded scope statements never claim absolute proof', () => {
   assert.match(LOOPBACK_SCOPE, /expected host runtime traffic/);
   assert.match(

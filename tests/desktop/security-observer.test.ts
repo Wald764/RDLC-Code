@@ -23,6 +23,7 @@ import {
   WINDOWS_BLOCKING_REQUIREMENT,
   WINDOWS_CAPTURE_REQUIREMENT,
 } from './security-observer.js';
+import { unclassifiedNetworkEvents } from './offline-assertions.js';
 
 const TRACE = [
   '900 1700000000.100000 connect(3, {sa_family=AF_INET, sin_port=htons(1), sin_addr=inet_addr("127.0.0.1")}, 16) = -1 ECONNREFUSED (Connection refused)',
@@ -77,6 +78,47 @@ test('strace parsing bounds events and never emits payloads or identities', () =
   assert.equal(parsed.truncated, true);
   assert.doesNotMatch(JSON.stringify(parsed.events), /bob|A{8}/i);
   assert.equal(parsed.events[0]?.target, '<path>/report.rdlc');
+});
+
+test('a pid-prefixed unfinished+resumed call yields exactly one classified event', () => {
+  const allowed = {
+    open: ['/work/fixture'],
+    exec: ['/opt/vscode'],
+    home: '/home/alice',
+  };
+  const connect = [
+    '900 1700000000.1 connect(3<TCP:[1->2]>, {sa_family=AF_INET, sin_port=htons(80), sin_addr=inet_addr("127.0.0.1")}, 16 <unfinished ...>',
+    '901 1700000000.15 getpid() = 901',
+    '900 1700000000.2 <... connect resumed>) = -1 EINPROGRESS (Operation now in progress)',
+  ].join('\n');
+  const net = parseStraceLog(connect, { allowed });
+  assert.equal(net.events.length, 1);
+  assert.equal(net.events[0]?.operation, 'connect');
+  assert.equal(net.events[0]?.outcome, 'attempted');
+  assert.equal(net.events[0]?.unexpected, false);
+  assert.equal(unclassifiedNetworkEvents(net.events).length, 0);
+
+  const open = [
+    '900 1700000000.1 openat(AT_FDCWD</work/fixture>, "/etc/shadow", O_RDONLY <unfinished ...>',
+    '900 1700000000.2 <... openat resumed>) = 3</etc/shadow>',
+  ].join('\n');
+  const file = parseStraceLog(open, { allowed });
+  assert.equal(file.events.length, 1);
+  assert.equal(file.events[0]?.unexpected, true);
+
+  // A resumed line is no event: it neither counts toward maxEvents nor truncates.
+  const counted = parseStraceLog(`${connect}\n${open}`, {
+    allowed,
+    maxEvents: 2,
+  });
+  assert.equal(counted.events.length, 2);
+  assert.equal(counted.truncated, false);
+  const capped = parseStraceLog(`${connect}\n${open}`, {
+    allowed,
+    maxEvents: 1,
+  });
+  assert.equal(capped.events.length, 1);
+  assert.equal(capped.truncated, true);
 });
 
 test('URL sanitization keeps only the origin', () => {
@@ -500,6 +542,7 @@ test('unrecognized outgoing network addresses fail closed rather than disappear 
     'connect(3, {sa_family=AF_FUTURE, destination="unknown"}, 16) = -1 EINVAL (Invalid argument)',
     'sendto(3, "payload", 7, 0, NULL, 0) = 7',
     'sendmsg(3, {msg_name=NULL, msg_namelen=0}, 0) = 7',
+    'sendmmsg(3, [{msg_hdr={msg_name=NULL, msg_namelen=0}, msg_len=7}], 1, 0) = 1',
   ]) {
     const { events } = parseStraceLog(call(line), { allowed: ALLOWED });
     assert.equal(events.length, 1, line);
@@ -513,6 +556,10 @@ test('addressless sends are classified by the connected peer -yy records on the 
     ['sendto(3<UNIX-STREAM:[272961->272962]>, "x", 1, 0, NULL, 0) = 1', false],
     [
       'sendmsg(5<UNIX-STREAM:[10->11,"/run/user/1000/bus"]>, {msg_name=NULL, msg_namelen=0}, 0) = 7',
+      false,
+    ],
+    [
+      'sendmmsg(5<UNIX-STREAM:[10->11,"/run/user/1000/bus"]>, [{msg_hdr={msg_name=NULL, msg_namelen=0}, msg_len=7}], 1, 0) = 1',
       false,
     ],
     [
@@ -1145,4 +1192,508 @@ test('the runner sweep removes tagged rules of a killed run and nothing else', (
       }),
     /denied/,
   );
+});
+
+test('strace does not trace the receive calls, which are never an outbound attempt', () => {
+  const joined = STRACE_ARGS.join(' ');
+  assert.match(joined, /-e trace=%network,%file,%process(?: |$)/);
+  assert.match(joined, /-e trace=!recvfrom,recvmsg,recvmmsg(?: |$)/);
+  // Sends, connects and sockets stay traced: the positive controls depend on them.
+  assert.doesNotMatch(joined, /!(?:[a-z]+,)*(?:send|connect|socket|bind)/);
+});
+
+test('receive calls and socket queries are never unexpected, whatever peer or address they show', () => {
+  const peer = '9<TCP:[10.0.0.2:4000->203.0.113.9:443]>';
+  const cases: [string, boolean][] = [
+    [`recvfrom(${peer}, "x", 1, MSG_PEEK, NULL, NULL) = 1`, false],
+    [
+      `recvfrom(${peer}, 0x7ffd, 1, MSG_PEEK, NULL, NULL) = -1 EAGAIN (x)`,
+      false,
+    ],
+    [`recvfrom(${peer}, <unfinished ...>`, false],
+    [
+      'recvfrom(3, "x", 1, 0, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("203.0.113.9")}, [16]) = 1',
+      false,
+    ],
+    [
+      'recvmsg(8<UDPv6:[[2a01::1]:4000->[2001:db8::1]:443]>, {msg_namelen=128}, 0) = 12',
+      false,
+    ],
+    ['recvmmsg(8<UDP:[0.0.0.0:5353]>, 0x7ffd, 4, 0, NULL) = 1', false],
+    [
+      'recvmsg(5<UNIX-STREAM:[10->11,"/var/run/docker.sock"]>, {msg_namelen=0}, 0) = 3',
+      false,
+    ],
+    [`getsockopt(${peer}, SOL_SOCKET, SO_ERROR, [0], [4]) = 0`, false],
+    [
+      'getsockname(8<UDPv6:[[2a01::1]:4000->[2001:db8::1]:443]>, {sa_family=AF_INET6, sin6_port=htons(4000), inet_pton(AF_INET6, "2a01::1", &sin6_addr)}, [28]) = 0',
+      false,
+    ],
+    [
+      'getsockname(3<TCP:[1]>, {sa_family=AF_INET, sin_port=htons(4000), sin_addr=inet_addr("192.0.2.7")}, [16]) = 0',
+      false,
+    ],
+    [`getpeername(${peer}, {sa_family=AF_INET}, [16]) = 0`, false],
+    [`setsockopt(${peer}, SOL_TCP, TCP_NODELAY, [1], 4) = 0`, false],
+    [`shutdown(${peer}, SHUT_RDWR) = 0`, false],
+    // Transmitting on the very same socket is still judged by its peer.
+    [`sendto(${peer}, "x", 1, 0, NULL, 0) = 1`, true],
+    [`sendmsg(${peer}, {msg_name=NULL, msg_namelen=0}, 0) = 1`, true],
+    [
+      `sendmmsg(${peer}, [{msg_hdr={msg_name=NULL, msg_namelen=0}, msg_len=1}], 1, 0) = 1`,
+      true,
+    ],
+    [
+      'sendmmsg(4<UDP:[127.0.0.1:40213->127.0.0.1:42403]>, [{msg_hdr={msg_name=NULL, msg_namelen=0}, msg_len=1}], 1, 0) = 1',
+      false,
+    ],
+    [
+      'sendto(3, "x", 1, 0, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("203.0.113.9")}, 16) = 1',
+      true,
+    ],
+  ];
+  for (const [text, expected] of cases)
+    assert.equal(classify(text), expected, text);
+  // The channel and the operation are still recorded: only the verdict changes.
+  const { events } = parseStraceLog(
+    call(`recvfrom(${peer}, "x", 1, 0, NULL, NULL) = 1`),
+    { allowed: ALLOWED },
+  );
+  assert.deepEqual(
+    events.map((event) => [event.channel, event.operation]),
+    [['network', 'recvfrom']],
+  );
+});
+
+test('connect on a UDP socket sends no packet, but TCP connects and later sends are still judged', () => {
+  const probe = (fd: string, address: string, tail = '= 0') =>
+    `connect(${fd}, ${address}, 28) ${tail}`;
+  const v6 =
+    '{sa_family=AF_INET6, sin6_port=htons(443), sin6_flowinfo=htonl(0), inet_pton(AF_INET6, "2001:4860:4860::8888", &sin6_addr), sin6_scope_id=0}';
+  const v4 =
+    '{sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}';
+  const cases: [string, boolean][] = [
+    // Chromium's route discovery, as strace -yy decorates the unconnected fd.
+    [probe('5<UDPv6:[123]>', v6), false],
+    [probe('5<UDPv6:[123]>', v6, '= -1 ENETUNREACH (x)'), false],
+    [probe('5<UDP:[0.0.0.0:48888]>', v4), false],
+    [`connect(5<UDPv6:[123]>, ${v6} <unfinished ...>`, false],
+    // Everything that does put a connection on the wire stays unexpected.
+    [probe('5<TCPv6:[123]>', v6), true],
+    [probe('5<TCP:[123]>', v4), true],
+    [probe('5', v6), true],
+    [probe('5<UNIX-STREAM:[123]>', v4), true],
+    [probe('5<NETLINK:[ROUTE:1]>', v6), true],
+    // A later send on the connected UDP socket is classified by its peer.
+    [
+      'sendto(5<UDPv6:[[2a01::1]:43791->[2001:4860:4860::8888]:443]>, "x", 1, 0, NULL, 0) = 1',
+      true,
+    ],
+    [
+      'sendto(5<UDP:[127.0.0.1:43791->127.0.0.53:53]>, "x", 1, 0, NULL, 0) = 1',
+      false,
+    ],
+    ['sendto(5<UDP:[0.0.0.0:48888]>, "x", 1, 0, NULL, 0) = 1', true],
+    [
+      'sendto(5<UDPv6:[123]>, "x", 1, 0, {sa_family=AF_INET6, sin6_port=htons(443), inet_pton(AF_INET6, "2001:4860:4860::8888", &sin6_addr)}, 28) = 1',
+      true,
+    ],
+  ];
+  for (const [text, expected] of cases)
+    assert.equal(classify(text), expected, text);
+});
+
+test('read-only runtime allowances cover the TLS stores, policy files and allocator hints seen on Linux', () => {
+  const cases: [string, boolean][] = [
+    ['openat(AT_FDCWD</>, "/etc/ssl/cert.pem", O_RDONLY) = 3', false],
+    [
+      'openat(AT_FDCWD</>, "/etc/ssl/certs/ca-certificates.crt", O_RDONLY) = 3',
+      false,
+    ],
+    [
+      'openat(AT_FDCWD</>, "/usr/share/ca-certificates/mozilla/ISRG_Root_X1.crt", O_RDONLY) = 3',
+      false,
+    ],
+    [
+      'openat(AT_FDCWD</>, "/etc/vscode/policy.json", O_RDONLY) = -1 ENOENT (x)',
+      false,
+    ],
+    [
+      'statx(AT_FDCWD</>, "/etc/github-copilot/managed-settings.json", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)',
+      false,
+    ],
+    ['readlink("/etc/_rjem_malloc.conf", 0x7ffd, 4096) = -1 ENOENT (x)', false],
+    ['readlink("/etc/malloc.conf", 0x7ffd, 4096) = -1 ENOENT (x)', false],
+    ['open("/proc/sys/vm/overcommit_memory", O_RDONLY) = 3', false],
+    [
+      'open("/sys/kernel/mm/transparent_hugepage/enabled", O_RDONLY) = 3',
+      false,
+    ],
+    // Read-only: no write, creation or removal below any of them.
+    ['openat(AT_FDCWD</>, "/etc/ssl/cert.pem", O_WRONLY|O_TRUNC) = 3', true],
+    ['openat(AT_FDCWD</>, "/etc/ssl/cert.pem", O_RDWR) = 3', true],
+    ['unlink("/etc/ssl/cert.pem") = 0', true],
+    [
+      'openat(AT_FDCWD</>, "/usr/share/ca-certificates/x.crt", O_WRONLY|O_CREAT, 0644) = 3',
+      true,
+    ],
+    ['open("/etc/vscode/policy.json", O_WRONLY|O_CREAT, 0644) = 3', true],
+    ['open("/proc/sys/vm/overcommit_memory", O_WRONLY) = 3', true],
+    [
+      'open("/sys/kernel/mm/transparent_hugepage/enabled", O_WRONLY|O_TRUNC) = 3',
+      true,
+    ],
+    // Specific files and directories, never their neighbours.
+    ['openat(AT_FDCWD</>, "/etc/ssl/private/server.key", O_RDONLY) = 3', true],
+    ['openat(AT_FDCWD</>, "/etc/ssl/openssl.cnf", O_RDONLY) = 3', true],
+    ['openat(AT_FDCWD</>, "/usr/share/doc/x", O_RDONLY) = 3', true],
+    ['open("/etc/vscode/other.json", O_RDONLY) = 3', true],
+    ['open("/proc/sys/vm/swappiness", O_RDONLY) = 3', true],
+    ['open("/sys/kernel/mm/ksm/run", O_RDONLY) = 3', true],
+    ['open("/sys/kernel/mm/transparent_hugepage/defrag", O_RDONLY) = 3', true],
+  ];
+  for (const [text, expected] of cases)
+    assert.equal(classify(text), expected, text);
+});
+
+test('host software may probe ignore files and node_modules in the ancestors of the allowed roots, read-only', () => {
+  const cases: [string, boolean][] = [
+    // ripgrep: ignore files and repository markers of every ancestor.
+    ['stat("/work/.gitignore", {st_mode=S_IFREG|0644}) = 0', false],
+    ['stat("/.gitignore", 0x7ffd) = -1 ENOENT (x)', false],
+    ['stat("/.ignore", 0x7ffd) = -1 ENOENT (x)', false],
+    ['stat("/work/.rgignore", 0x7ffd) = -1 ENOENT (x)', false],
+    ['stat("/opt/.jj", 0x7ffd) = -1 ENOENT (x)', false],
+    ['stat("/work/.git", 0x7ffd) = -1 ENOENT (x)', false],
+    ['stat("/.git/info/exclude", 0x7ffd) = -1 ENOENT (x)', false],
+    [
+      'openat(AT_FDCWD</work/fixture>, "/work/.gitignore", O_RDONLY) = 3',
+      false,
+    ],
+    [
+      'openat(AT_FDCWD</work/fixture>, "/work/.git/info/exclude", O_RDONLY) = 3',
+      false,
+    ],
+    // Writes, removals and every other name stay unexpected.
+    [
+      'openat(AT_FDCWD</work/fixture>, "/work/.gitignore", O_WRONLY|O_CREAT, 0644) = 3',
+      true,
+    ],
+    [
+      'openat(AT_FDCWD</work/fixture>, "/work/.git/info/exclude", O_RDWR) = 3',
+      true,
+    ],
+    ['unlink("/work/.gitignore") = 0', true],
+    ['rename("/work/.gitignore", "/work/fixture/x") = 0', true],
+    [
+      'openat(AT_FDCWD</work/fixture>, "/work/.git/config", O_RDONLY) = 3',
+      true,
+    ],
+    ['openat(AT_FDCWD</work/fixture>, "/work/.git/HEAD", O_RDONLY) = 3', true],
+    ['stat("/work/.gitconfig", 0x7ffd) = 0', true],
+    ['stat("/work/gitignore", 0x7ffd) = 0', true],
+    // Only ancestors of an allowed root, not arbitrary directories.
+    ['stat("/etc/.gitignore", 0x7ffd) = -1 ENOENT (x)', true],
+    ['stat("/work/other/.gitignore", 0x7ffd) = -1 ENOENT (x)', true],
+    ['openat(AT_FDCWD</>, "/home/bob/.gitignore", O_RDONLY) = 3', true],
+    // The denylist still wins.
+    [`openat(AT_FDCWD</>, "${HOME}/.ssh/.gitignore", O_RDONLY) = 3`, true],
+    // Node module resolution: metadata of node_modules/[@scope/]name only.
+    [
+      'statx(AT_FDCWD</>, "/node_modules/@vscode/ripgrep-universal", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)',
+      false,
+    ],
+    [
+      'statx(AT_FDCWD</>, "/opt/node_modules/@vscode/ripgrep-universal", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)',
+      false,
+    ],
+    ['stat("/work/node_modules", 0x7ffd) = -1 ENOENT (x)', false],
+    ['stat("/work/node_modules/left-pad", 0x7ffd) = -1 ENOENT (x)', false],
+    [
+      'openat(AT_FDCWD</>, "/opt/node_modules/@vscode/ripgrep-universal", O_RDONLY) = 3',
+      true,
+    ],
+    [
+      'stat("/opt/node_modules/@vscode/ripgrep-universal/package.json", 0x7ffd) = 0',
+      true,
+    ],
+    ['stat("/etc/node_modules/left-pad", 0x7ffd) = -1 ENOENT (x)', true],
+    ['stat("/work/other/node_modules/left-pad", 0x7ffd) = -1 ENOENT (x)', true],
+    ['unlink("/work/node_modules/left-pad") = 0', true],
+  ];
+  for (const [text, expected] of cases)
+    assert.equal(classify(text), expected, text);
+  // With a read-only root, its ancestors are probed the same way.
+  const withInstall = { ...ALLOWED, readOnly: ['/srv/ci/vscode-1.0'] };
+  assert.equal(
+    classify('stat("/srv/ci/.gitignore", 0x7ffd) = 0', withInstall),
+    false,
+  );
+  assert.equal(
+    classify(
+      'stat("/srv/ci/node_modules/@vscode/ripgrep-universal", 0x7ffd) = 0',
+      withInstall,
+    ),
+    false,
+  );
+  assert.equal(
+    classify('stat("/srv/other/.gitignore", 0x7ffd) = 0', withInstall),
+    true,
+  );
+});
+
+test('user-level agent folders are probed by metadata only and argv.json is read-only', () => {
+  const cases: [string, boolean][] = [
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.claude", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
+      false,
+    ],
+    // Only the folders themselves: a stat of anything below them is unexpected.
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.claude/skills", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
+      true,
+    ],
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.claude/settings.json", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
+      true,
+    ],
+    [`stat("${HOME}/.claude/.credentials.json", 0x7ffd) = 0`, true],
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.copilot/mcp-config.json", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
+      true,
+    ],
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.agents/skills", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
+      true,
+    ],
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.copilot", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
+      false,
+    ],
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.agents", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
+      false,
+    ],
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.vscode/agent-plugins", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
+      false,
+    ],
+    [`access("${HOME}/.claude/agents", R_OK) = -1 ENOENT (x)`, true],
+    // Contents may hold credentials: opening or changing anything there is unexpected.
+    [
+      `openat(AT_FDCWD</>, "${HOME}/.claude/.credentials.json", O_RDONLY) = 3`,
+      true,
+    ],
+    [`openat(AT_FDCWD</>, "${HOME}/.copilot/config.json", O_RDONLY) = 3`, true],
+    [`openat(AT_FDCWD</>, "${HOME}/.claude", O_RDONLY|O_DIRECTORY) = 3`, true],
+    [`mkdir("${HOME}/.copilot/logs", 0755) = 0`, true],
+    [`inotify_add_watch(5, "${HOME}/.claude/skills", IN_ALL_EVENTS) = 1`, true],
+    // Other homes and sibling names are not covered.
+    [
+      'statx(AT_FDCWD</>, "/home/bob/.claude", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)',
+      true,
+    ],
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.claudex", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
+      true,
+    ],
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.vscode/other", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
+      true,
+    ],
+    // VS Code reads its runtime arguments; that file is read, never written.
+    [
+      `openat(AT_FDCWD</>, "${HOME}/.vscode/argv.json", O_RDONLY|O_CLOEXEC) = 3`,
+      false,
+    ],
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.vscode/argv.json", 0, STATX_ALL, 0x7ffd) = 0`,
+      false,
+    ],
+    [
+      `openat(AT_FDCWD</>, "${HOME}/.vscode/argv.json", O_WRONLY|O_CREAT, 0644) = 3`,
+      true,
+    ],
+    [`unlink("${HOME}/.vscode/argv.json") = 0`, true],
+    [
+      `openat(AT_FDCWD</>, "${HOME}/.vscode/extensions/x.js", O_RDONLY) = 3`,
+      true,
+    ],
+    // fstat on the opened descriptor resolves to the same allowed file.
+    [
+      `newfstatat(3<${HOME}/.vscode/argv.json>, "", {st_mode=S_IFREG|0644}, AT_EMPTY_PATH) = 0`,
+      false,
+    ],
+    // Credential stores and the config tree remain denied.
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.ssh/id_rsa", 0, STATX_ALL, 0x7ffd) = 0`,
+      true,
+    ],
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.config/git/config", 0, STATX_ALL, 0x7ffd) = 0`,
+      true,
+    ],
+  ];
+  for (const [text, expected] of cases)
+    assert.equal(classify(text), expected, text);
+});
+
+test('plain relative paths resolve against the cwd the trace has shown for that pid, else fail closed', () => {
+  const chdir = (path: string, tail = '= 0', pid = 900) =>
+    `${pid} 1700000000.0 chdir("${path}") ${tail}`;
+  const cases: [string, string, boolean][] = [
+    // chdir into an allowed root: relative stats and opens resolve inside it.
+    [
+      chdir('/work/fixture'),
+      'stat(".gitignore", 0x7ffd) = -1 ENOENT (x)',
+      false,
+    ],
+    [chdir('/work/fixture'), 'open("./", O_RDONLY|O_DIRECTORY) = 3', false],
+    [
+      chdir('/work/fixture'),
+      'stat("./.git/info/exclude", 0x7ffd) = -1 ENOENT (x)',
+      false,
+    ],
+    [chdir('/work/fixture'), 'stat("./", 0x7ffd) = 0', false],
+    // ... but a relative path that leaves the root is judged where it lands.
+    [chdir('/work/fixture'), 'stat("../../etc/hostname", 0x7ffd) = 0', true],
+    [chdir('/work/fixture'), 'open("../../etc/hostname", O_RDONLY) = 3', true],
+    [
+      chdir('/work/fixture'),
+      'open("new.txt", O_WRONLY|O_CREAT, 0644) = 3',
+      false,
+    ],
+    [
+      chdir('/opt/vscode'),
+      'open("new.txt", O_WRONLY|O_CREAT, 0644) = 3',
+      false,
+    ],
+    // A cwd outside the roots, or a denied one, gives no allowance.
+    [chdir('/etc'), 'open("hostname", O_RDONLY) = 3', true],
+    [chdir(`${HOME}/.ssh`), 'open("id_rsa", O_RDONLY) = 3', true],
+    // AT_FDCWD<dir> of an earlier call is the cwd too.
+    [
+      '900 1700000000.0 openat(AT_FDCWD</work/fixture>, "a", O_RDONLY) = 3',
+      'stat("b", 0x7ffd) = 0',
+      false,
+    ],
+    [
+      '900 1700000000.0 openat(AT_FDCWD</etc>, "a", O_RDONLY) = 3',
+      'stat("hostname", 0x7ffd) = 0',
+      true,
+    ],
+    // A relative chdir is joined to the known cwd.
+    [
+      `${chdir('/work/fixture')}\n${chdir('sub')}`,
+      'open("x", O_RDONLY) = 3',
+      false,
+    ],
+    [
+      `${chdir('/work/fixture')}\n${chdir('../../etc')}`,
+      'open("hostname", O_RDONLY) = 3',
+      true,
+    ],
+    // A failed chdir keeps the previous cwd; an unfinished one is not provable.
+    [
+      `${chdir('/work/fixture')}\n${chdir('/etc', '= -1 EACCES (x)')}`,
+      'open("x", O_RDONLY) = 3',
+      false,
+    ],
+    [
+      `${chdir('/work/fixture')}\n900 1700000000.0 chdir("/etc" <unfinished ...>`,
+      'open("x", O_RDONLY) = 3',
+      true,
+    ],
+    // No cwd shown yet, or shown for another pid: fail closed.
+    ['', 'open("x", O_RDONLY) = 3', true],
+    [chdir('/work/fixture', '= 0', 901), 'open("x", O_RDONLY) = 3', true],
+    // A child inherits the cwd of its parent at clone time.
+    [
+      `${chdir('/work/fixture')}\n900 1700000000.1 clone3({flags=CLONE_VM}, 88) = 901`,
+      '901 1700000000.2 open("x", O_RDONLY) = 3',
+      false,
+    ],
+    [
+      `${chdir('/etc')}\n900 1700000000.1 clone3({flags=CLONE_VM}, 88) = 901`,
+      '901 1700000000.2 open("x", O_RDONLY) = 3',
+      true,
+    ],
+    [
+      `${chdir('/work/fixture')}\n900 1700000000.1 clone3({flags=CLONE_VM}, 88) = -1 EAGAIN (x)`,
+      '901 1700000000.2 open("x", O_RDONLY) = 3',
+      true,
+    ],
+    // CLONE_FS children share the parent's cwd: a chdir in either is seen by both.
+    [
+      `${chdir('/work/fixture')}\n900 1700000000.1 clone(child_stack=NULL, flags=CLONE_VM|CLONE_FS|SIGCHLD) = 901\n${chdir('/etc', '= 0', 901)}`,
+      '900 1700000000.3 open("hostname", O_RDONLY) = 3',
+      true,
+    ],
+    [
+      `${chdir('/etc')}\n900 1700000000.1 clone(child_stack=NULL, flags=CLONE_VM|CLONE_FS|SIGCHLD) = 901\n${chdir('/work/fixture', '= 0', 901)}`,
+      '900 1700000000.3 open("x", O_RDONLY) = 3',
+      false,
+    ],
+    [
+      `${chdir('/etc')}\n900 1700000000.1 clone3({flags=CLONE_VM|CLONE_THREAD|CLONE_FS}, 88) = 901\n${chdir('/work/fixture', '= 0', 901)}`,
+      '900 1700000000.3 open("x", O_RDONLY) = 3',
+      false,
+    ],
+    // Without CLONE_FS the child gets a copy: later chdirs stay private.
+    [
+      `${chdir('/work/fixture')}\n900 1700000000.1 clone(child_stack=NULL, flags=CLONE_VM|SIGCHLD) = 901\n${chdir('/etc', '= 0', 901)}`,
+      '900 1700000000.3 open("x", O_RDONLY) = 3',
+      false,
+    ],
+    [
+      `${chdir('/work/fixture')}\n900 1700000000.1 fork() = 901\n${chdir('/etc', '= 0', 900)}`,
+      '901 1700000000.3 open("x", O_RDONLY) = 3',
+      false,
+    ],
+    // The child's lines may precede the parent's `clone resumed` line.
+    [
+      `${chdir('/work/fixture')}\n900 1700000000.1 clone(child_stack=NULL, flags=CLONE_VM|SIGCHLD <unfinished ...>\n901 1700000000.15 getpid() = 901\n900 1700000000.2 <... clone resumed>) = 901`,
+      '901 1700000000.3 open("x", O_RDONLY) = 3',
+      false,
+    ],
+    [
+      `${chdir('/etc')}\n900 1700000000.1 clone(child_stack=NULL, flags=CLONE_VM|SIGCHLD <unfinished ...>\n${chdir('/work/fixture', '= 0', 901)}\n900 1700000000.2 <... clone resumed>) = 901`,
+      '901 1700000000.3 open("x", O_RDONLY) = 3',
+      false,
+    ],
+    [
+      `${chdir('/work/fixture')}\n900 1700000000.1 clone(child_stack=NULL, flags=CLONE_VM|CLONE_FS|SIGCHLD <unfinished ...>\n${chdir('/etc', '= 0', 901)}\n900 1700000000.2 <... clone resumed>) = 901`,
+      '900 1700000000.3 open("hostname", O_RDONLY) = 3',
+      true,
+    ],
+    // A child of an unknown cwd (shared or copied) fails closed.
+    [
+      '900 1700000000.1 clone(child_stack=NULL, flags=CLONE_VM|CLONE_FS|SIGCHLD) = 901',
+      '901 1700000000.3 open("x", O_RDONLY) = 3',
+      true,
+    ],
+    [
+      '900 1700000000.1 clone(child_stack=NULL, flags=SIGCHLD <unfinished ...>\n900 1700000000.2 <... clone resumed>) = 901',
+      '901 1700000000.3 open("x", O_RDONLY) = 3',
+      true,
+    ],
+    // Unreadable clone flags: the child's cwd is unknown, never copied.
+    [
+      `${chdir('/work/fixture')}\n900 1700000000.1 clone3(0x7ffd1234, 88) = 901`,
+      '901 1700000000.3 open("x", O_RDONLY) = 3',
+      true,
+    ],
+    // An empty path is not a plain relative path.
+    [chdir('/work/fixture'), 'stat("", 0x7ffd) = -1 ENOENT (x)', true],
+  ];
+  for (const [extra, text, expected] of cases) {
+    const line = /^\d+ /.test(text) ? text : call(text);
+    const { events } = parseStraceLog(
+      [extra, line].filter(Boolean).join('\n'),
+      {
+        allowed: ALLOWED,
+      },
+    );
+    assert.equal(events.at(-1)?.unexpected, expected, `${extra} => ${text}`);
+  }
 });
