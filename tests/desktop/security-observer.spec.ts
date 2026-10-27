@@ -16,6 +16,10 @@ import {
   type DesktopDriver,
 } from './driver.js';
 import {
+  hostObserverSkipReason,
+  hostObserverUnsupported,
+} from './host-observer-scope.js';
+import {
   createSecurityObserver,
   detectSecurityCapability,
   enableHostBlocking,
@@ -348,6 +352,7 @@ interface ProfileRecord {
 }
 
 test('security observer: real trust states, host tree and webview attempts fail closed', async () => {
+  test.skip(hostObserverUnsupported(), hostObserverSkipReason() ?? '');
   const root = process.env.RDLC_DESKTOP_ROOT ?? process.cwd();
   const artifacts = resolve(
     process.env.RDLC_DESKTOP_ARTIFACT_DIR ??

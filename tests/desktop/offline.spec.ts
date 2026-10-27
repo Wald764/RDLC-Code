@@ -73,6 +73,10 @@ import {
   type DesktopDriver,
 } from './driver.js';
 import {
+  hostObserverSkipReason,
+  hostObserverUnsupported,
+} from './host-observer-scope.js';
+import {
   SEMANTIC_PROOF_LIMITATION,
   SecurityObserverUnsupportedError,
   createSecurityObserver,
@@ -1099,6 +1103,7 @@ async function closeShared(failures: string[]): Promise<void> {
 
 test('FR-030-trust', async () => {
   test.setTimeout(600_000);
+  test.skip(hostObserverUnsupported(), hostObserverSkipReason() ?? '');
   const failures: string[] = [];
   const root = desktopRoot();
   const capability = await gatedCapability(root, 'FR-030-trust');
@@ -1226,6 +1231,7 @@ test('FR-030-trust', async () => {
 
 test('SC-009-monitored-offline', async () => {
   test.setTimeout(600_000);
+  test.skip(hostObserverUnsupported(), hostObserverSkipReason() ?? '');
   const failures: string[] = [];
   const root = desktopRoot();
   const capability = await gatedCapability(root, 'SC-009-monitored-offline');
@@ -1453,6 +1459,7 @@ function payloadPatterns(fixture: FixtureSet): PayloadPattern[] {
 
 test('FR-014-no-fetch', async () => {
   test.setTimeout(600_000);
+  test.skip(hostObserverUnsupported(), hostObserverSkipReason() ?? '');
   const failures: string[] = [];
   const root = desktopRoot();
   const capability = await gatedCapability(root, 'FR-014-no-fetch');
@@ -1607,6 +1614,7 @@ const pane = (page: Page, label: string): Locator =>
 
 test('EDGE-05-inert', async () => {
   test.setTimeout(600_000);
+  test.skip(hostObserverUnsupported(), hostObserverSkipReason() ?? '');
   const failures: string[] = [];
   const root = desktopRoot();
   const capability = await gatedCapability(root, 'EDGE-05-inert');
@@ -1863,6 +1871,7 @@ async function runProfileLeg(
 
 test('US6.4-trusted-restricted', async () => {
   test.setTimeout(900_000);
+  test.skip(hostObserverUnsupported(), hostObserverSkipReason() ?? '');
   const failures: string[] = [];
   const root = desktopRoot();
   const capability = await gatedCapability(root, 'US6.4-trusted-restricted');

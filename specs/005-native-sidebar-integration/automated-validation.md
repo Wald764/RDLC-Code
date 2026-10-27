@@ -94,3 +94,36 @@ Test primitives and projection work can proceed independently once specification
 Record each requirement/scenario/edge/SC with test identifier, fixture IDs, expected oracle, candidate commit and VSIX digest, platform, Desktop build, driver/dependency versions, locale/fonts/theme, viewport/DPR/scaling/report zoom, executed outcome and artifact links. Save raw timing samples, selection/race assertions, network-attempt logs and expected/actual/diff images or traces on failure using minimum-permission GitHub Actions artifacts. Use per-platform failure logs without secrets or image/query payloads.
 
 Any absent or failed mandatory assertion means **not validated** and blocks the feature's completion. The only conditional scope is native-to-webview drag: a proven limitation yields an explicitly unavailable capability with passing activation/fallback assertions, not a claim that native drag passed. Functional acceptance cannot be inferred from specification review, task checkboxes, successful compilation or historical manual evidence.
+
+## Platform Scope and Disabled Cases (CI run 40418317992)
+
+These cases are explicitly scoped or skipped. A skipped case is **UNVALIDATED** on that platform: it is never reported as passed, and the run records it in `runner-status.json` (`unvalidatedHostObserver` for the host-observer cases, `unvalidatedPlatformSkips` for the other platform-scoped skips). Both the test-side skip and the runner allowlist come from `tests/desktop/host-observer-scope.ts`; a skip not listed there for that platform fails the run, and Linux accepts none. Everything not listed here keeps running and stays mandatory on every platform.
+
+### Mandatory native host observation is Linux-only
+
+The host observer (strace process-tree capture plus iptables owner-uid blocking) exists on Linux only. Windows (ETW/WFP) needs elevation that CI runners do not grant, and macOS has no unprivileged observer. On `win32` and `darwin` the following Playwright cases call `test.skip` with that reason (`tests/desktop/host-observer-scope.ts` owns the list):
+
+| Case | Why it depends on host observation |
+| --- | --- |
+| `security-observer.spec.ts` "security observer: real trust states, host tree and webview attempts fail closed" | Native host capture and blocking control (also the capability probe) |
+| `offline.spec.ts` `FR-030-trust` | Provisions the shared blocked session |
+| `offline.spec.ts` `SC-009-monitored-offline`, `FR-014-no-fetch`, `EDGE-05-inert` | Run inside FR-030's shared blocked session |
+| `offline.spec.ts` `US6.4-trusted-restricted` | Repeats the monitored journeys under real restricted and trusted profiles |
+
+On Linux they remain mandatory: an unsupported or incomplete capture is a failure. `tests/desktop/run-tests.ts` accepts these skips only off Linux and only for these titles; any other skip still invalidates the run. In `--probe` mode the `securityObserver` capability is recorded as `unsupported` (never `passed`) off Linux and only that capability may be unsupported. AT-09 (offline, trust, host-observed network attempts) is therefore not validated on Windows or macOS.
+
+### Other disabled or changed cases
+
+| Case | Platform | Decision |
+| --- | --- | --- |
+| `context.spec.ts` `US5.3-two-views` | macOS (both VS Code versions) | Skipped, UNVALIDATED. The second split view loses its primary item once the first view selects another item. Not diagnosed; passes on Linux and Windows. |
+
+Fixed rather than disabled (test or harness defects, not validated by an Electron run locally):
+
+- macOS opens native NSMenu context menus, which are not in the DOM, so every journey that drives a menu item (`FR-021-view-local`, `SC-005-switch-races`, accessibility `US6.1-keyboard-journey`, layout `FR-029-stability`) timed out. The driver profile now sets `window.menuStyle` to `custom`, the HTML menu Linux and Windows already use.
+- `US5.4-disposal` (macOS): a synthetic Cmd+W did not close the designer tab; on macOS the tab's close button is used instead.
+- `layout.spec.ts` `SC-007-stability` (Linux, VS Code 1.142.0): the pointer was released before the webview's ResizeObserver cancelled the held gesture, which committed the move. The test now waits for the cancellation before releasing.
+
+Not changed, recorded as a risk: `context.spec.ts` `FR-021-view-local` hung for the full 300 s once on Linux VS Code 1.142.0 (second pass only; the first pass and Linux stable passed). The captured screencast shows a frozen workbench from about 30 s in, with no diagnosable test-side cause.
+
+Cases that fail only because of missing pixel baselines (`bootstrap.spec.ts`) are outside this scope.

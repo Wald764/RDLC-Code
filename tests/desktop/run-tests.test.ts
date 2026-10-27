@@ -122,7 +122,7 @@ test('the security observer capability is derived from the same-run security spe
     outcome: 'passed',
     reason: null,
   });
-  const missing = deriveSecurityObserverCapability(null);
+  const missing = deriveSecurityObserverCapability(null, 'linux');
   assert.equal(missing.outcome, 'unrun');
   assert.match(missing.reason ?? '', /did not produce/);
   assert.equal(
@@ -136,31 +136,203 @@ test('the security observer capability is derived from the same-run security spe
   });
   assert.equal(failed.outcome, 'failed');
   assert.match(failed.reason ?? '', /no host blocking/);
-  const unsupported = deriveSecurityObserverCapability({
+  const unsupportedRecord = {
     validated: false,
     captureComplete: false,
     checks: { nativeHost: 'unsupported' },
     failures: ['Native host process-tree attach is unsupported: win32'],
-  });
-  assert.equal(unsupported.outcome, 'unsupported');
-  assert.match(unsupported.reason ?? '', /win32/);
+  };
+  const offLinux = deriveSecurityObserverCapability(unsupportedRecord, 'win32');
+  assert.equal(offLinux.outcome, 'unsupported');
+  assert.match(offLinux.reason ?? '', /win32/);
+  // Linux keeps the observer mandatory: unsupported capture is a failure.
+  assert.equal(
+    deriveSecurityObserverCapability(unsupportedRecord, 'linux').outcome,
+    'failed',
+  );
+  // A skipped spec leaves no record: unsupported off Linux, unrun on Linux.
+  for (const platform of ['win32', 'darwin'] as const)
+    assert.equal(
+      deriveSecurityObserverCapability(null, platform).outcome,
+      'unsupported',
+    );
+  assert.equal(
+    deriveSecurityObserverCapability(null, 'linux').outcome,
+    'unrun',
+  );
 
   const bootstrap = makeProbe(referenceEnvironment);
   // Bootstrap claims a pass; without the security spec result it is overridden.
-  const merged = mergeProbeCapabilities(bootstrap, null);
+  const merged = mergeProbeCapabilities(bootstrap, null, 'linux');
   assert.equal(merged.capabilities.securityObserver, 'unrun');
   assert.equal(completeDriverCapabilities(merged), false);
   assert.equal(
-    completeDriverCapabilities(mergeProbeCapabilities(bootstrap, ok)),
+    completeDriverCapabilities(mergeProbeCapabilities(bootstrap, ok, 'linux')),
     true,
   );
   assert.equal(
     completeDriverCapabilities(
-      mergeProbeCapabilities(bootstrap, {
-        ...ok,
-        validated: false,
-        failures: ['x'],
+      mergeProbeCapabilities(
+        bootstrap,
+        { ...ok, validated: false, failures: ['x'] },
+        'linux',
+      ),
+    ),
+    false,
+  );
+});
+
+test('unsupported host observation is recorded as unvalidated off Linux and still fails on Linux', () => {
+  const stable = { ...referenceEnvironment, vscodeVersion: '1.143.1' };
+  for (const os of ['win32', 'darwin']) {
+    const environment = { ...stable, os };
+    const merged = mergeProbeCapabilities(
+      makeProbe(environment, 'unrun'),
+      null,
+      os as NodeJS.Platform,
+    );
+    assert.equal(merged.capabilities.securityObserver, 'unsupported');
+    assert.equal(completeDriverCapabilities(merged), true, os);
+    // Only the security observer may be unsupported; other capabilities gate.
+    assert.equal(
+      completeDriverCapabilities({
+        ...merged,
+        capabilities: { ...merged.capabilities, launch: 'unsupported' },
       }),
+      false,
+      os,
+    );
+  }
+  // On Linux an unsupported or missing observer never validates.
+  for (const record of [
+    null,
+    {
+      validated: false,
+      captureComplete: false,
+      checks: { nativeHost: 'unsupported' },
+      failures: ['unsupported'],
+    },
+  ])
+    assert.equal(
+      completeDriverCapabilities(
+        mergeProbeCapabilities(makeProbe(stable, 'unrun'), record, 'linux'),
+      ),
+      false,
+    );
+  assert.equal(
+    completeDriverCapabilities({
+      ...makeProbe(stable, 'unrun'),
+      capabilities: {
+        ...makeProbe(stable, 'unrun').capabilities,
+        securityObserver: 'unsupported',
+      },
+    }),
+    false,
+  );
+});
+
+test('only host-observer journeys may be skipped, and only off Linux', () => {
+  const entry = (title: string, status: 'passed' | 'skipped') => ({
+    id: title,
+    title,
+    file: 'offline.spec.ts',
+    tests: [
+      {
+        expectedStatus: status,
+        status: status === 'passed' ? 'expected' : 'skipped',
+        results: [{ status }],
+      },
+    ],
+  });
+  const report = (specs: ReturnType<typeof entry>[], skipped: number) => ({
+    stats: {
+      expected: specs.length - skipped,
+      skipped,
+      unexpected: 0,
+      flaky: 0,
+    },
+    suites: [{ file: 'offline.spec.ts', specs }],
+  });
+  const mixed = report(
+    [entry('other', 'passed'), entry('FR-030-trust', 'skipped')],
+    1,
+  );
+  const seen: string[] = [];
+  assert.equal(
+    completeDesktopReport(mixed, ['offline.spec.ts'], 'win32', seen),
+    true,
+  );
+  assert.deepEqual(seen, ['FR-030-trust']);
+  assert.equal(
+    completeDesktopReport(mixed, ['offline.spec.ts'], 'darwin'),
+    true,
+  );
+  // Linux still rejects every skip.
+  assert.equal(
+    completeDesktopReport(mixed, ['offline.spec.ts'], 'linux'),
+    false,
+  );
+  // A skip of any other journey is rejected everywhere.
+  assert.equal(
+    completeDesktopReport(
+      report([entry('other', 'passed'), entry('other-skip', 'skipped')], 1),
+      ['offline.spec.ts'],
+      'win32',
+    ),
+    false,
+  );
+  // The reported skip count must match the accepted skips.
+  assert.equal(
+    completeDesktopReport(
+      { ...mixed, stats: { ...mixed.stats, skipped: 2 } },
+      ['offline.spec.ts'],
+      'win32',
+    ),
+    false,
+  );
+});
+
+test('platform-scoped skips are accepted only on their listed platforms', () => {
+  const entry = (title: string, status: 'passed' | 'skipped') => ({
+    id: title,
+    title,
+    file: 'context.spec.ts',
+    tests: [
+      {
+        expectedStatus: status,
+        status: status === 'passed' ? 'expected' : 'skipped',
+        results: [{ status }],
+      },
+    ],
+  });
+  const report = (title: string) => ({
+    stats: { expected: 1, skipped: 1, unexpected: 0, flaky: 0 },
+    suites: [
+      {
+        file: 'context.spec.ts',
+        specs: [entry('other', 'passed'), entry(title, 'skipped')],
+      },
+    ],
+  });
+  const us53 = report('US5.3-two-views');
+  const seen: string[] = [];
+  const host: string[] = [];
+  assert.equal(
+    completeDesktopReport(us53, ['context.spec.ts'], 'darwin', host, seen),
+    true,
+  );
+  assert.deepEqual(seen, ['US5.3-two-views']);
+  assert.deepEqual(host, []);
+  for (const platform of ['win32', 'linux'] as const)
+    assert.equal(
+      completeDesktopReport(us53, ['context.spec.ts'], platform),
+      false,
+    );
+  assert.equal(
+    completeDesktopReport(
+      report('unlisted-skip'),
+      ['context.spec.ts'],
+      'darwin',
     ),
     false,
   );

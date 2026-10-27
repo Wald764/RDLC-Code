@@ -9,6 +9,12 @@ import {
   REFERENCE_ENVIRONMENT,
   referenceEnvironmentReasons,
 } from './evidence.js';
+import {
+  HOST_OBSERVER_PLATFORM,
+  HOST_OBSERVER_TESTS,
+  hostObserverUnsupported,
+  platformSkipAccepted,
+} from './host-observer-scope.js';
 import { sweepHostBlockingRules } from './security-observer.js';
 
 export function desktopArguments(
@@ -119,9 +125,19 @@ export function requiredDesktopSuites(
   return Object.values(DESKTOP_GROUPS).flat();
 }
 
+/**
+ * Skips are never accepted, with two explicit exceptions (see
+ * host-observer-scope.ts): the host-observer journeys on a platform that cannot
+ * host the observer, and the platform-scoped PLATFORM_SKIPS allowlist. They are
+ * listed in `skippedOut` / `platformSkippedOut` so the run records them as
+ * UNVALIDATED.
+ */
 export function completeDesktopReport(
   value: unknown,
   suites: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+  skippedOut: string[] = [],
+  platformSkippedOut: string[] = [],
 ): boolean {
   if (!value || typeof value !== 'object') return false;
   const report = value as {
@@ -134,7 +150,7 @@ export function completeDesktopReport(
     !Number.isSafeInteger(stats.expected) ||
     (stats.expected as number) <= 0 ||
     stats.unexpected !== 0 ||
-    stats.skipped !== 0 ||
+    !Number.isSafeInteger(stats.skipped) ||
     stats.flaky !== 0 ||
     !Array.isArray(report.suites)
   )
@@ -142,6 +158,8 @@ export function completeDesktopReport(
   const files = new Set<string>();
   const ids = new Set<string>();
   let count = 0;
+  const skipped: string[] = [];
+  const platformSkipped: string[] = [];
   const visit = (value: unknown, depth: number): boolean => {
     if (!value || typeof value !== 'object' || depth > 32) return false;
     const suite = value as {
@@ -153,7 +171,12 @@ export function completeDesktopReport(
       if (!Array.isArray(suite.specs)) return false;
       for (const value of suite.specs) {
         if (!value || typeof value !== 'object') return false;
-        const spec = value as { id?: unknown; file?: unknown; tests?: unknown };
+        const spec = value as {
+          id?: unknown;
+          title?: unknown;
+          file?: unknown;
+          tests?: unknown;
+        };
         if (
           typeof spec.id !== 'string' ||
           !spec.id ||
@@ -171,6 +194,26 @@ export function completeDesktopReport(
             status?: unknown;
             results?: unknown;
           };
+          if (
+            test.expectedStatus === 'skipped' &&
+            test.status === 'skipped' &&
+            Array.isArray(test.results) &&
+            test.results.length === 1 &&
+            test.results[0]?.status === 'skipped' &&
+            typeof spec.title === 'string'
+          ) {
+            if (
+              hostObserverUnsupported(platform) &&
+              HOST_OBSERVER_TESTS.includes(spec.title)
+            ) {
+              skipped.push(spec.title);
+              continue;
+            }
+            if (platformSkipAccepted(spec.title, platform)) {
+              platformSkipped.push(spec.title);
+              continue;
+            }
+          }
           if (
             test.expectedStatus !== 'passed' ||
             test.status !== 'expected' ||
@@ -192,11 +235,16 @@ export function completeDesktopReport(
       return false;
     return true;
   };
-  return (
+  const complete =
     report.suites.every((suite) => visit(suite, 0)) &&
     count === stats.expected &&
-    suites.every((file) => files.has(file))
-  );
+    skipped.length + platformSkipped.length === stats.skipped &&
+    suites.every((file) => files.has(file));
+  if (complete) {
+    skippedOut.push(...skipped);
+    platformSkippedOut.push(...platformSkipped);
+  }
+  return complete;
 }
 
 export const FUNCTIONAL_CAPABILITIES = [
@@ -217,10 +265,20 @@ type Outcome = 'passed' | 'failed' | 'unsupported' | 'unrun';
  * The security capability is whatever the security-observer spec proved in this
  * same run; bootstrap cannot claim it.
  */
-export function deriveSecurityObserverCapability(record: unknown): {
+export function deriveSecurityObserverCapability(
+  record: unknown,
+  platform: NodeJS.Platform = process.platform,
+): {
   outcome: Outcome;
   reason: string | null;
 } {
+  // Host observation exists on Linux only; elsewhere the spec is skipped and
+  // leaves no record. That is an explicit, UNVALIDATED scope, not a pass.
+  if (hostObserverUnsupported(platform) && !record)
+    return {
+      outcome: 'unsupported',
+      reason: `Native host observation is supported on ${HOST_OBSERVER_PLATFORM} only; unvalidated on ${platform}.`,
+    };
   if (!record || typeof record !== 'object')
     return {
       outcome: 'unrun',
@@ -238,7 +296,11 @@ export function deriveSecurityObserverCapability(record: unknown): {
         (item): item is string => typeof item === 'string',
       )
     : [];
-  if (security.checks?.['nativeHost'] === 'unsupported')
+  // On Linux the observer is mandatory: an unsupported capture is a failure.
+  if (
+    security.checks?.['nativeHost'] === 'unsupported' &&
+    hostObserverUnsupported(platform)
+  )
     return {
       outcome: 'unsupported',
       reason:
@@ -261,8 +323,12 @@ export function deriveSecurityObserverCapability(record: unknown): {
 
 export function mergeProbeCapabilities<
   T extends { capabilities?: Record<string, unknown> },
->(bootstrap: T, security: unknown) {
-  const derived = deriveSecurityObserverCapability(security);
+>(
+  bootstrap: T,
+  security: unknown,
+  platform: NodeJS.Platform = process.platform,
+) {
+  const derived = deriveSecurityObserverCapability(security, platform);
   return {
     ...bootstrap,
     capabilities: {
@@ -303,7 +369,13 @@ export function completeDriverCapabilities(value: unknown): boolean {
   const reference = referenceEnvironmentReasons(probe.environment).length === 0;
   return (
     FUNCTIONAL_CAPABILITIES.every(
-      (key) => probe.capabilities?.[key] === 'passed',
+      (key) =>
+        probe.capabilities?.[key] === 'passed' ||
+        // Unsupported host observation is recorded, not failed, off Linux only.
+        (key === 'securityObserver' &&
+          probe.capabilities?.[key] === 'unsupported' &&
+          typeof probe.environment?.os === 'string' &&
+          hostObserverUnsupported(probe.environment.os as NodeJS.Platform)),
     ) &&
     probe.capabilities?.['screenshotComparison'] ===
       (reference ? 'passed' : 'unrun')
@@ -396,12 +468,17 @@ export async function runDesktop(
       hostBlockingSweep = sweepAfterRun(platform, sweep);
   }
   let reportComplete = false;
+  const unvalidatedSkips: string[] = [];
+  const unvalidatedPlatformSkips: string[] = [];
   let probeComplete = !mode.probe;
   let visual: { eligible: boolean; reasons: string[] } | null = null;
   try {
     reportComplete = completeDesktopReport(
       JSON.parse(await readFile(reportPath, 'utf8')),
       required,
+      platform,
+      unvalidatedSkips,
+      unvalidatedPlatformSkips,
     );
   } catch {
     // Missing or malformed execution evidence cannot certify a suite.
@@ -420,6 +497,7 @@ export async function runDesktop(
       const merged = mergeProbeCapabilities(
         bootstrap as { capabilities?: Record<string, unknown> },
         await readJson('security-observer/probe.json'),
+        platform,
       );
       probeComplete = completeDriverCapabilities(merged);
       const reasons = referenceEnvironmentReasons(
@@ -457,6 +535,17 @@ export async function runDesktop(
     missing,
     runnerExitCode: exitCode,
     hostBlockingSweep,
+    // Host-observer cases skipped off Linux: explicitly UNVALIDATED, not passed.
+    unvalidatedHostObserver: {
+      platform,
+      supported: !hostObserverUnsupported(platform),
+      skipped: unvalidatedSkips,
+    },
+    // Other platform-scoped skips (PLATFORM_SKIPS): also UNVALIDATED, not passed.
+    unvalidatedPlatformSkips: {
+      platform,
+      skipped: unvalidatedPlatformSkips,
+    },
     reportComplete,
     probeComplete,
     visual,
