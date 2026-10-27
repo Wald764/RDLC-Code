@@ -942,22 +942,26 @@ test('FR-028-contrast', async () => {
       await expect(row).toBeVisible();
       await expect(activity).toHaveCount(1);
 
-      // The glyph paint is proven once, before any threshold can be claimed.
-      const glyph = await paintedGlyph(activity);
-      test.info().annotations.push({
-        type: glyph.reason ? 'unvalidated-glyph-paint' : 'glyph-paint-source',
-        description: glyph.reason
-          ? `the activity icon paint is unvalidated: ${glyph.reason}`
-          : `the activity icon is painted by ${glyph.source}`,
-      });
-
       const measured: Record<
         string,
         Record<string, Measurement & { readonly minimum: number }>
       > = {};
       const results: Record<string, ContrastResult[]> = {};
+      const glyphs: Record<string, { source: string; reason: string | null }> =
+        {};
       for (const theme of THEMES) {
         await applyTheme(page, frame, theme);
+        // The glyph paint is a theme token (the selected activity item uses
+        // its own foreground), so it is proven again for every theme, after
+        // the theme is live, never carried over from the startup theme.
+        const glyph = await paintedGlyph(activity);
+        glyphs[theme.label] = { source: glyph.source, reason: glyph.reason };
+        test.info().annotations.push({
+          type: glyph.reason ? 'unvalidated-glyph-paint' : 'glyph-paint-source',
+          description: glyph.reason
+            ? `${theme.label}: the activity icon paint is unvalidated: ${glyph.reason}`
+            : `${theme.label}: the activity icon is painted by ${glyph.source}`,
+        });
         const labelLeaf = textLeaf(row);
         const titleLeaf = textLeaf(header);
         const icon = await capture(page.locator('.activitybar'), activity);
@@ -1001,7 +1005,7 @@ test('FR-028-contrast', async () => {
         environment: ctx.environment,
         method:
           "composited screenshot pixels: the surface is the dominant colour painted in the box, and the foreground counts only when an observed cluster within the channel tolerance carries the element's own computed colour composited through its ancestor opacities over that surface; the farthest colour is recorded as a supplementary diagnostic and never satisfies a requirement",
-        glyph: { source: glyph.source, reason: glyph.reason },
+        glyphs,
         scaleScope: OPEN_SCALE_DIAGNOSTIC,
         results,
       });
@@ -1025,16 +1029,19 @@ test('SC-006-contrast', async () => {
       const frame = await openDesigner(ctx);
       await frame.locator('.item[data-item="0"]').click();
       await expect(frame.locator('.item.primary')).toHaveCount(1);
-      await expect(
-        frame.locator('p[aria-label="Accepted item geometry"]'),
-      ).toBeVisible();
-      // The inspector must be on screen for its label to be measurable.
+      // The inspector (geometry note and properties form) is a hidden overlay
+      // below 800 px of workspace width, so it must be opened before anything
+      // inside it can be visible or measurable.
       const properties = frame.getByRole('button', {
         name: 'Properties',
         exact: true,
       });
       if ((await properties.getAttribute('aria-expanded')) === 'false')
         await properties.click();
+      await expect(properties).toHaveAttribute('aria-expanded', 'true');
+      await expect(
+        frame.locator('p[aria-label="Accepted item geometry"]'),
+      ).toBeVisible();
       await expect(
         frame.locator('form[aria-label="Textbox properties"]'),
       ).toBeVisible();
