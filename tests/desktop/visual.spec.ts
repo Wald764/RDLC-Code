@@ -1024,14 +1024,22 @@ test('SC-006-contrast', async () => {
       const { page } = ctx;
       const source = await readFile(ctx.path('contrast.rdlc'));
       await assertReferenceEnvironment(ctx);
+      // With the secondary side bar open the designer is only ~750 px wide:
+      // the flexible status text collapses to zero width and the inspector
+      // becomes an overlay. Hide the bar for this test only so the footer has
+      // room; the shared session defaults (and their references) stay as is.
+      const auxiliaryBar = page.locator('.part.auxiliarybar');
+      if (await auxiliaryBar.isVisible())
+        await palette(page, 'View: Hide Secondary Side Bar');
+      await expect(auxiliaryBar).toBeHidden();
       await palette(page, 'View: Show RDLC Code');
       await openReport(ctx, 'contrast.rdlc');
       const frame = await openDesigner(ctx);
       await frame.locator('.item[data-item="0"]').click();
       await expect(frame.locator('.item.primary')).toHaveCount(1);
-      // The inspector (geometry note and properties form) is a hidden overlay
-      // below 800 px of workspace width, so it must be opened before anything
-      // inside it can be visible or measurable.
+      // The inspector (geometry note and properties form) is inline from
+      // 800 px of workspace width (aria-expanded already "true") and a hidden
+      // overlay below it, so it is opened only when it is not yet shown.
       const properties = frame.getByRole('button', {
         name: 'Properties',
         exact: true,
@@ -1059,6 +1067,10 @@ test('SC-006-contrast', async () => {
           'form[aria-label="Textbox properties"]',
         );
         await expect(status).toBeVisible();
+        expect(
+          (await status.boundingBox())?.width ?? 0,
+          `${theme.label} status text keeps a non-zero width`,
+        ).toBeGreaterThan(0);
         await expect(selection).toHaveCount(1);
         await expect(inspectorLabel).toBeVisible();
 
