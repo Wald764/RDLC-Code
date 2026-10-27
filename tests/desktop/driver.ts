@@ -863,7 +863,19 @@ export async function launchDesktop(
   mkdirSync(join(paths.profileDir, 'User'), { recursive: true });
   writeFileSync(
     join(paths.profileDir, 'User', 'settings.json'),
-    `${JSON.stringify({ 'workbench.tree.enableStickyScroll': false }, null, 2)}
+    `${JSON.stringify(
+      {
+        'workbench.tree.enableStickyScroll': false,
+        // macOS opens native NSMenu context menus by default; they are not in
+        // the DOM, so the journeys could never see or drive their items.
+        // The custom (HTML) menu is what Linux and Windows already use.
+        'window.menuStyle': 'custom',
+        'git.enabled': false,
+        'git.autoRepositoryDetection': false,
+      },
+      null,
+      2,
+    )}
 `,
   );
   mkdirSync(paths.extensionsDir, { recursive: true });

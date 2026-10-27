@@ -650,12 +650,21 @@ async function assertCancelledResize(
   ).toBeGreaterThan(4);
 
   const resize = await resizeWindow(page, 160);
-  await page.mouse.up();
-  if (!resize.method)
+  if (!resize.method) {
+    await page.mouse.up();
     throw new Error(
       'coverage gap: neither page.setViewportSize nor window.resizeTo changed the live window, ' +
         'so host viewport resize cancellation cannot be exercised from this driver.',
     );
+  }
+  // The webview learns of the resize through a ResizeObserver, asynchronously.
+  // Releasing before it ran would commit the move instead of cancelling it
+  // (observed on Linux 1.142.0), so the cancellation must be seen first.
+  await expect(
+    preview,
+    'the host resize withdraws the held gesture before the pointer is released',
+  ).toHaveCount(0);
+  await page.mouse.up();
   await expect(
     preview,
     'the cancelled preview is withdrawn instead of applied',
