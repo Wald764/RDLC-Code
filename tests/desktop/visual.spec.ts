@@ -106,6 +106,8 @@ interface Theme {
   /** Exact `monaco-workbench` token: `/\bvs\b/` also matches `vs-dark`. */
   readonly workbench: string;
   readonly webview: string;
+  /** Extra webview tokens VS Code adds alongside `webview`. */
+  readonly webviewCompanions?: readonly string[];
 }
 
 /** Every token the host can carry for a theme, checked as exact members. */
@@ -142,6 +144,8 @@ const THEMES: readonly Theme[] = [
     slug: 'high-contrast-light',
     workbench: 'hc-light',
     webview: 'vscode-high-contrast-light',
+    // VS Code also adds `vscode-high-contrast` for backwards compatibility.
+    webviewCompanions: ['vscode-high-contrast'],
   },
 ];
 
@@ -153,11 +157,17 @@ function hasOnlyToken(
   classAttribute: string | null,
   expected: string,
   known: readonly string[],
+  companions: readonly string[] = [],
 ): boolean {
   const observed = classTokens(classAttribute);
   return (
     observed.includes(expected) &&
-    known.every((token) => token === expected || !observed.includes(token))
+    known.every(
+      (token) =>
+        token === expected ||
+        companions.includes(token) ||
+        !observed.includes(token),
+    )
   );
 }
 
@@ -810,7 +820,12 @@ async function applyTheme(
     .poll(
       () =>
         webviewClass().then((value) =>
-          hasOnlyToken(value, theme.webview, WEBVIEW_THEMES),
+          hasOnlyToken(
+            value,
+            theme.webview,
+            WEBVIEW_THEMES,
+            theme.webviewCompanions,
+          ),
         ),
       {
         message: `exactly the ${theme.label} webview token is active`,
