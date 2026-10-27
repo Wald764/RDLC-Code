@@ -711,6 +711,17 @@ async function blur(page: Page, frame?: Frame): Promise<void> {
   });
 }
 
+/** The quick pick row whose label is exactly `label`, never a fuzzy neighbour. */
+function exactLabelRow(page: Page, label: string): Locator {
+  const exact = new RegExp(
+    `^\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`,
+  );
+  return page
+    .locator('.quick-input-widget:visible .quick-input-list .monaco-list-row')
+    .filter({ has: page.locator('.label-name').filter({ hasText: exact }) })
+    .first();
+}
+
 async function palette(
   page: Page,
   command: string,
@@ -729,13 +740,7 @@ async function palette(
   await page.keyboard.type(command, { delay: 10 });
   // Fuzzy ranking can put other commands first on a fresh profile, so the row
   // is selected by its exact label and clicked rather than taking Enter.
-  const exact = new RegExp(
-    `^\\s*${command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`,
-  );
-  const first = page
-    .locator('.quick-input-widget:visible .quick-input-list .monaco-list-row')
-    .filter({ has: page.locator('.label-name').filter({ hasText: exact }) })
-    .first();
+  const first = exactLabelRow(page, command);
   await expect(first, `palette row for ${command}`).toBeVisible();
   await first.click();
   await expect(first.filter({ hasText: command })).toBeHidden();
@@ -779,11 +784,10 @@ async function applyTheme(
   );
   await input.waitFor({ state: 'visible' });
   await page.keyboard.type(theme.label, { delay: 10 });
-  await expect(
-    page.locator('.quick-input-widget:visible .monaco-list-row').first(),
-    `theme row for ${theme.label}`,
-  ).toContainText(theme.label);
-  await input.press('Enter');
+  // The first row can be "Browse Additional Color Themes..." (recently used).
+  const row = exactLabelRow(page, theme.label);
+  await expect(row, `theme row for ${theme.label}`).toBeVisible();
+  await row.click();
   await expect(page.locator('.quick-input-widget:visible')).toBeHidden();
   const workbenchClass = async (): Promise<string> =>
     (await page.locator('.monaco-workbench').getAttribute('class')) ?? '';
