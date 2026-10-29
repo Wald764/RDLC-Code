@@ -11,7 +11,13 @@
  * `aria-label`, `ariaSnapshot`, painted focus) and independently read the
  * report bytes from disk. Nothing here claims screen-reader speech output.
  */
-import { test, expect, type Frame, type Page } from 'playwright/test';
+import {
+  test,
+  expect,
+  type Frame,
+  type Locator,
+  type Page,
+} from 'playwright/test';
 import {
   copyFile,
   mkdir,
@@ -29,6 +35,28 @@ import {
 
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
 const NO_REPORT = 'Open or create a report to begin.';
+
+/**
+ * Select-all in a webview field, then wait until the selection really spans
+ * the value. The workbench relays the shortcut into the webview asynchronously
+ * (observed on macOS), so typing straight after the keypress can land before
+ * the selection and lose the first character.
+ */
+async function selectAllInField(page: Page, field: Locator): Promise<void> {
+  await page.keyboard.press(`${MOD}+a`);
+  await expect
+    .poll(() =>
+      field.evaluate((element) => {
+        const input = element as HTMLInputElement;
+        return (
+          input.value.length > 0 &&
+          input.selectionStart === 0 &&
+          input.selectionEnd === input.value.length
+        );
+      }),
+    )
+    .toBe(true);
+}
 const COMPONENT_KINDS = [
   'Textbox',
   'Table',
@@ -554,7 +582,7 @@ test('US6.1-keyboard-journey', async () => {
     expect(await nameField.inputValue()).toBe('Scroll0');
 
     // 7. Field editing commits exactly once and only the accepted value.
-    await page.keyboard.press(`${MOD}+a`);
+    await selectAllInField(page, nameField);
     await page.keyboard.type('RenamedByKeyboard', { delay: 5 });
     expect(await nameField.inputValue()).toBe('RenamedByKeyboard');
     await page.keyboard.press('Enter');
@@ -842,7 +870,7 @@ test('FR-027-keyboard', async () => {
       const accepted = await nameField.inputValue();
       expect(accepted).toBe('Title');
       await nameField.focus();
-      await page.keyboard.press(`${MOD}+a`);
+      await selectAllInField(page, nameField);
       await page.keyboard.type('9 not a valid name!', { delay: 5 });
       await page.keyboard.press('Enter');
       const refusal = frame.locator('#report-refusal');
@@ -858,7 +886,7 @@ test('FR-027-keyboard', async () => {
 
       // Escape restores the accepted value without committing anything.
       await expect(nameField).toBeFocused();
-      await page.keyboard.press(`${MOD}+a`);
+      await selectAllInField(page, nameField);
       await expect(nameField).toBeFocused();
       await page.keyboard.type('DraftThatNeverCommits', { delay: 5 });
       expect(await nameField.inputValue()).toBe('DraftThatNeverCommits');
