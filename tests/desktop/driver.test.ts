@@ -104,7 +104,12 @@ function palettePage(escapeHangs: boolean) {
           throw new Error('Timeout 30000ms exceeded.');
       },
       filter: () => ({
+        count: async () => 1,
         first: () => ({ click: async () => {}, waitFor: async () => {} }),
+        filter: () => ({
+          count: async () => 1,
+          first: () => ({ click: async () => {}, waitFor: async () => {} }),
+        }),
       }),
     }),
     keyboard: {

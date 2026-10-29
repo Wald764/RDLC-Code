@@ -5,6 +5,7 @@ import {
   type BrowserContext,
   type ElectronApplication,
   type Frame,
+  type Locator,
   type Page,
 } from 'playwright';
 import {
@@ -73,6 +74,10 @@ const LAUNCH_TIMEOUT = 60_000;
 const WINDOW_TIMEOUT = 60_000;
 const FRAME_TIMEOUT = 60_000;
 const COMMAND_TIMEOUT = 30_000;
+const PALETTE_ATTEMPTS = 3;
+const PALETTE_STEP_TIMEOUT = 10_000;
+const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const CAPTURE_TIMEOUT = 30_000;
 const TRACE_TIMEOUT = 15_000;
 // The 100-switch journey exports over 400MB; allow its archive to finish before closing Electron.
@@ -784,6 +789,27 @@ async function startTrace(context: BrowserContext): Promise<boolean> {
 }
 
 /**
+ * Opens the focused list row's context menu with the keyboard only. VS Code
+ * lists react to the keyup of Shift+F10 or of the ContextMenu key (keyCode 58);
+ * on macOS the ContextMenu key (93) is decoded as the Meta key, so Shift+F10 is
+ * the portable gesture. A gesture lost to a focus change in flight is retried.
+ */
+export async function openContextMenuWithKeyboard(
+  page: Page,
+  timeout = 4_000,
+): Promise<void> {
+  const item = page.locator('.context-view').getByRole('menuitem').first();
+  for (const key of ['Shift+F10', 'ContextMenu', 'Shift+F10']) {
+    await page.keyboard.press(key);
+    const opened = await item
+      .waitFor({ state: 'visible', timeout })
+      .then(() => true)
+      .catch(() => false);
+    if (opened) return;
+  }
+}
+
+/**
  * One palette round trip: open the command palette, run `id` and confirm the
  * palette closed. Every caller (specs and the trust helpers) shares it, so its
  * recovery is shared too: a transport that stops answering must not turn a
@@ -792,30 +818,61 @@ async function startTrace(context: BrowserContext): Promise<boolean> {
 export async function workbenchCommand(page: Page, id: string): Promise<void> {
   if (!id.trim()) throw new Error('Command id must not be empty');
   await page.bringToFront();
-  // Ctrl+P has just closed; its hidden input must not swallow the shortcut.
-  await page
-    .locator('.quick-input-widget:visible')
-    .waitFor({ state: 'hidden', timeout: 5_000 })
-    .catch(() => {});
-  // A focused webview iframe owns the keyboard; return focus to the workbench.
-  await page.evaluate(() => {
-    (document.activeElement as HTMLElement | null)?.blur();
-  });
-  const shortcut =
-    process.platform === 'darwin' ? 'Meta+Shift+P' : 'Control+Shift+P';
-  await page.keyboard.press(shortcut);
   const input = page.locator(
     '.quick-input-widget:visible .quick-input-box input',
   );
-  await input.waitFor({ state: 'visible', timeout: COMMAND_TIMEOUT });
-  await page.keyboard.type(id, { delay: 10 });
   const rows = page.locator(
     '.quick-input-widget:visible .quick-input-list .monaco-list-row',
   );
-  await rows
-    .filter({ hasText: id })
-    .first()
-    .click({ timeout: COMMAND_TIMEOUT });
+  const shortcut =
+    process.platform === 'darwin' ? 'Meta+Shift+P' : 'Control+Shift+P';
+  // A slow runner can lose the shortcut or the typed text to a webview that
+  // grabs focus late (the designer right after it opens), so opening the
+  // palette and finding the row is retried before the command is declared
+  // unavailable. The failures of every attempt are kept for the report.
+  const attempts: unknown[] = [];
+  let target: Locator | undefined;
+  for (let attempt = 1; attempt <= PALETTE_ATTEMPTS && !target; attempt++) {
+    try {
+      // Ctrl+P has just closed; its hidden input must not swallow the shortcut.
+      await page
+        .locator('.quick-input-widget:visible')
+        .waitFor({ state: 'hidden', timeout: 5_000 })
+        .catch(() => {});
+      // A focused webview iframe owns the keyboard; return focus to the workbench.
+      await page.evaluate(() => {
+        (document.activeElement as HTMLElement | null)?.blur();
+      });
+      await page.keyboard.press(shortcut);
+      await input.waitFor({ state: 'visible', timeout: PALETTE_STEP_TIMEOUT });
+      await page.keyboard.type(id, { delay: 10 });
+      const listed = rows.filter({ hasText: id }).first();
+      await listed.waitFor({ state: 'visible', timeout: PALETTE_STEP_TIMEOUT });
+      // Fuzzy ranking can list other commands first: prefer the exact label.
+      const exact = rows.filter({
+        has: page
+          .locator('.label-name')
+          .filter({ hasText: new RegExp(`^\\s*${escapeRegExp(id)}\\s*$`) }),
+      });
+      target = (await exact.count()) > 0 ? exact.first() : listed;
+    } catch (error) {
+      attempts.push(error);
+      // Leave a half-typed palette behind only if the dismissal itself fails.
+      await withTimeout(
+        page.keyboard.press('Escape'),
+        COMMAND_TIMEOUT,
+        'Command palette recovery',
+      ).catch((recovery) => attempts.push(recovery));
+    }
+  }
+  if (!target)
+    throw new AggregateError(
+      attempts,
+      `Command palette did not list ${id} after ${PALETTE_ATTEMPTS} attempts: ${attempts
+        .map(describeError)
+        .join(' | ')}`,
+    );
+  await target.click({ timeout: COMMAND_TIMEOUT });
   try {
     await input.waitFor({ state: 'hidden', timeout: COMMAND_TIMEOUT });
   } catch (error) {

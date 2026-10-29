@@ -134,6 +134,9 @@ async function openFile(ctx: Ctx, name: string): Promise<void> {
 async function openReport(ctx: Ctx, name: string): Promise<Frame> {
   await openFile(ctx, name);
   await ctx.driver.command('RDLC Code: Open Designer');
+  // The designer webview grabs focus when it loads; wait for it before the
+  // palette opens, or the late focus steals the typed command.
+  await ctx.driver.designerFrame();
   await ctx.driver.command('Focus on Report Structure View');
   return ctx.driver.designerFrame();
 }

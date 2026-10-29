@@ -21,12 +21,13 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { launchTrustedDesktop, type DesktopDriver } from './driver.js';
+import {
+  launchTrustedDesktop,
+  openContextMenuWithKeyboard,
+  type DesktopDriver,
+} from './driver.js';
 
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
-// Keyboard context menu: Shift+F10 on Windows/Linux; macOS keyboards have no
-// F10 convention, and VS Code lists also open their menu on the ContextMenu key.
-const MENU_KEY = process.platform === 'darwin' ? 'ContextMenu' : 'Shift+F10';
 const NO_REPORT = 'Open or create a report to begin.';
 const COMPONENT_KINDS = [
   'Textbox',
@@ -350,7 +351,7 @@ async function activeMenuItem(page: Page): Promise<string | null> {
 
 /** Open Shift+F10's real context menu and walk it with the arrow keys only. */
 async function menuTo(page: Page, match: RegExp): Promise<void> {
-  await page.keyboard.press(MENU_KEY);
+  await openContextMenuWithKeyboard(page);
   const context = page.locator('.context-view');
   const items = context
     .getByRole('menuitem')
