@@ -8,6 +8,7 @@ import {
   readFileSync,
   readSync,
   readdirSync,
+  readlinkSync,
   rmSync,
   statSync,
 } from 'node:fs';
@@ -195,12 +196,15 @@ export class SecurityObserverUnsupportedError extends Error {
   }
 }
 
+/** %network without the receive calls (recvfrom, recvmsg, recvmmsg). */
+const NETWORK_CALLS_TRACED =
+  'accept,accept4,bind,connect,getpeername,getsockname,getsockopt,listen,sendmmsg,sendmsg,sendto,setsockopt,shutdown,socket,socketpair';
+
 /**
  * -yy decodes fd arguments to paths, so dirfd-relative and relative file
  * accesses can be resolved; -s 4096 keeps whole PATH_MAX paths untruncated.
- * The second -e removes the receive calls from the set: they are never an
- * outbound attempt, and Chromium's IPC polling made them ~80% of the trace
- * (hundreds of thousands of lines per journey with their 4096-byte payloads).
+ * The receive calls are never an outbound attempt, and Chromium's IPC polling
+ * made them a large part of the trace with their 4096-byte payloads.
  */
 export const STRACE_ARGS = [
   '-f',
@@ -208,10 +212,13 @@ export const STRACE_ARGS = [
   '-yy',
   '-s',
   '4096',
+  // One positive list: a second `-e trace=!...` would turn the whole filter into
+  // "every syscall except those" (futex, mmap, ... flood the trace). It is %file,
+  // %process and the members of %network that put or tune something on a socket,
+  // so the receive calls (recvfrom, recvmsg, recvmmsg: bulky, never outbound) are
+  // left out by omission.
   '-e',
-  'trace=%network,%file,%process',
-  '-e',
-  'trace=!recvfrom,recvmsg,recvmmsg',
+  `trace=%file,%process,${NETWORK_CALLS_TRACED}`,
 ] as const;
 
 const DEFAULT_MAX_DURATION = 60_000;
@@ -887,6 +894,12 @@ interface ClassifyContext {
   readonly pids: ReadonlySet<number>;
   /** The calling pid's working directory when the trace has shown it. */
   readonly cwd: string | null;
+  /**
+   * Per datagram socket (its -yy fd token), whether any destination connect()ed
+   * on it so far was not local. Lets an addressless send, whose fd decoration
+   * names only the bound local address, be judged by the peer it goes to.
+   */
+  readonly datagramPeers: Map<string, boolean>;
 }
 
 function isWrite(operation: string, args: string): boolean {
@@ -982,9 +995,11 @@ const ANCESTOR_IGNORE_FILES = [
 const NODE_MODULE_PROBE = /^(.*)\/node_modules(?:\/(?:@[^/]+\/)?[^/]+)?$/;
 /**
  * Agent-customization folders (user level) that the chat features look for
- * under the home directory. Only metadata of the folders themselves is probed
- * (never their subtrees): they may hold credentials, so touching anything
- * below them, even a stat, stays unexpected.
+ * under the home directory. Only metadata calls (stat, statx, lstat, access,
+ * readlink) may touch them or anything below them (instructions, agents,
+ * skills, mcp-config.json probes). They may hold credentials, so opening,
+ * reading, writing or watching anything there stays unexpected, and so does
+ * the metadata of a credential-looking name.
  */
 const HOME_CUSTOMIZATION_DIRS = [
   '.claude',
@@ -992,6 +1007,7 @@ const HOME_CUSTOMIZATION_DIRS = [
   '.agents',
   '.vscode/agent-plugins',
 ];
+const CUSTOMIZATION_SECRET_NAME = /cred|secret|token|password|\.key$|\.pem$/i;
 /** Home files VS Code reads for its runtime arguments (read-only, no secrets). */
 const HOME_RUNTIME_FILES = ['.vscode/argv.json'];
 
@@ -1015,7 +1031,13 @@ function isAllowedProbe(
     return true;
   const metadata = METADATA_CALLS.has(operation);
   if (metadata) {
-    if (HOME_CUSTOMIZATION_DIRS.some((dir) => path === `${home}/${dir}`))
+    if (
+      HOME_CUSTOMIZATION_DIRS.some(
+        (dir) =>
+          underRoot(path, [`${home}/${dir}`]) &&
+          !CUSTOMIZATION_SECRET_NAME.test(basename(path)),
+      )
+    )
       return true;
     const node = NODE_MODULE_PROBE.exec(path);
     if (node?.[1] !== undefined && isAncestorOf(node[1] || '/', roots))
@@ -1095,15 +1117,18 @@ function classifyUnexpected(
   // connect() on a datagram socket only records the default peer in the kernel
   // (Chromium uses it to discover its local route); a later send is classified
   // on its own by the peer.
-  if (operation === 'connect' && isDatagramSocket(args)) return false;
-  const ipv4 = /inet_addr\("([^"]+)"\)/.exec(args)?.[1];
-  if (ipv4) return !ipv4.startsWith('127.');
-  const ipv6 = /inet_pton\(AF_INET6, "([^"]+)"/.exec(args)?.[1];
-  if (ipv6) return !/^(?:::1$|::ffff:127\.)/i.test(ipv6);
-  const unix = UNIX_SOCKET.exec(args);
-  if (unix)
-    return unixSocketUnexpected(unix[1] === '@', unix[2] ?? '', context);
-  if (args.includes('sun_path=')) return true;
+  if (operation === 'connect' && isDatagramSocket(args)) {
+    const token = datagramToken(args);
+    const peer = destinationUnexpected(args, context);
+    if (token !== undefined && peer !== undefined)
+      context.datagramPeers.set(
+        token,
+        peer || context.datagramPeers.get(token) === true,
+      );
+    return false;
+  }
+  const destination = destinationUnexpected(args, context);
+  if (destination !== undefined) return destination;
   const connected = connectedPeerUnexpected(args, context);
   if (connected !== undefined) return connected;
   // An outgoing attempt without a proven destination cannot certify an empty violation set.
@@ -1113,6 +1138,26 @@ function classifyUnexpected(
   return ['connect', 'sendto', 'sendmsg', 'sendmmsg'].includes(operation)
     ? true
     : undefined;
+}
+
+/** The address a call names (inet, inet6 or unix), classified; undefined when it names none. */
+function destinationUnexpected(
+  args: string,
+  context: ClassifyContext,
+): boolean | undefined {
+  const ipv4 = /inet_addr\("([^"]+)"\)/.exec(args)?.[1];
+  if (ipv4) return !ipv4.startsWith('127.');
+  const ipv6 = /inet_pton\(AF_INET6, "([^"]+)"/.exec(args)?.[1];
+  if (ipv6) return !/^(?:::1$|::ffff:127\.)/i.test(ipv6);
+  const unix = UNIX_SOCKET.exec(args);
+  if (unix)
+    return unixSocketUnexpected(unix[1] === '@', unix[2] ?? '', context);
+  return args.includes('sun_path=') ? true : undefined;
+}
+
+/** The fd token strace -yy prints for a datagram socket, such as `23<UDP:[0.0.0.0:36948]>`. */
+function datagramToken(args: string): string | undefined {
+  return /^\d+<UDP(?:v6)?:\[[^\]>]*\]>/.exec(args)?.[0];
 }
 
 /** -yy decorates the socket fd with its peer: `3<UNIX-STREAM:[1->2,"/run/user/1000/bus"]>`. */
@@ -1148,7 +1193,12 @@ function connectedPeerUnexpected(
   }
   if (!/^(?:TCP|UDP)(?:v6)?$/.test(family)) return undefined;
   const peer = detail.split('->')[1];
-  if (peer === undefined) return undefined;
+  if (peer === undefined) {
+    // A datagram socket bound and then connect()ed is decorated with its local
+    // address only (Chromium's DNS client): the observed connect() names the peer.
+    const token = datagramToken(args);
+    return token === undefined ? undefined : context.datagramPeers.get(token);
+  }
   return !/^(?:127\.|\[::1\]:|\[::ffff:127\.)/i.test(peer);
 }
 
@@ -1174,6 +1224,12 @@ export interface ParsedStrace {
 
 interface CwdRecord {
   dir: string | undefined;
+}
+
+/** A thread's working directory read from /proc, and the process it belongs to. */
+export interface InitialCwd {
+  readonly dir: string;
+  readonly process: number;
 }
 
 interface CloneEntry {
@@ -1215,7 +1271,20 @@ class CwdTracker {
   private readonly pending = new Map<number, CloneEntry[]>();
   private readonly byLine = new Map<number, CloneEntry>();
 
-  constructor(lines: readonly (StraceLine | null)[]) {
+  constructor(
+    lines: readonly (StraceLine | null)[],
+    initial: ReadonlyMap<number, InitialCwd> = new Map(),
+  ) {
+    // Threads of one process with the same directory share one record, so a
+    // later chdir by any of them is seen by all (they share an fs_struct).
+    const shared = new Map<string, CwdRecord>();
+    for (const [tid, { dir, process }] of initial) {
+      if (!dir.startsWith('/')) continue;
+      const key = `${process}\0${dir}`;
+      const record = shared.get(key) ?? { dir: normalPath(dir) };
+      shared.set(key, record);
+      this.records.set(tid, record);
+    }
     const flags = new Map<number, string | undefined>();
     lines.forEach((line, index) => {
       if (
@@ -1323,6 +1392,11 @@ export function parseStraceLog(
     readonly allowed?: AllowedAccess;
     /** Pids known to belong to the observed tree; every pid in the log is added. */
     readonly pids?: readonly number[];
+    /**
+     * Working directories (absolute) of threads already running when tracing
+     * began, read from /proc at attach; any other thread starts unknown.
+     */
+    readonly cwds?: ReadonlyMap<number, InitialCwd>;
   } = {},
 ): ParsedStrace {
   const maxEvents = options.maxEvents ?? DEFAULT_MAX_EVENTS;
@@ -1336,12 +1410,36 @@ export function parseStraceLog(
     if (pid) pids.add(Number(pid));
   }
   const parsedLines = lines.map(parseStraceLine);
-  const cwds = new CwdTracker(parsedLines);
+  const cwds = new CwdTracker(parsedLines, options.cwds);
+  const datagramPeers = new Map<string, boolean>();
+  /** Index of the event made from each pid's unfinished call, until its resumed half. */
+  const interrupted = new Map<string, number>();
   for (const [index, parsed] of parsedLines.entries()) {
     if (!parsed) continue;
     // The unfinished half is the one classified event of an interrupted call;
-    // its resumed tail only completes the cwd bookkeeping (clone results).
+    // its resumed tail adds the result to that event (no second event) and
+    // completes the cwd bookkeeping (clone results).
     if (parsed.resumed) {
+      const key = `${parsed.pid ?? ''}:${parsed.operation}`;
+      const at = interrupted.get(key);
+      const half = at === undefined ? undefined : events[at];
+      if (at !== undefined && half) {
+        interrupted.delete(key);
+        // Same outcome rule as an uninterrupted line (a non-blocking connect is
+        // `-1 EINPROGRESS`, which the positive controls count as failed).
+        const failed = parsed.result.startsWith('-1');
+        const attempted = parsed.result.startsWith('?');
+        events[at] = {
+          ...half,
+          outcome: failed ? 'failed' : attempted ? 'attempted' : 'succeeded',
+          error: failed
+            ? sanitizeTarget(
+                /^-1\s+([A-Z0-9_]+)/.exec(parsed.result)?.[1] ?? 'failed',
+                redactions,
+              )
+            : null,
+        };
+      }
       cwds.follow(parsed, index);
       continue;
     }
@@ -1364,10 +1462,13 @@ export function parseStraceLog(
             pid: parsed.pid,
             pids,
             cwd: cwds.cwd(parsed.pid),
+            datagramPeers,
           }
         : undefined,
     );
     cwds.follow(parsed, index);
+    if (parsed.unfinished && parsed.pid !== null)
+      interrupted.set(`${parsed.pid}:${parsed.operation}`, events.length);
     events.push({
       atMs: parsed.atMs,
       source: 'host-process-tree',
@@ -1708,6 +1809,8 @@ interface Session {
   readonly requestedPids: readonly number[];
   readonly attachedPids: readonly number[];
   readonly attachFailures: readonly string[];
+  /** Thread working directories read from /proc before attaching. */
+  readonly initialCwds: ReadonlyMap<number, InitialCwd>;
   readonly stderr: () => string;
   timedOut: boolean;
   stopTimer: ReturnType<typeof setTimeout> | null;
@@ -1754,6 +1857,7 @@ async function finishSession(session: Session): Promise<NativeObservation> {
     maxEvents: session.maxEvents,
     redactions: session.redactions,
     pids: session.requestedPids,
+    cwds: session.initialCwds,
     ...(session.allowed ? { allowed: session.allowed } : {}),
   });
   const failures = [...session.attachFailures];
@@ -1805,6 +1909,7 @@ function createSession(
     requestedPids: readonly number[];
     attachedPids: readonly number[];
     attachFailures: readonly string[];
+    initialCwds?: ReadonlyMap<number, InitialCwd>;
     redactions: readonly string[];
     allowed?: AllowedAccess | undefined;
     maxDurationMs: number;
@@ -1825,6 +1930,7 @@ function createSession(
     requestedPids: options.requestedPids,
     attachedPids: options.attachedPids,
     attachFailures: options.attachFailures,
+    initialCwds: options.initialCwds ?? new Map(),
     stderr: collectStderr(child),
     timedOut: false,
     stopTimer: null,
@@ -1947,6 +2053,32 @@ function processParentMap(): Map<number, number> {
   return parents;
 }
 
+/** The working directory of every thread of the given processes; unreadable ones are left out (unknown). */
+function threadCwds(pids: readonly number[]): Map<number, InitialCwd> {
+  const cwds = new Map<number, InitialCwd>();
+  for (const pid of pids) {
+    let tasks: string[] = [String(pid)];
+    try {
+      tasks = [...tasks, ...readdirSync(`/proc/${pid}/task`)];
+    } catch {
+      // The process exited or hides its tasks.
+    }
+    for (const task of new Set(tasks)) {
+      try {
+        const dir = readlinkSync(
+          task === String(pid)
+            ? `/proc/${pid}/cwd`
+            : `/proc/${pid}/task/${task}/cwd`,
+        ).replace(/ \(deleted\)$/, '');
+        if (dir.startsWith('/')) cwds.set(Number(task), { dir, process: pid });
+      } catch {
+        // Unknown stays unknown: relative paths of this thread fail closed.
+      }
+    }
+  }
+  return cwds;
+}
+
 function processTree(rootPid: number): number[] {
   const parents = processParentMap();
   if (!parents.has(rootPid))
@@ -2012,6 +2144,9 @@ export async function startAttachedObservation(
     );
   const bounds = normalizeOptions(options);
   const pids = processTree(options.rootPid);
+  // Read before attaching: plain calls such as stat("./") of a process that was
+  // already running resolve against a directory the trace never shows.
+  const initialCwds = threadCwds(pids);
   const { directory, tracePath } = traceDirectory();
   const child = spawn(
     'strace',
@@ -2091,6 +2226,7 @@ export async function startAttachedObservation(
     requestedPids: pids,
     attachedPids: [...attached],
     attachFailures: failures,
+    initialCwds,
     redactions: [...bounds.redactions, homedir()],
     allowed: options.allowed,
     maxDurationMs: bounds.maxDurationMs,

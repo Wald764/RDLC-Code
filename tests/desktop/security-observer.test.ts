@@ -94,7 +94,9 @@ test('a pid-prefixed unfinished+resumed call yields exactly one classified event
   const net = parseStraceLog(connect, { allowed });
   assert.equal(net.events.length, 1);
   assert.equal(net.events[0]?.operation, 'connect');
-  assert.equal(net.events[0]?.outcome, 'attempted');
+  // The merged result is the one an uninterrupted line would show.
+  assert.equal(net.events[0]?.outcome, 'failed');
+  assert.equal(net.events[0]?.error, 'EINPROGRESS');
   assert.equal(net.events[0]?.unexpected, false);
   assert.equal(unclassifiedNetworkEvents(net.events).length, 0);
 
@@ -119,6 +121,51 @@ test('a pid-prefixed unfinished+resumed call yields exactly one classified event
   });
   assert.equal(capped.events.length, 1);
   assert.equal(capped.truncated, true);
+});
+
+test('a resumed half completes the pending event of its pid and operation', () => {
+  const allowed = {
+    open: ['/work/fixture'],
+    exec: ['/opt/vscode'],
+    home: '/home/alice',
+  };
+  const log = [
+    '900 1700000000.1 connect(3<TCP:[1->2]>, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("203.0.113.9")}, 16 <unfinished ...>',
+    '901 1700000000.12 openat(AT_FDCWD</work/fixture>, "/nonexistent/rdlc-security-host-file", O_RDONLY <unfinished ...>',
+    '902 1700000000.13 execve("/nonexistent/rdlc-probe", ["x"], 0x7ffd <unfinished ...>',
+    '900 1700000000.2 <... connect resumed>) = -1 ECONNREFUSED (Connection refused)',
+    '901 1700000000.21 <... openat resumed>) = -1 ENOENT (No such file or directory)',
+    '902 1700000000.22 <... execve resumed>) = -1 ENOENT (No such file or directory)',
+    '903 1700000000.3 openat(AT_FDCWD</work/fixture>, "/work/fixture/a", O_RDONLY <unfinished ...>',
+    '903 1700000000.4 <... openat resumed>) = 5</work/fixture/a>',
+  ].join('\n');
+  const { events } = parseStraceLog(log, { allowed });
+  assert.equal(events.length, 4);
+  const [connect, open, exec, ok] = events;
+  assert.equal(connect?.outcome, 'failed');
+  assert.equal(connect?.error, 'ECONNREFUSED');
+  assert.equal(connect?.target, '203.0.113.9:443');
+  assert.equal(connect?.unexpected, true);
+  assert.equal(open?.outcome, 'failed');
+  assert.equal(open?.error, 'ENOENT');
+  assert.equal(open?.unexpected, true);
+  assert.equal(exec?.outcome, 'failed');
+  assert.equal(exec?.error, 'ENOENT');
+  assert.equal(ok?.outcome, 'succeeded');
+  assert.equal(ok?.error, null);
+  // A resumed half without its unfinished half (attached mid-call) adds nothing.
+  assert.equal(
+    parseStraceLog(
+      '900 1700000000.2 <... connect resumed>) = -1 ECONNREFUSED (Connection refused)',
+      { allowed },
+    ).events.length,
+    0,
+  );
+  // An unfinished call that never resumes stays attempted.
+  assert.equal(
+    parseStraceLog(log.split('\n')[0]!, { allowed }).events[0]?.outcome,
+    'attempted',
+  );
 });
 
 test('URL sanitization keeps only the origin', () => {
@@ -1196,10 +1243,24 @@ test('the runner sweep removes tagged rules of a killed run and nothing else', (
 
 test('strace does not trace the receive calls, which are never an outbound attempt', () => {
   const joined = STRACE_ARGS.join(' ');
-  assert.match(joined, /-e trace=%network,%file,%process(?: |$)/);
-  assert.match(joined, /-e trace=!recvfrom,recvmsg,recvmmsg(?: |$)/);
+  // A single positive list: any negation would widen the filter to every syscall.
+  assert.equal(joined.match(/-e trace=/g)?.length, 1);
+  assert.doesNotMatch(joined, /!/);
+  const traced = /-e trace=(\S+)/.exec(joined)?.[1]?.split(',') ?? [];
+  assert.ok(traced.includes('%file') && traced.includes('%process'));
+  for (const call of ['recvfrom', 'recvmsg', 'recvmmsg', '%network'])
+    assert.ok(!traced.includes(call), call);
   // Sends, connects and sockets stay traced: the positive controls depend on them.
-  assert.doesNotMatch(joined, /!(?:[a-z]+,)*(?:send|connect|socket|bind)/);
+  for (const call of [
+    'connect',
+    'sendto',
+    'sendmsg',
+    'sendmmsg',
+    'socket',
+    'bind',
+    'accept4',
+  ])
+    assert.ok(traced.includes(call), call);
 });
 
 test('receive calls and socket queries are never unexpected, whatever peer or address they show', () => {
@@ -1448,23 +1509,32 @@ test('user-level agent folders are probed by metadata only and argv.json is read
       `statx(AT_FDCWD</>, "${HOME}/.claude", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
       false,
     ],
-    // Only the folders themselves: a stat of anything below them is unexpected.
+    // Metadata calls may also probe below the folders (instructions, agents, skills).
     [
       `statx(AT_FDCWD</>, "${HOME}/.claude/skills", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
-      true,
+      false,
     ],
     [
       `statx(AT_FDCWD</>, "${HOME}/.claude/settings.json", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
-      true,
+      false,
     ],
+    // ... except the metadata of a credential-looking name.
     [`stat("${HOME}/.claude/.credentials.json", 0x7ffd) = 0`, true],
     [
       `statx(AT_FDCWD</>, "${HOME}/.copilot/mcp-config.json", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
-      true,
+      false,
+    ],
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.copilot/instructions", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
+      false,
     ],
     [
       `statx(AT_FDCWD</>, "${HOME}/.agents/skills", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
-      true,
+      false,
+    ],
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.vscode/agent-plugins/x/plugin.json", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
+      false,
     ],
     [
       `statx(AT_FDCWD</>, "${HOME}/.copilot", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
@@ -1478,7 +1548,9 @@ test('user-level agent folders are probed by metadata only and argv.json is read
       `statx(AT_FDCWD</>, "${HOME}/.vscode/agent-plugins", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
       false,
     ],
-    [`access("${HOME}/.claude/agents", R_OK) = -1 ENOENT (x)`, true],
+    [`access("${HOME}/.claude/agents", R_OK) = -1 ENOENT (x)`, false],
+    [`lstat("${HOME}/.claude/rules", 0x7ffd) = -1 ENOENT (x)`, false],
+    [`readlink("${HOME}/.copilot/agents", 0x7ffd, 64) = -1 ENOENT (x)`, false],
     // Contents may hold credentials: opening or changing anything there is unexpected.
     [
       `openat(AT_FDCWD</>, "${HOME}/.claude/.credentials.json", O_RDONLY) = 3`,
@@ -1696,4 +1768,80 @@ test('plain relative paths resolve against the cwd the trace has shown for that 
     );
     assert.equal(events.at(-1)?.unexpected, expected, `${extra} => ${text}`);
   }
+});
+
+test('working directories read at attach resolve relative paths; unknown ones still fail closed', () => {
+  const allowed = { open: ['/work/fixture'], exec: [], home: '/home/alice' };
+  const stat = (pid: number, path: string) =>
+    `${pid} 1700000000.1 stat("${path}", 0x7ffd) = 0`;
+  const cwds = new Map([
+    [900, { dir: '/work/fixture', process: 900 }],
+    [901, { dir: '/work/fixture', process: 900 }],
+    [950, { dir: '/etc/ssl', process: 950 }],
+  ]);
+  const classify = (log: string) =>
+    parseStraceLog(log, { allowed, cwds }).events.map(
+      (event) => event.unexpected,
+    );
+  assert.deepEqual(classify(stat(900, './')), [false]);
+  assert.deepEqual(classify(stat(901, 'a.txt')), [false]);
+  // Not seeded: unknown cwd, fail closed.
+  assert.deepEqual(classify(stat(777, './')), [true]);
+  assert.deepEqual(
+    parseStraceLog(stat(900, './'), { allowed }).events.map(
+      (e) => e.unexpected,
+    ),
+    [true],
+  );
+  // A seeded cwd outside the allowlist is still outside it.
+  assert.deepEqual(classify(stat(950, 'passwd-')), [true]);
+  // A chdir by one thread of the process is seen by its sibling thread.
+  assert.deepEqual(
+    classify(
+      ['900 1700000000.05 chdir("/etc") = 0', stat(901, 'hostname')].join('\n'),
+    ),
+    [true, true],
+  );
+  // Children inherit the seeded directory.
+  assert.deepEqual(
+    classify(
+      [
+        '900 1700000000.05 clone(child_stack=NULL, flags=SIGCHLD) = 905',
+        stat(905, './'),
+      ].join('\n'),
+    ),
+    [undefined, false],
+  );
+});
+
+test('an addressless send on a connect()ed datagram socket is judged by the observed peer', () => {
+  const allowed = { open: ['/work/fixture'], exec: [], home: '/home/alice' };
+  const fd = '23<UDP:[0.0.0.0:36948]>';
+  const connect = (peer: string, id = fd) =>
+    `900 1700000000.1 connect(${id}, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("${peer}")}, 16) = 0`;
+  const send = (id = fd) =>
+    `900 1700000000.2 sendto(${id}, "q", 1, 0, NULL, 0) = 1`;
+  const classify = (...lines: string[]) =>
+    parseStraceLog(lines.join('\n'), { allowed }).events.map(
+      (event) => event.unexpected,
+    );
+  // Chromium's DNS client: bind, connect to the local resolver, then send without address.
+  assert.deepEqual(classify(connect('127.0.0.53'), send(), send()), [
+    false,
+    false,
+    false,
+  ]);
+  // A non-local resolver is flagged on the send, and a later loopback connect cannot clear it.
+  assert.deepEqual(classify(connect('168.63.129.16'), send()), [false, true]);
+  assert.deepEqual(
+    classify(connect('168.63.129.16'), connect('127.0.0.53'), send()),
+    [false, false, true],
+  );
+  // No observed connect (socket connected before tracing), another socket or a stream socket: fail closed.
+  assert.deepEqual(classify(send()), [true]);
+  assert.deepEqual(
+    classify(connect('127.0.0.53'), send('24<UDP:[0.0.0.0:36948]>')),
+    [false, true],
+  );
+  assert.deepEqual(classify(send('23<TCP:[0.0.0.0:36948]>')), [true]);
 });

@@ -325,8 +325,8 @@ async function observe(
     capability,
     redactions: [driver.profileDir, root, driver.identity.executablePath],
     allowed: allowedAccess(driver, isolation),
-    maxEvents: 200_000,
-    maxTraceBytes: 64 * 1024 * 1024,
+    maxEvents: 400_000,
+    maxTraceBytes: 128 * 1024 * 1024,
   });
   await observer.start();
   let error: unknown;
