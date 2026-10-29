@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reference": "tests/desktop/baselines/bootstrap/bootstrap.png",
-  "sha256": "807782d1920a94afdc238d42017ac22b781fb2eebb8b3e27d09fcaaab31d07a8",
+  "sha256": "82a404fabad073fe52c4edc8349c6d30bd992cfafaa4d4a13f4618f0d03fdd7f",
   "environment": {
     "os": "linux",
     "osImage": "ubuntu-24.04",
@@ -31,5 +31,5 @@
     "threshold": 0.1,
     "maxDiffPixelRatio": 0.001
   },
-  "generatedAt": "2026-10-29T10:43:54.685Z"
+  "generatedAt": "2026-10-29T11:59:31.767Z"
 }
