@@ -259,11 +259,17 @@ async function activateMenu(
   const target = row(page, label);
   // Select first: the cue only returns once the host accepted that selection,
   // so the menu's own action never races a still-pending native dispatch.
-  await target.click();
-  await expect(target, `${label} is selected`).toHaveAttribute(
-    'aria-label',
-    /Selected/,
-  );
+  // The product drops a click on a row whose authority is stale (tree rebuilt
+  // after Undo/Redo or a mutation) by design, so the click and the cue converge
+  // together; re-clicking an already selected row is idempotent.
+  await expect(async () => {
+    await target.click({ timeout: 5_000 });
+    await expect(target, `${label} is selected`).toHaveAttribute(
+      'aria-label',
+      /Selected/,
+      { timeout: 3_000 },
+    );
+  }).toPass({ timeout: 30_000 });
   await target.click({ button: 'right' });
   const item = page.getByRole('menuitem', { name: title });
   await expect(item, `${title} is offered for ${label}`).toHaveCount(1);
@@ -502,7 +508,9 @@ test('US3.2-add-edit-delete', async () => {
        * single-dataset fixture every field row exposes its sibling count, which is
        * exactly the `<Field ` count of the saved document on disk — that count is
        * the freshness oracle for every count-changing mutation, and the renamed
-       * row's own label covers the one that changes no count.
+       * row's own label covers the one that changes no count. A rebuild that keeps
+       * the row count (Undo/Redo) is invisible to this oracle, so `activateMenu`
+       * also re-clicks until the host accepts the selection.
        */
       const inventoryShowsSavedFields = async (
         rowLabel: string,

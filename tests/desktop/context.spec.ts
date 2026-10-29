@@ -80,6 +80,41 @@ function within<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
   ]).finally(() => clearTimeout(timer));
 }
 
+/** Bound for one workbench interaction (click, palette row, widget state). */
+const STEP_TIMEOUT = 15_000;
+
+/**
+ * Run one helper step and name it in the failure: a bare `locator.click:
+ * Timeout` inside a hundred-iteration loop says nothing about where it stalled.
+ */
+async function step<T>(what: string, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${what}: ${detail.split('\n')[0]}`, { cause: error });
+  }
+}
+
+/**
+ * Time one phase of a long test: the elapsed time goes to the console as it
+ * ends (so a run killed by the test timeout still shows the hot spot) and to
+ * the test annotations for the report.
+ */
+async function timed<T>(label: string, work: () => Promise<T>): Promise<T> {
+  const started = Date.now();
+  try {
+    return await work();
+  } finally {
+    const elapsed = `${((Date.now() - started) / 1000).toFixed(1)} s`;
+    console.log(`[context] ${label}: ${elapsed}`);
+    test.info().annotations.push({
+      type: 'timing',
+      description: `${label}: ${elapsed}`,
+    });
+  }
+}
+
 const freePort = (): Promise<number> =>
   new Promise((done, fail) => {
     const server = createServer();
@@ -277,9 +312,18 @@ async function openFile(ctx: Ctx, name: string): Promise<void> {
   const activeTab = (await group.count())
     ? group.locator('.tab.active')
     : page.locator('.editor-group-container .tab.active').first();
-  if ((await activeTab.count()) > 0) await activeTab.click();
+  if ((await activeTab.count()) > 0)
+    await step(
+      `openFile ${name}: re-entering the workbench through the tab`,
+      () => activeTab.click({ timeout: STEP_TIMEOUT }),
+    );
   await blur(page);
   await page.keyboard.press(`${MOD}+p`);
+  await step(`openFile ${name}: quick open showing`, () =>
+    page
+      .locator('.quick-input-widget:visible .quick-input-box input')
+      .waitFor({ state: 'visible', timeout: STEP_TIMEOUT }),
+  );
   await page.keyboard.insertText(ctx.path(name));
   // Results show the file name with its folder as the description, so match the
   // last path segments rather than the whole (OS-specific) path.
@@ -290,8 +334,13 @@ async function openFile(ctx: Ctx, name: string): Promise<void> {
     .locator('.quick-input-widget:visible .monaco-list-row')
     .filter({ hasText: file });
   if (parent) candidates = candidates.filter({ hasText: parent });
-  await candidates.first().click();
-  await expect(page.locator('.quick-input-widget:visible')).toBeHidden();
+  await step(`openFile ${name}: result row`, () =>
+    candidates.first().click({ timeout: STEP_TIMEOUT }),
+  );
+  await expect(
+    page.locator('.quick-input-widget:visible'),
+    `openFile ${name}: quick open closed`,
+  ).toBeHidden({ timeout: STEP_TIMEOUT });
 }
 
 /** Palette command followed by quick-pick selections. */
@@ -305,18 +354,29 @@ async function palette(
   const input = page.locator(
     '.quick-input-widget:visible .quick-input-box input',
   );
-  await input.waitFor({ state: 'visible' });
+  await step(`palette ${command}: input showing`, () =>
+    input.waitFor({ state: 'visible', timeout: STEP_TIMEOUT }),
+  );
   await page.keyboard.type(command, { delay: 10 });
   const rows = page.locator(
     '.quick-input-widget:visible .quick-input-list .monaco-list-row',
   );
-  await rows.filter({ hasText: command }).first().click();
+  await step(`palette ${command}: command row`, () =>
+    rows.filter({ hasText: command }).first().click({ timeout: STEP_TIMEOUT }),
+  );
   for (const pick of picks) {
-    await input.waitFor({ state: 'visible' });
+    await step(`palette ${command}: input for pick ${pick}`, () =>
+      input.waitFor({ state: 'visible', timeout: STEP_TIMEOUT }),
+    );
     await page.keyboard.type(pick, { delay: 10 });
-    await rows.filter({ hasText: pick }).first().click();
+    await step(`palette ${command}: pick row ${pick}`, () =>
+      rows.filter({ hasText: pick }).first().click({ timeout: STEP_TIMEOUT }),
+    );
   }
-  await expect(page.locator('.quick-input-widget:visible')).toBeHidden();
+  await expect(
+    page.locator('.quick-input-widget:visible'),
+    `palette ${command}: palette closed`,
+  ).toBeHidden({ timeout: STEP_TIMEOUT });
 }
 
 /**
@@ -463,7 +523,9 @@ async function activateEditor(
   // matches first: rejecting a candidate must stay inside the race window.
   const ordered = kind === 'designer' ? [...indices].reverse() : indices;
   for (const index of ordered) {
-    await tabs.nth(index).click();
+    await step(`activateEditor ${file} (${kind}): clicking tab ${index}`, () =>
+      tabs.nth(index).click({ timeout: STEP_TIMEOUT }),
+    );
     if (await editorIs(page, kind)) return;
   }
   throw new Error(`No ${kind} tab for ${file} became active`);
@@ -475,14 +537,51 @@ async function activateEditor(
  * so the tab action is the only close that decides nothing by itself.
  */
 async function closeActiveTab(page: Page): Promise<void> {
-  await page
-    .locator('.editor-group-container .tab.active')
-    .first()
+  const tab = page.locator('.editor-group-container .tab.active').first();
+  // The close action of a tab is only laid out while it is hovered or active
+  // (and a dirty tab shows its dot until hovered): hover reveals it first.
+  await step('closeActiveTab: hovering the active tab', () =>
+    tab.hover({ timeout: STEP_TIMEOUT }),
+  );
+  const close = tab
     .locator(
       '.tab-actions [aria-label^="Close"], .tab-actions [title^="Close"]',
     )
-    .first()
-    .click();
+    .first();
+  await step('closeActiveTab: close action visible', () =>
+    close.waitFor({ state: 'visible', timeout: STEP_TIMEOUT }),
+  );
+  await step('closeActiveTab: clicking the close action', () =>
+    close.click({ timeout: STEP_TIMEOUT }),
+  );
+}
+
+/**
+ * Right-click a Structure row and activate one context-menu item. The menu is
+ * awaited (and the right-click repeated if it never rendered) before the item
+ * is touched, and the item is then pressed once and held past the 100 ms window
+ * in which VS Code ignores a context-menu mouseup.
+ */
+async function activateRowMenu(
+  page: Page,
+  rowName: string,
+  item: RegExp,
+): Promise<void> {
+  const target = row(page, rowName);
+  const entry = page.getByRole('menuitem', { name: item });
+  await step(`row menu ${rowName}: row visible`, () =>
+    target.waitFor({ state: 'visible', timeout: STEP_TIMEOUT }),
+  );
+  await expect(async () => {
+    await target.click({ button: 'right', timeout: 5_000 });
+    await entry.waitFor({ state: 'visible', timeout: 5_000 });
+  }, `row menu ${rowName}: ${item} offered`).toPass({
+    timeout: 30_000,
+  });
+  // VS Code arms context-menu mouseup handlers 100ms after render.
+  await step(`row menu ${rowName}: clicking ${item}`, () =>
+    entry.click({ delay: 250, timeout: STEP_TIMEOUT }),
+  );
 }
 
 async function expectHeaders(page: Page, file: string): Promise<void> {
@@ -759,6 +858,11 @@ async function runRace(
     throw new Error(
       `${options.id}: a previous case left unsaved changes; closing editors would prompt`,
     );
+  const started = Date.now();
+  const laps: string[] = [];
+  const lap = (label: string): void => {
+    laps.push(`${label} ${Date.now() - started} ms`);
+  };
   await ctx.driver.command('View: Close All Editors');
   const priorA = await readFile(ctx.path('a.rdlc'), 'utf8');
   if (priorA !== markers.originalA) {
@@ -798,16 +902,20 @@ async function runRace(
   const tabs = page.locator('.part.editor .tabs-container .tab');
   const baseline = await tabs.count();
   const hold = await armOpeningHold(ctx.inspector);
+  lap('setup');
   try {
-    if (options.action === 'select') await row(page, 'Front').click();
+    if (options.action === 'select')
+      await step(`${options.id}: clicking the Front row`, () =>
+        row(page, 'Front').click({ timeout: STEP_TIMEOUT }),
+      );
     else if (options.action === 'properties') {
-      await row(page, 'Front').click({ button: 'right' });
-      // VS Code arms context-menu mouseup handlers 100ms after render.
-      await page
-        .getByRole('menuitem', { name: /Properties/ })
-        .click({ delay: 250 });
+      await activateRowMenu(page, 'Front', /Properties/);
     } else
-      await page.getByRole('treeitem', { name: /^Textbox, Insert/ }).click();
+      await step(`${options.id}: clicking Textbox, Insert`, () =>
+        page
+          .getByRole('treeitem', { name: /^Textbox, Insert/ })
+          .click({ timeout: STEP_TIMEOUT }),
+      );
 
     // The host stops right after the real opening; the refusal below is
     // mandatory, so a request that never reached that point cannot pass.
@@ -817,24 +925,35 @@ async function runRace(
       `${options.id}: the opening reaching the held line`,
     );
     await observeOpening(page, baseline);
+    lap('held');
 
-    if (options.disturbance === 'edit')
+    if (options.disturbance === 'edit') {
       await writeFile(ctx.path('a.rdlc'), markers.markedA);
-    else if (options.disturbance === 'switch')
-      await activateEditor(page, 'b.rdlc', 'source');
-    else if (options.disturbance === 'non-report')
-      await activateEditor(page, 'notes.txt', 'source');
-    else {
+      // No observable state: the disk watcher reloads the model inside the
+      // renderer without any tab, status or dirty change (the host is held), so
+      // a bounded settle is the only way to let it land before the resume.
+      await page.waitForTimeout(2_500);
+    } else if (options.disturbance === 'close') {
+      const open = await tabs.count();
       // Dispose the panel that is opening, never the source editor: closing
       // the source would leave the panel to finish and dispatch.
       if ((await sourceEditorActive(page)) === true)
         await activateEditor(page, 'a.rdlc', 'designer');
       await closeActiveEditor(page);
+      await expect
+        .poll(() => tabs.count(), `${options.id}: the panel tab closed`)
+        .toBe(open - 1);
+    } else {
+      // The tab click is the disturbance; the active tab and status bar are
+      // the renderer applying it, already confirmed by `activateEditor`.
+      const file = options.disturbance === 'switch' ? 'b.rdlc' : 'notes.txt';
+      await activateEditor(page, file, 'source');
+      await expect(
+        page.locator('.part.editor .tabs-container .tab.active').first(),
+        `${options.id}: ${file} is the active tab`,
+      ).toContainText(file);
     }
-    // Bounded settle for the renderer to apply the disturbance (the disk
-    // watcher reload is the slowest); the resumed host then meets it before
-    // readiness.
-    await page.waitForTimeout(2_500);
+    lap('disturbed');
   } finally {
     // A failed step must not leave the extension host held: the shutdown
     // would wait on it and the failure would surface as a bare test timeout.
@@ -851,6 +970,7 @@ async function runRace(
     })
     .toMatch(REFUSAL);
   const reason = await notifications(page);
+  lap('refused');
 
   const expectedA =
     options.disturbance === 'edit' ? markers.markedA : markers.originalA;
@@ -871,6 +991,8 @@ async function runRace(
   ).toEqual(['.vscode', 'a.rdlc', 'b.rdlc', 'notes.txt']);
 
   await dismissNotifications(page);
+  lap('verified');
+  console.log(`[context] ${options.id}: ${laps.join(', ')}`);
   return {
     ...options,
     reason: reason.slice(0, 240),
@@ -1599,11 +1721,7 @@ test('FR-021-view-local', async () => {
     expect(await designerCount(page)).toBe(0);
 
     // Code XML is host-only: it reveals source, it never opens a designer.
-    await row(page, 'Front').click({ button: 'right' });
-    // VS Code arms context-menu mouseup handlers 100ms after render.
-    await page
-      .getByRole('menuitem', { name: /Code XML/ })
-      .click({ delay: 250 });
+    await activateRowMenu(page, 'Front', /Code XML/);
     await expect(page.getByRole('menuitem', { name: /Code XML/ })).toHaveCount(
       0,
     );
@@ -1635,11 +1753,7 @@ test('FR-021-view-local', async () => {
     // binds the captured target.
     await closeDesigner();
     await ctx.driver.command('Focus on Report Structure View');
-    await row(page, 'Front').click({ button: 'right' });
-    // VS Code arms context-menu mouseup handlers 100ms after render.
-    await page
-      .getByRole('menuitem', { name: /Properties/ })
-      .click({ delay: 250 });
+    await activateRowMenu(page, 'Front', /Properties/);
     await expect
       .poll(() => designerCount(page), 'properties opens A once')
       .toBe(1);
@@ -2231,12 +2345,14 @@ test('SC-005-switch-races', async () => {
     await showRdlc(ctx);
 
     // Phase 1: 100 document/view switches with identical item names.
-    await openFile(ctx, 'a.rdlc');
-    await ctx.driver.command('RDLC Code: Open Designer');
-    await expect.poll(() => designerCount(page)).toBe(1);
-    await openFile(ctx, 'b.rdlc');
-    await ctx.driver.command('RDLC Code: Open Designer');
-    await expect.poll(() => designerCount(page)).toBe(2);
+    await timed('SC-005 phase 1 setup (two designers)', async () => {
+      await openFile(ctx, 'a.rdlc');
+      await ctx.driver.command('RDLC Code: Open Designer');
+      await expect.poll(() => designerCount(page)).toBe(1);
+      await openFile(ctx, 'b.rdlc');
+      await ctx.driver.command('RDLC Code: Open Designer');
+      await expect.poll(() => designerCount(page)).toBe(2);
+    });
     const targets = [
       { kind: 'source', file: 'a.rdlc' },
       { kind: 'sidebar', file: 'a.rdlc' },
@@ -2244,17 +2360,23 @@ test('SC-005-switch-races', async () => {
       { kind: 'designer', file: 'a.rdlc' },
       { kind: 'designer', file: 'b.rdlc' },
     ] as const;
-    for (let index = 0; index < 100; index++) {
-      const step = targets[index % targets.length]!;
-      if (step.kind === 'sidebar')
-        await ctx.driver.command('Focus on Report Structure View');
-      else await activateEditor(page, step.file, step.kind);
-      await expectHeaders(page, step.file);
-      expect(
-        (await notifications(page)).trim(),
-        `switch ${index} refused nothing`,
-      ).toBe('');
-    }
+    // Editors are switched by clicking their tab (`activateEditor`); only the
+    // sidebar focus has no tab and needs the palette command.
+    await timed('SC-005 phase 1 (100 switches)', async () => {
+      for (let index = 0; index < 100; index++) {
+        const step = targets[index % targets.length]!;
+        if (step.kind === 'sidebar')
+          await ctx.driver.command('Focus on Report Structure View');
+        else await activateEditor(page, step.file, step.kind);
+        await expectHeaders(page, step.file);
+        expect(
+          (await notifications(page)).trim(),
+          `switch ${index} refused nothing`,
+        ).toBe('');
+        if ((index + 1) % 20 === 0)
+          console.log(`[context] SC-005 switches done: ${index + 1}`);
+      }
+    });
     expect(await readFile(ctx.path('a.rdlc'), 'utf8')).toBe(originalA);
     expect(await readFile(ctx.path('b.rdlc'), 'utf8')).toBe(originalB);
     expect(await dirtyCount(page)).toBe(0);
@@ -2273,19 +2395,21 @@ test('SC-005-switch-races', async () => {
       { id: 'switch-create', action: 'create', disturbance: 'switch' },
     ];
     const results: RaceResult[] = [];
-    for (let index = 0; index < 50; index++) {
-      const options = cases[index % cases.length]!;
-      results.push(
-        await runRace(
-          ctx,
-          {
-            ...options,
-            id: `${options.id}-${index + 1}`,
-          },
-          markers,
-        ),
-      );
-    }
+    await timed('SC-005 phase 2 (50 races)', async () => {
+      for (let index = 0; index < 50; index++) {
+        const options = cases[index % cases.length]!;
+        results.push(
+          await runRace(
+            ctx,
+            {
+              ...options,
+              id: `${options.id}-${index + 1}`,
+            },
+            markers,
+          ),
+        );
+      }
+    });
     expect(results).toHaveLength(50);
 
     await writeLog('race-log-sc-005-switch-races', {

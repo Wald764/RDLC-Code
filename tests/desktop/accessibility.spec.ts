@@ -905,7 +905,10 @@ test('FR-027-keyboard', async () => {
       const itemBox = await frame.locator('.item.primary').boundingBox();
       expect(itemBox).not.toBeNull();
       await nameField.focus();
-      await page.keyboard.press(`${MOD}+a`);
+      await expect(nameField).toBeFocused();
+      // Keys are relayed into the webview asynchronously and in no guaranteed
+      // order against each other, so the selection is awaited before the arrow.
+      await selectAllInField(page, nameField);
       await page.keyboard.press('ArrowRight');
       // Relayed into the webview asynchronously, like the clipboard keys.
       await expect
@@ -918,7 +921,7 @@ test('FR-027-keyboard', async () => {
       expect(await frame.locator('.item.primary').boundingBox()).toEqual(
         itemBox,
       );
-      await page.keyboard.press(`${MOD}+a`);
+      await selectAllInField(page, nameField);
       // The workbench relays clipboard shortcuts into the webview
       // asynchronously, so each result is awaited rather than read once.
       await page.keyboard.press(`${MOD}+x`);
