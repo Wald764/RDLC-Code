@@ -1,0 +1,9 @@
+image: ubuntu24 20261026.354.1
+PRETTY_NAME="Ubuntu 24.04.5 LTS"
+VERSION_ID="24.04"
+fontconfig 2.15.0-1.1ubuntu2
+fonts-dejavu-core 2.37-8
+locales 2.39-0ubuntu8.9
+vscode: 1.142.0
+display: 1440x1000 dpr=1
+locale: en_US.UTF-8 timezone: UTC

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "reference": "tests/desktop/baselines/bootstrap/bootstrap.png",
+  "sha256": "807782d1920a94afdc238d42017ac22b781fb2eebb8b3e27d09fcaaab31d07a8",
+  "environment": {
+    "os": "linux",
+    "osImage": "ubuntu-24.04",
+    "vscodeVersion": "1.142.0",
+    "vscodeBuild": "6d62b1d5dace93a33b3a6d3eca1317bd5e15bcb1",
+    "vscodeHash": "f36c0ef83163bb3c7b99c5860ce98a5d4055dd6b69d3a4d393d7563e499d3456",
+    "driverVersion": "playwright@1.64.1",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "theme": "vs-dark monaco-enable-motion modern-ui modern-ui-tabs modern-ui-connected-editor-tabs modern-ui-notifications-dialogs monaco-workbench linux chromium nopanel floating-panels panel-position-bottom panel-alignment-center",
+    "fonts": "DejaVu Math TeX Gyre; DejaVu Sans; DejaVu Sans Mono; DejaVu Sans,DejaVu Sans Condensed; DejaVu Sans,DejaVu Sans Light; DejaVu Serif; DejaVu Serif,DejaVu Serif Condensed; Lato; Lato,Lato Black; Lato,Lato Hairline; Lato,Lato Heavy; Lato,Lato Light; Lato,Lato Medium; Lato,Lato Semibold; Lato,Lato Thin; Liberation Mono; Liberation Sans; Liberation Serif; Noto Color Emoji",
+    "display": {
+      "width": 1440,
+      "height": 1000,
+      "dpr": 1,
+      "interfaceScale": 100,
+      "reportZoom": 100
+    }
+  },
+  "vscode": {
+    "version": "1.142.0",
+    "build": "6d62b1d5dace93a33b3a6d3eca1317bd5e15bcb1",
+    "executableSha256": "f36c0ef83163bb3c7b99c5860ce98a5d4055dd6b69d3a4d393d7563e499d3456"
+  },
+  "driver": "playwright@1.64.1",
+  "tolerances": {
+    "threshold": 0.1,
+    "maxDiffPixelRatio": 0.001
+  },
+  "generatedAt": "2026-10-29T10:43:54.685Z"
+}
