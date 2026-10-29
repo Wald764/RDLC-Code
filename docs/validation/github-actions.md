@@ -43,10 +43,18 @@ npm/JSON-schema/TypeScript package fetching, cloud-changes resume and the built-
 features (`chat.disableAIFeatures`) switched off, and with the network-active built-in
 extensions disabled (`GitHub.copilot-chat`, `TypeScriptTeam.jsts-chat-features`,
 `vscode.github`, `vscode.github-authentication`, `vscode.microsoft-authentication`,
-`vscode.tunnel-forwarding`, `vscode.npm`, `ms-vscode.js-debug-companion`). The Linux
-host observer therefore reports traffic and file probes caused by the product and the
+`vscode.tunnel-forwarding`, `vscode.npm`, `ms-vscode.js-debug-companion`,
+`vscode.terminal-suggest`). Terminal suggestions and shell integration
+(`terminal.integrated.suggest.enabled`, `terminal.integrated.shellIntegration.enabled`),
+task auto-detection (`task.autoDetect`, `gulp|grunt|jake.autoDetect`) and the JavaScript
+debugger auto-attach (`debug.javascript.autoAttachFilter`) are off as well, so the host
+no longer probes `PATH` entries (docker, mvn, gradle) or the workspace in the background.
+The Linux host observer therefore reports traffic and file probes caused by the product and the
 journeys rather than by VS Code background features; its allowlists are not widened.
-Workspace trust settings are unchanged. Hiding the Chat view alters the secondary side
+Workspace trust settings are unchanged. Journeys open workspace files through the test
+harness command `RDLC Test: Open Requested File` (request and result files in the
+harness' global storage, `openWorkspaceFile` in the driver) rather than Quick Open file
+search, whose result row sometimes never appeared on macOS. Hiding the Chat view alters the secondary side
 bar and the designer width, so the pixel references below must be regenerated after
 this change.
 

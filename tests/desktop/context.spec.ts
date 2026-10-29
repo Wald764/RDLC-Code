@@ -28,7 +28,11 @@ import {
 } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
-import { launchTrustedDesktop, type DesktopDriver } from './driver.js';
+import {
+  launchTrustedDesktop,
+  openWorkspaceFile,
+  type DesktopDriver,
+} from './driver.js';
 import {
   platformSkipAccepted,
   platformSkipReason,
@@ -318,29 +322,11 @@ async function openFile(ctx: Ctx, name: string): Promise<void> {
       () => activeTab.click({ timeout: STEP_TIMEOUT }),
     );
   await blur(page);
-  await page.keyboard.press(`${MOD}+p`);
-  await step(`openFile ${name}: quick open showing`, () =>
-    page
-      .locator('.quick-input-widget:visible .quick-input-box input')
-      .waitFor({ state: 'visible', timeout: STEP_TIMEOUT }),
+  // The harness opens the file in the active group as a regular tab, so no
+  // Quick Open file search (whose result row sometimes never appears) is needed.
+  await step(`openFile ${name}: harness open`, () =>
+    openWorkspaceFile(ctx.driver, ctx.path(name)),
   );
-  await page.keyboard.insertText(ctx.path(name));
-  // Results show the file name with its folder as the description, so match the
-  // last path segments rather than the whole (OS-specific) path.
-  const segments = name.split('/');
-  const file = segments.at(-1)!;
-  const parent = segments.slice(0, -1).at(-1);
-  let candidates = page
-    .locator('.quick-input-widget:visible .monaco-list-row')
-    .filter({ hasText: file });
-  if (parent) candidates = candidates.filter({ hasText: parent });
-  await step(`openFile ${name}: result row`, () =>
-    candidates.first().click({ timeout: STEP_TIMEOUT }),
-  );
-  await expect(
-    page.locator('.quick-input-widget:visible'),
-    `openFile ${name}: quick open closed`,
-  ).toBeHidden({ timeout: STEP_TIMEOUT });
 }
 
 /** Palette command followed by quick-pick selections. */

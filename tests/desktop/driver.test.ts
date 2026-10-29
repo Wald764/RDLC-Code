@@ -18,6 +18,10 @@ import {
   ensureWorkspaceTrusted,
   finishDesktopProcess,
   launchDesktop,
+  openRequestPath,
+  openResultPath,
+  openWorkspaceFile,
+  parseOpenResult,
   parseTrustProbe,
   readExecutableVersion,
   trustProbePath,
@@ -582,6 +586,13 @@ test('trust is read from the harness probe, which the product never ships', () =
         c.title === 'RDLC Test: Report Workspace Trust',
     ),
   );
+  assert.ok(
+    manifest.contributes.commands.some(
+      (c) =>
+        c.command === 'rdlcTests.openRequestedFile' &&
+        c.title === 'RDLC Test: Open Requested File',
+    ),
+  );
   // Restricted Mode must still run the probe.
   assert.equal(manifest.capabilities.untrustedWorkspaces.supported, true);
   assert.match(
@@ -614,6 +625,116 @@ function trustFake(initial: boolean) {
     cleanup: () => rmSync(profileDir, { recursive: true, force: true }),
   };
 }
+
+test('files open through the harness request, confirmed by a matching result', async () => {
+  assert.equal(
+    parseOpenResult('{"id":"a","ok":true,"opened":"/w/a"}', 'a'),
+    '/w/a',
+  );
+  assert.throws(
+    () => parseOpenResult('{"id":"b","ok":true}', 'a'),
+    /different/,
+  );
+  assert.throws(
+    () => parseOpenResult('{"id":"a","ok":false,"error":"boom"}', 'a'),
+    /boom/,
+  );
+  const profileDir = mkdtempSync(join(tmpdir(), 'rdlc-open-'));
+  try {
+    const seen: { path: string; viewType?: string }[] = [];
+    const driver = {
+      profileDir,
+      async command(id: string) {
+        assert.equal(id, 'RDLC Test: Open Requested File');
+        const request = JSON.parse(
+          readFileSync(openRequestPath(profileDir), 'utf8'),
+        ) as { id: string; path: string; viewType?: string };
+        seen.push(request);
+        writeFileSync(
+          openResultPath(profileDir),
+          JSON.stringify({ id: request.id, ok: true, opened: request.path }),
+        );
+      },
+    };
+    await openWorkspaceFile(driver, '/w/a.rdlc');
+    await openWorkspaceFile(driver, '/w/b.rdlc', 'rdlcCode.editor');
+    assert.deepEqual(
+      seen.map(({ path, viewType }) => [path, viewType]),
+      [
+        ['/w/a.rdlc', undefined],
+        ['/w/b.rdlc', 'rdlcCode.editor'],
+      ],
+    );
+    const answering = (...answers: (string | (() => void))[]) => ({
+      profileDir,
+      async command() {
+        for (const answer of answers)
+          if (typeof answer === 'string')
+            writeFileSync(openResultPath(profileDir), answer);
+          else answer();
+      },
+    });
+    // A result for another request is never evidence: the wait names the last cause.
+    await assert.rejects(
+      openWorkspaceFile(
+        answering(JSON.stringify({ id: 'stale', ok: true })),
+        '/w/c.rdlc',
+        undefined,
+        300,
+      ),
+      /did not report opening \/w\/c\.rdlc: .*different open request/,
+    );
+    // No result at all.
+    await assert.rejects(
+      openWorkspaceFile(answering(), '/w/c.rdlc', undefined, 300),
+      /did not report opening .*ENOENT/,
+    );
+    // A harness failure is final and reports its error, even without an id.
+    await assert.rejects(
+      openWorkspaceFile(
+        answering(JSON.stringify({ id: null, ok: false, error: 'boom' })),
+        '/w/c.rdlc',
+      ),
+      /Opening \/w\/c\.rdlc: .*boom/,
+    );
+    // A torn read is retried, and a late mismatched id is followed by the right one.
+    let request = '';
+    const late = {
+      profileDir,
+      async command() {
+        request = (
+          JSON.parse(readFileSync(openRequestPath(profileDir), 'utf8')) as {
+            id: string;
+          }
+        ).id;
+        writeFileSync(openResultPath(profileDir), '{"id":');
+        setTimeout(
+          () =>
+            writeFileSync(
+              openResultPath(profileDir),
+              JSON.stringify({ id: 'stale', ok: true }),
+            ),
+          150,
+        );
+        setTimeout(
+          () =>
+            writeFileSync(
+              openResultPath(profileDir),
+              JSON.stringify({ id: request, ok: true, opened: '/w/d.rdlc' }),
+            ),
+          350,
+        );
+      },
+    };
+    await openWorkspaceFile(late, '/w/d.rdlc');
+    await assert.rejects(
+      openWorkspaceFile(answering(), 'relative/e.rdlc'),
+      /must be absolute/,
+    );
+  } finally {
+    rmSync(profileDir, { recursive: true, force: true });
+  }
+});
 
 test('functional journeys grant trust through the public path and confirm it before running', async () => {
   const fake = trustFake(false);

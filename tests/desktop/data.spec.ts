@@ -27,7 +27,11 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { launchTrustedDesktop, type DesktopDriver } from './driver.js';
+import {
+  launchTrustedDesktop,
+  openWorkspaceFile,
+  type DesktopDriver,
+} from './driver.js';
 
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
 const STALE =
@@ -176,21 +180,11 @@ const source = (ctx: Ctx, name: string): Promise<string> =>
 const dirtyTabs = (page: Page) => page.locator('.monaco-workbench .tab.dirty');
 
 async function openFile(ctx: Ctx, name: string): Promise<void> {
-  await ctx.page.evaluate(() => {
-    (document.activeElement as HTMLElement | null)?.blur();
-  });
-  await ctx.page.keyboard.press(`${MOD}+p`);
-  await ctx.page.keyboard.insertText(ctx.path(name));
-  await ctx.page
-    .locator('.quick-input-widget:visible .monaco-list-row')
-    .filter({ hasText: name })
-    .first()
-    .click();
-  await expect(ctx.page.locator('.quick-input-widget:visible')).toBeHidden();
+  await openWorkspaceFile(ctx.driver, ctx.path(name));
 }
 
 /**
- * Quick Open resolves `.rdlc` to the text editor, so every journey that needs
+ * The harness open resolves `.rdlc` to the text editor, so every journey that needs
  * the designer opens it explicitly through the host's own public command.
  */
 async function openReport(ctx: Ctx, name: string): Promise<Frame> {

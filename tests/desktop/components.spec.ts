@@ -10,7 +10,7 @@
  * sources are hand-written literals of 004's creation defaults — never a
  * production parser, serializer or captured output.
  *
- * Quick Open associates `.rdlc` with the text editor, so every journey that
+ * The default open associates `.rdlc` with the text editor, so every journey that
  * needs the canvas opens its own designer with `RDLC Code: Open Designer`; the
  * product's default editor association is never changed here, and the
  * source-focus auto-opening path stays owned by context.spec.ts.
@@ -36,7 +36,11 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { launchTrustedDesktop, type DesktopDriver } from './driver.js';
+import {
+  launchTrustedDesktop,
+  openWorkspaceFile,
+  type DesktopDriver,
+} from './driver.js';
 
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
 const BLANK = 'datasets/blank.rdlc';
@@ -268,18 +272,10 @@ const editorTabs = (page: Page): Locator =>
   page.locator('.part.editor .tabs-container .tab');
 
 async function openFile(ctx: Ctx, name: string): Promise<void> {
-  await blur(ctx.page);
-  await ctx.page.keyboard.press(`${MOD}+p`);
-  await ctx.page.keyboard.insertText(ctx.path(name));
-  await ctx.page
-    .locator('.quick-input-widget:visible .monaco-list-row')
-    .filter({ hasText: name })
-    .first()
-    .click();
-  await expect(ctx.page.locator('.quick-input-widget:visible')).toBeHidden();
+  await openWorkspaceFile(ctx.driver, ctx.path(name));
 }
 
-/** Quick Open leaves a text editor: a canvas journey opens its own designer. */
+/** The harness open leaves a text editor: a canvas journey opens its own designer. */
 async function openDesigner(ctx: Ctx): Promise<Frame> {
   await ctx.driver.command('RDLC Code: Open Designer');
   return ctx.driver.designerFrame();

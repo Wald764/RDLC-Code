@@ -11,6 +11,10 @@
         "title": "RDLC Test: Report Workspace Trust"
       },
       {
+        "command": "rdlcTests.openRequestedFile",
+        "title": "RDLC Test: Open Requested File"
+      },
+      {
         "command": "rdlcTests.showNativeDrag",
         "title": "RDLC Test: Show Native Drag Probe"
       }

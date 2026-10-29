@@ -26,7 +26,7 @@ import {
 } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { arch, platform, release, tmpdir } from 'node:os';
 
 /** Frozen launch contract used by the Desktop runner and specs. */
@@ -220,7 +220,7 @@ export function desktopPaths(
 /**
  * Built-in extensions that reach the network or probe the machine in the
  * background (Copilot Chat, sign-in providers, tunnels, GitHub, npm registry,
- * JS/TS chat features, the debugger companion). None is needed by an RDLC
+ * JS/TS chat features, the debugger companion, terminal completions). None is needed by an RDLC
  * journey, and the host observers must only see traffic the product causes.
  */
 export const DISABLED_BUILTIN_EXTENSIONS: readonly string[] = [
@@ -232,6 +232,8 @@ export const DISABLED_BUILTIN_EXTENSIONS: readonly string[] = [
   'vscode.tunnel-forwarding',
   'vscode.npm',
   'ms-vscode.js-debug-companion',
+  // Probes every PATH entry (docker, mvn, gradle...) to build completions.
+  'vscode.terminal-suggest',
 ];
 
 export function desktopLaunchArgs(
@@ -302,6 +304,92 @@ export async function readWorkspaceTrust(
     await delay(100);
   }
   throw new Error('The test harness did not report workspace trust.');
+}
+
+const OPEN_FILE_COMMAND = 'RDLC Test: Open Requested File';
+
+const harnessStorage = (profileDir: string): string =>
+  join(profileDir, 'User', 'globalStorage', 'rdlc-tests.rdlc-test-harness');
+
+/** Request the driver writes for the harness' open-file command. */
+export function openRequestPath(profileDir: string): string {
+  return join(harnessStorage(profileDir), 'open-request.json');
+}
+
+/** Outcome the harness' open-file command writes back. */
+export function openResultPath(profileDir: string): string {
+  return join(harnessStorage(profileDir), 'open-result.json');
+}
+
+/** A harness outcome that is final: the file was not opened. */
+class OpenFailure extends Error {}
+
+/**
+ * Strictly parse the outcome: `ok: false` is final whatever its id (an
+ * unreadable request carries none); `ok: true` is evidence only for this id.
+ */
+export function parseOpenResult(text: string, id: string): string {
+  const result = JSON.parse(text) as {
+    id?: unknown;
+    ok?: unknown;
+    opened?: unknown;
+    error?: unknown;
+  };
+  if (result.ok === false)
+    throw new OpenFailure(
+      `The test harness could not open the file: ${String(result.error ?? 'unknown error')}`,
+    );
+  if (result.id !== id)
+    throw new Error('The test harness answered a different open request.');
+  if (result.ok !== true)
+    throw new Error('The test harness result has no boolean ok.');
+  return String(result.opened);
+}
+
+/**
+ * Open a workspace file in the active editor group through the harness
+ * (`vscode.open`, or `vscode.openWith` when `viewType` is given), instead of
+ * Quick Open file search. The palette only triggers a fixed, unique command;
+ * the path travels through a request file and the harness confirms the active
+ * tab shows that file (and that editor type when requested).
+ */
+export async function openWorkspaceFile(
+  driver: Pick<DesktopDriver, 'profileDir' | 'command'>,
+  path: string,
+  viewType?: string,
+  timeoutMs = 15_000,
+): Promise<void> {
+  if (!isAbsolute(path))
+    throw new Error(`Opening ${path}: the path must be absolute.`);
+  const id = randomUUID();
+  const request = openRequestPath(driver.profileDir);
+  const result = openResultPath(driver.profileDir);
+  mkdirSync(dirname(request), { recursive: true });
+  rmSync(result, { force: true });
+  writeFileSync(
+    request,
+    JSON.stringify({ id, path, ...(viewType ? { viewType } : {}) }),
+  );
+  await driver.command(OPEN_FILE_COMMAND);
+  const deadline = Date.now() + timeoutMs;
+  let last: unknown = 'no result file appeared';
+  while (Date.now() < deadline) {
+    try {
+      parseOpenResult(readFileSync(result, 'utf8'), id);
+      return;
+    } catch (error) {
+      if (error instanceof OpenFailure)
+        throw new Error(`Opening ${path}: ${error.message}`, { cause: error });
+      // Missing, half-written (or briefly locked) and stale results are
+      // retried until the deadline; the last cause names the timeout.
+      last = error;
+    }
+    await delay(100);
+  }
+  throw new Error(
+    `The test harness did not report opening ${path}: ${last instanceof Error ? last.message : String(last)}`,
+    { cause: last },
+  );
 }
 
 export const TRUST_COMMAND = 'Workspaces: Manage Workspace Trust';
@@ -965,6 +1053,17 @@ export async function launchDesktop(
         'workbench.cloudChanges.autoResume': 'off',
         'workbench.cloudChanges.continueOn': 'off',
         'chat.disableAIFeatures': true,
+        // Terminal completions and shell-integration scripts probe PATH and
+        // the file system in the background; the security probe only types a
+        // plain command into the terminal and needs neither.
+        'terminal.integrated.suggest.enabled': false,
+        'terminal.integrated.shellIntegration.enabled': false,
+        // Task providers and the debugger scan the workspace and its tools.
+        'task.autoDetect': 'off',
+        'gulp.autoDetect': 'off',
+        'grunt.autoDetect': 'off',
+        'jake.autoDetect': 'off',
+        'debug.javascript.autoAttachFilter': 'disabled',
         'workbench.startupEditor': 'none',
         'workbench.welcomePage.walkthroughs.openOnInstall': false,
       },
