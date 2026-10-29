@@ -1610,6 +1610,55 @@ test('user-level agent folders are probed by metadata only and argv.json is read
     assert.equal(classify(text), expected, text);
 });
 
+test('dynamic-loader, VS Code CLI and home chdir probes are narrow and read-only', () => {
+  const cases: [string, boolean][] = [
+    // The loader checks the preload list of every exec; reading it is a runtime path.
+    ['access("/etc/ld.so.preload", R_OK) = -1 ENOENT (x)', false],
+    ['openat(AT_FDCWD</>, "/etc/ld.so.preload", O_RDONLY) = 3', false],
+    ['openat(AT_FDCWD</>, "/etc/ld.so.preload", O_WRONLY|O_CREAT) = 3', true],
+    ['access("/etc/ld.so.conf", R_OK) = -1 ENOENT (x)', true],
+    // VS Code CLI metadata is probed by metadata calls only.
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.vscode-cli", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
+      false,
+    ],
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.vscode/cli", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
+      false,
+    ],
+    [
+      `statx(AT_FDCWD</>, "${HOME}/.vscode/cli/server-insiders", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`,
+      false,
+    ],
+    [`stat("${HOME}/.vscode-cli/token.json", 0x7ffd) = 0`, true],
+    [`openat(AT_FDCWD</>, "${HOME}/.vscode-cli/x", O_RDONLY) = 3`, true],
+    [`openat(AT_FDCWD</>, "${HOME}/.vscode/cli/x", O_RDONLY) = 3`, true],
+    [`mkdir("${HOME}/.vscode/cli", 0755) = 0`, true],
+    [
+      `statx(AT_FDCWD</>, "/home/bob/.vscode-cli", 0, STATX_ALL, 0x7ffd) = 0`,
+      true,
+    ],
+    // chdir into the home directory itself changes no content; elsewhere it is judged.
+    [`chdir("${HOME}") = 0`, false],
+    [`chdir("${HOME}/.ssh") = 0`, true],
+    [`chdir("${HOME}/projects") = 0`, true],
+    ['chdir("/home/bob") = 0', true],
+    ['chdir("/etc") = 0', true],
+    ['chdir("/work/fixture") = 0', false],
+  ];
+  for (const [text, expected] of cases)
+    assert.equal(classify(text), expected, text);
+  // Relative paths after a home chdir are still judged against the home.
+  assert.equal(
+    classify(
+      'stat(".bashrc", 0x7ffd) = 0',
+      ALLOWED,
+      call(`chdir("${HOME}") = 0`),
+    ),
+    true,
+  );
+});
+
 test('plain relative paths resolve against the cwd the trace has shown for that pid, else fail closed', () => {
   const chdir = (path: string, tail = '= 0', pid = 900) =>
     `${pid} 1700000000.0 chdir("${path}") ${tail}`;

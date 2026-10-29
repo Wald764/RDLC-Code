@@ -39,13 +39,94 @@ export const REPORT_ATTRIBUTION_SCOPE =
 export const REPORT_ZERO_SCOPE =
   'a zero report-surface count covers attributable requests only and is never absolute proof of zero report traffic.';
 
+/** Distinct targets listed by `summarizeEvents` before the remainder is only counted. */
+const SUMMARY_LIMIT = 60;
+
+/**
+ * Distinct `channel:operation:target` entries with repeat counts, so a failure
+ * with many events shows every distinct kind instead of the first few repeats.
+ */
 export function summarizeEvents(events: readonly SecurityEvent[]): string {
-  return (
-    events
-      .slice(0, 5)
-      .map((event) => `${event.channel}:${event.operation}:${event.target}`)
-      .join(', ') || 'none'
+  const counts = new Map<string, number>();
+  for (const event of events) {
+    const key = `${event.channel}:${event.operation}:${event.target}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const entries = [...counts].map(([key, count]) =>
+    count > 1 ? `${key} (x${count})` : key,
   );
+  const shown = entries.slice(0, SUMMARY_LIMIT).join(', ');
+  const hidden = entries.length - SUMMARY_LIMIT;
+  return (
+    (hidden > 0 ? `${shown}, and ${hidden} more distinct event(s)` : shown) ||
+    'none'
+  );
+}
+
+export const EXTENSION_ASSET_SCOPE =
+  'Requests on the VS Code local resource scheme (vscode-resource) are served from disk by the webview service worker, not the network. Only paths below the loaded extension build/designer bundle are extension assets; every other vscode-resource path (fixture directory, image, data) and every other http(s) request stays report traffic, because a report that loads a local resource would be resource evaluation.';
+
+const VSCODE_RESOURCE_HOST =
+  /^file(?:\+|%2b)[^./]*\.vscode-resource\.vscode-cdn\.net$/i;
+
+/** Webview bundle directory the editor provider serves, relative to the extension root. */
+const EXTENSION_ASSET_DIR = 'build/designer';
+
+function posixPath(value: string): string {
+  const slashed = value.replace(/\\/g, '/').replace(/\/+$/, '');
+  return /^[A-Za-z]:\//.test(slashed) ? slashed.toLowerCase() : slashed;
+}
+
+/** Extension asset directories (`<extension>/build/designer`) for the loaded extension roots. */
+export function extensionAssetRoots(
+  extensionDirs: readonly string[],
+): string[] {
+  return extensionDirs.map((dir) =>
+    posixPath(`${dir.replace(/\\/g, '/')}/${EXTENSION_ASSET_DIR}`),
+  );
+}
+
+/**
+ * The path of a vscode-resource request relative to the extension asset
+ * directory it lives under, or null when it is anything else (not a
+ * vscode-resource URL, outside the asset roots, or an ambiguous path). Fails
+ * closed: null keeps the request counted as report traffic.
+ */
+export function extensionAssetPath(
+  url: string,
+  assetRoots: readonly string[],
+): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (
+    parsed.protocol !== 'https:' ||
+    !VSCODE_RESOURCE_HOST.test(parsed.hostname)
+  )
+    return null;
+  let path: string;
+  try {
+    path = decodeURIComponent(parsed.pathname);
+  } catch {
+    return null;
+  }
+  if (path.includes('\\') || path.includes('\0')) return null;
+  // A Windows drive path arrives as `/c%3A/...`; a POSIX one keeps its slash.
+  const absolute = /^\/[A-Za-z]:\//.test(path) ? path.slice(1) : path;
+  const segments = absolute.split('/');
+  if (segments.some((segment) => segment === '..' || segment === '.'))
+    return null;
+  const normal = posixPath(absolute);
+  for (const root of assetRoots) {
+    if (normal.startsWith(`${root}/`)) {
+      const relative = absolute.slice(root.length + 1);
+      return relative === '' ? null : `${EXTENSION_ASSET_DIR}/${relative}`;
+    }
+  }
+  return null;
 }
 
 /** Outgoing network events carrying no classification at all: fail closed. */

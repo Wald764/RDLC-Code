@@ -62,6 +62,9 @@ import {
   REPORT_ATTRIBUTION_SCOPE,
   REPORT_ZERO_SCOPE,
   summarizeEvents,
+  EXTENSION_ASSET_SCOPE,
+  extensionAssetPath,
+  extensionAssetRoots,
   unclassifiedNetworkEvents,
 } from './offline-assertions.js';
 import {
@@ -366,6 +369,17 @@ async function destroyFixtureSet(set: FixtureSet): Promise<void> {
   await rm(dirname(set.canary.path), { recursive: true, force: true });
 }
 
+/** The extension sources Desktop loads (`--extensionDevelopmentPath`). */
+function loadedExtensionDirs(driver: DesktopDriver): string[] {
+  const launchArgs = Array.isArray(driver.identity['launchArgs'])
+    ? (driver.identity['launchArgs'] as unknown[])
+    : [];
+  return launchArgs
+    .filter((arg): arg is string => typeof arg === 'string')
+    .filter((arg) => arg.startsWith('--extensionDevelopmentPath='))
+    .map((arg) => arg.slice('--extensionDevelopmentPath='.length));
+}
+
 /**
  * Raw-path allowlist for the host process tree: the disposable profile, the
  * dedicated tmp dir (including XDG_CONFIG_HOME), the own fixture copy and the
@@ -375,13 +389,7 @@ async function destroyFixtureSet(set: FixtureSet): Promise<void> {
  */
 function allowedAccess(driver: DesktopDriver, set: FixtureSet): AllowedAccess {
   const install = dirname(driver.identity.executablePath);
-  const launchArgs = Array.isArray(driver.identity['launchArgs'])
-    ? (driver.identity['launchArgs'] as unknown[])
-    : [];
-  const extensionDirs = launchArgs
-    .filter((arg): arg is string => typeof arg === 'string')
-    .filter((arg) => arg.startsWith('--extensionDevelopmentPath='))
-    .map((arg) => arg.slice('--extensionDevelopmentPath='.length));
+  const extensionDirs = loadedExtensionDirs(driver);
   const home = homedir();
   return {
     open: [
@@ -404,6 +412,12 @@ interface ObservationWindow {
   readonly observation: SecurityObservation;
   /** http(s) requests issued by a non-workbench frame: the report surface. */
   readonly reportRequests: readonly string[];
+  /**
+   * Local `vscode-resource` requests for the extension's own webview bundle,
+   * served from disk by the webview service worker: not network traffic and
+   * not report traffic. Recorded and reported, never counted as report traffic.
+   */
+  readonly extensionAssetRequests: readonly string[];
   /** Workbench-main-frame requests: background traffic, recorded never asserted. */
   readonly backgroundRequests: readonly string[];
   /**
@@ -418,11 +432,14 @@ interface ObservationWindow {
 function trackRequests(driver: DesktopDriver): {
   stop(): {
     reportRequests: string[];
+    extensionAssetRequests: string[];
     backgroundRequests: string[];
     unattributedRequests: string[];
   };
 } {
+  const assetRoots = extensionAssetRoots(loadedExtensionDirs(driver));
   const report: string[] = [];
+  const extensionAssets: string[] = [];
   const background: string[] = [];
   const unattributed: string[] = [];
   const onRequest = (request: Request): void => {
@@ -436,8 +453,13 @@ function trackRequests(driver: DesktopDriver): {
       frame = null;
     }
     if (frame === null) unattributed.push(target);
-    else if (frame !== driver.page.mainFrame()) report.push(target);
-    else background.push(target);
+    else if (frame !== driver.page.mainFrame()) {
+      // Only the extension's own bundle is exempt; any other local resource
+      // (fixture dir, image, data) a report pulls in stays report traffic.
+      const asset = extensionAssetPath(request.url(), assetRoots);
+      if (asset === null) report.push(target);
+      else extensionAssets.push(`${target}/${asset}`);
+    } else background.push(target);
   };
   driver.context.on('request', onRequest);
   return {
@@ -445,6 +467,7 @@ function trackRequests(driver: DesktopDriver): {
       driver.context.off('request', onRequest);
       return {
         reportRequests: report,
+        extensionAssetRequests: extensionAssets,
         backgroundRequests: background,
         unattributedRequests: unattributed,
       };
@@ -534,6 +557,8 @@ function summarizeWindow(window: ObservationWindow): Record<string, unknown> {
     unclassifiedNetwork: unclassified.length,
     unclassifiedNetworkSample: summarizeEvents(unclassified),
     reportSurfaceRequests: window.reportRequests,
+    extensionAssetRequests: window.extensionAssetRequests,
+    extensionAssetScope: EXTENSION_ASSET_SCOPE,
     backgroundRequests: window.backgroundRequests,
     unattributedRequests: window.unattributedRequests,
     reportZeroScope: `${window.unattributedRequests.length} request(s) had no Playwright frame: ${REPORT_ZERO_SCOPE}`,

@@ -695,6 +695,8 @@ const OPEN_WRITE_FLAGS = /\b(?:O_WRONLY|O_RDWR|O_CREAT|O_TRUNC|O_APPEND)\b/;
  */
 export const RUNTIME_PATHS: readonly string[] = [
   '/etc/ld.so.cache',
+  // The dynamic loader probes the preload list of every exec; absent on a plain runner.
+  '/etc/ld.so.preload',
   '/etc/localtime',
   '/etc/fonts',
   '/etc/ssl/certs',
@@ -1099,6 +1101,10 @@ const HOME_CUSTOMIZATION_DIRS = [
   '.copilot',
   '.agents',
   '.vscode/agent-plugins',
+  // VS Code CLI metadata (tunnel and server state); the code-server probes
+  // stat it on startup. Metadata only: it may hold tokens, so opens stay unexpected.
+  '.vscode-cli',
+  '.vscode/cli',
 ];
 const CUSTOMIZATION_SECRET_NAME = /cred|secret|token|password|\.key$|\.pem$/i;
 /** Home files VS Code reads for its runtime arguments (read-only, no secrets). */
@@ -1122,6 +1128,10 @@ function isAllowedProbe(
   const home = normalPath((configuredHome ?? homedir()).replace(/\\/g, '/'));
   if (HOME_RUNTIME_FILES.some((file) => path === `${home}/${file}`))
     return true;
+  // A chdir reads nothing; into the home directory itself (the default cwd of
+  // host helpers) it only changes where relative paths resolve, and those are
+  // classified against it. Any other directory outside the roots stays unexpected.
+  if (operation === 'chdir' && path === home) return true;
   const metadata = METADATA_CALLS.has(operation);
   if (metadata) {
     if (

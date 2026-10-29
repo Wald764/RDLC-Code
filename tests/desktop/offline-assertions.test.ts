@@ -5,6 +5,9 @@ import {
   REPORT_ATTRIBUTION_SCOPE,
   REPORT_ZERO_SCOPE,
   cleanWindowFailures,
+  extensionAssetPath,
+  extensionAssetRoots,
+  summarizeEvents,
   unclassifiedNetworkEvents,
 } from './offline-assertions.js';
 import {
@@ -141,4 +144,110 @@ test('the recorded scope statements never claim absolute proof', () => {
   );
   assert.match(REPORT_ATTRIBUTION_SCOPE, /no-attribution gap/);
   assert.match(REPORT_ZERO_SCOPE, /never absolute proof/);
+});
+
+const EXT = '/work/RDLC/apps/vscode-extension';
+const ASSET_HOST = 'https://file+.vscode-resource.vscode-cdn.net';
+
+test('only the extension build/designer bundle is an extension asset', () => {
+  const roots = extensionAssetRoots([EXT, '/work/RDLC/tests/vscode/harness']);
+  const asset = (path: string, host = ASSET_HOST) =>
+    extensionAssetPath(`${host}${path}`, roots);
+  assert.equal(
+    asset(`${EXT}/build/designer/assets/index-abc.js`),
+    'build/designer/assets/index-abc.js',
+  );
+  assert.equal(
+    asset(`${EXT}/build/designer/index.html?x=1#y`),
+    'build/designer/index.html',
+  );
+  assert.equal(
+    asset('/work/RDLC/tests/vscode/harness/build/designer/a.css'),
+    'build/designer/a.css',
+  );
+  assert.equal(
+    asset(`${EXT}/build/designer/fonts/a%20b.woff2`),
+    'build/designer/fonts/a b.woff2',
+  );
+  // The older percent-encoded authority is the same scheme.
+  assert.notEqual(
+    asset(
+      `${EXT}/build/designer/a.js`,
+      'https://file%2B.vscode-resource.vscode-cdn.net',
+    ),
+    null,
+  );
+  // Anything else stays report traffic: fixture dirs, images, data, siblings.
+  for (const path of [
+    '/work/fixture/logo.png',
+    '/work/fixture/report.rdlc',
+    `${EXT}/build/designer`,
+    `${EXT}/build/designer/`,
+    `${EXT}/build/designer-evil/a.js`,
+    `${EXT}/build/other/a.js`,
+    `${EXT}/media/rdlc-file-dark.svg`,
+    `${EXT}/package.json`,
+    '/',
+    '',
+  ])
+    assert.equal(asset(path), null, path);
+  // Traversal, encoded traversal, backslashes and NUL never escape the root.
+  for (const path of [
+    `${EXT}/build/designer/../../../../fixture/logo.png`,
+    `${EXT}/build/designer/%2e%2e/%2e%2e/secret.png`,
+    `${EXT}/build/designer/..%2f..%2fsecret.png`,
+    `${EXT}/build/designer/a%5Cb.js`,
+    `${EXT}/build/designer/a%00.js`,
+    `${EXT}/build/designer/%E0%A4%A.js`,
+  ])
+    assert.equal(asset(path), null, path);
+  // Other hosts and schemes never qualify, even with an extension path.
+  for (const url of [
+    `https://example.com${EXT}/build/designer/a.js`,
+    `https://file+.vscode-resource.vscode-cdn.net.evil.com${EXT}/build/designer/a.js`,
+    `https://evil.com/file+.vscode-resource.vscode-cdn.net${EXT}/build/designer/a.js`,
+    `http://file+.vscode-resource.vscode-cdn.net${EXT}/build/designer/a.js`,
+    `file://${EXT}/build/designer/a.js`,
+    'not a url',
+  ])
+    assert.equal(extensionAssetPath(url, roots), null, url);
+  // No loaded extension means nothing is exempt.
+  assert.equal(
+    extensionAssetPath(`${ASSET_HOST}${EXT}/build/designer/a.js`, []),
+    null,
+  );
+});
+
+test('a Windows drive path is matched case-insensitively and fails closed otherwise', () => {
+  const roots = extensionAssetRoots(['C:\\work\\ext']);
+  assert.equal(
+    extensionAssetPath(
+      `${ASSET_HOST}/c%3A/work/ext/build/designer/a.js`,
+      roots,
+    ),
+    'build/designer/a.js',
+  );
+  assert.equal(
+    extensionAssetPath(`${ASSET_HOST}/c%3A/work/other/a.js`, roots),
+    null,
+  );
+});
+
+test('event summaries list every distinct event with counts instead of the first five', () => {
+  const event = (target: string): SecurityEvent => ({
+    ...unclassifiedConnect,
+    channel: 'file',
+    operation: 'statx',
+    target,
+  });
+  const many = [
+    ...Array.from({ length: 50 }, () => event('<path>/.vscode-cli')),
+    ...Array.from({ length: 8 }, (_, index) => event(`/x/${index}`)),
+  ];
+  const summary = summarizeEvents(many);
+  assert.match(summary, /file:statx:<path>\/\.vscode-cli \(x50\)/);
+  assert.match(summary, /file:statx:\/x\/7/);
+  assert.equal(summarizeEvents([]), 'none');
+  const wide = Array.from({ length: 70 }, (_, index) => event(`/y/${index}`));
+  assert.match(summarizeEvents(wide), /and 10 more distinct event\(s\)$/);
 });
