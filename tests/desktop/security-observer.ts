@@ -459,24 +459,42 @@ function firstQuoted(args: string): string | null {
 /** `sun_path="/x"` (filesystem) or `sun_path=@"x"` (abstract namespace). */
 const UNIX_SOCKET = /sun_path=(@?)"([^"]*)"/;
 
-function networkTarget(args: string): string {
+/** The -yy decoration of the fd argument: `UNIX-STREAM:[10->11]` gives family and detail. */
+const FD_DECORATION = /^\d+<([A-Za-z0-9]+(?:-[A-Z]+)?):\[(.*?)\]>/;
+
+/**
+ * Addressless calls name no destination, so the target says what the fd is:
+ * the remembered connect() peer of a datagram socket (`udp6->[2001:db8::1]:53`)
+ * or its -yy decoration (`UDPv6:[...]`, `UNIX-STREAM:[<ino>-><ino>]`), with
+ * bare inode numbers redacted and quoted socket paths left to sanitizeTarget.
+ */
+function networkTarget(args: string, remembered?: DatagramPeer): string {
   const ipv4 = /inet_addr\("([^"]+)"\)/.exec(args)?.[1];
   const ipv6 = /inet_pton\(AF_INET6, "([^"]+)"/.exec(args)?.[1];
-  const port = /sin_port=htons\((\d+)\)/.exec(args)?.[1];
+  const port = /sin6?_port=htons\((\d+)\)/.exec(args)?.[1];
   if (ipv4) return `${ipv4}:${port ?? '?'}`;
   if (ipv6) return `[${ipv6}]:${port ?? '?'}`;
   const unix = UNIX_SOCKET.exec(args);
   if (unix) return `unix:${sanitizeTarget(`${unix[1]}${unix[2]}`)}`;
-  return 'socket';
+  const fd = FD_DECORATION.exec(args);
+  if (!fd) return 'socket';
+  const [, family = '', detail = ''] = fd;
+  if (remembered && /^UDP(?:v6)?$/.test(family))
+    return `${family.toLowerCase().replace(/v6$/, '6')}->${remembered.address}`;
+  const redacted = detail.replace(/"[^"]*"|(?<![\w:.])\d+(?![\w:.])/g, (m) =>
+    m.startsWith('"') ? m : '<ino>',
+  );
+  return `${family}:[${redacted}]`;
 }
 
 function eventTarget(
   channel: NativeChannel,
   args: string,
   redactions: readonly string[],
+  remembered?: DatagramPeer,
 ): string {
   if (channel === 'network')
-    return sanitizeTarget(networkTarget(args), redactions);
+    return sanitizeTarget(networkTarget(args, remembered), redactions);
   if (channel === 'exec') {
     const executable = firstQuoted(args);
     return executable
@@ -895,11 +913,86 @@ interface ClassifyContext {
   /** The calling pid's working directory when the trace has shown it. */
   readonly cwd: string | null;
   /**
-   * Per datagram socket (its -yy fd token), whether any destination connect()ed
-   * on it so far was not local. Lets an addressless send, whose fd decoration
-   * names only the bound local address, be judged by the peer it goes to.
+   * The fd table the calling pid works on (see CwdTracker.fdTable); null when
+   * the log names no pid.
    */
-  readonly datagramPeers: Map<string, boolean>;
+  readonly fdTable: number | null;
+  /**
+   * Per datagram socket, whether any destination connect()ed on it so far was
+   * not local. Lets an addressless send, whose fd decoration names only the
+   * bound local address, be judged by the peer it goes to.
+   */
+  readonly datagramPeers: DatagramPeers;
+}
+
+/** What connect() recorded on one datagram socket. */
+interface DatagramPeer {
+  /** Any destination connect()ed on it so far was not local. */
+  readonly unexpected: boolean;
+  /** The address text of the peer that decided `unexpected` (sanitized when logged). */
+  readonly address: string;
+}
+
+/**
+ * Connected datagram peers, keyed by fd table and -yy fd token. An fd number
+ * belongs to a fd table, not to a thread: threads made with CLONE_FILES share
+ * one, while another process can hold the same number for an unrelated socket
+ * (and a closed number is reused). So the key starts with the fd table owner,
+ * and an entry is dropped when that owner is handed the same fd number by a
+ * new socket()/socketpair()/accept() (close is not traced).
+ */
+export class DatagramPeers {
+  private readonly entries = new Map<string, DatagramPeer>();
+
+  private static key(table: number | null, token: string): string {
+    return `${table ?? '?'}\0${token}`;
+  }
+
+  get(table: number | null, token: string): DatagramPeer | undefined {
+    return this.entries.get(DatagramPeers.key(table, token));
+  }
+
+  /** A non-local peer is sticky: a later loopback connect cannot clear it. */
+  record(
+    table: number | null,
+    token: string,
+    unexpected: boolean,
+    address: string,
+  ): void {
+    const key = DatagramPeers.key(table, token);
+    const known = this.entries.get(key);
+    this.entries.set(key, known?.unexpected ? known : { unexpected, address });
+  }
+
+  /** The fd number now names a new file description: forget what it was. */
+  forgetFd(table: number | null, fd: string): void {
+    this.forgetPrefix(DatagramPeers.key(table, `${fd}<`));
+  }
+
+  forgetTable(table: number | null): void {
+    this.forgetPrefix(DatagramPeers.key(table, ''));
+  }
+
+  private forgetPrefix(prefix: string): void {
+    for (const key of [...this.entries.keys()])
+      if (key.startsWith(prefix)) this.entries.delete(key);
+  }
+}
+
+const FD_PRODUCING_CALLS = new Set([
+  'socket',
+  'socketpair',
+  'accept',
+  'accept4',
+]);
+
+/** The fd numbers a successful socket()/socketpair()/accept() call has just handed out. */
+function newFds(operation: string, args: string, result: string): string[] {
+  if (!FD_PRODUCING_CALLS.has(operation) || result.startsWith('-1')) return [];
+  if (operation === 'socketpair')
+    return [...args.matchAll(/(?:^|[[\s,])(\d+)</g)].map((m) => m[1] ?? '');
+  const fd = /^(\d+)/.exec(result)?.[1];
+  return fd === undefined ? [] : [fd];
 }
 
 function isWrite(operation: string, args: string): boolean {
@@ -1121,9 +1214,11 @@ function classifyUnexpected(
     const token = datagramToken(args);
     const peer = destinationUnexpected(args, context);
     if (token !== undefined && peer !== undefined)
-      context.datagramPeers.set(
+      context.datagramPeers.record(
+        context.fdTable,
         token,
-        peer || context.datagramPeers.get(token) === true,
+        peer,
+        networkTarget(args),
       );
     return false;
   }
@@ -1197,7 +1292,9 @@ function connectedPeerUnexpected(
     // A datagram socket bound and then connect()ed is decorated with its local
     // address only (Chromium's DNS client): the observed connect() names the peer.
     const token = datagramToken(args);
-    return token === undefined ? undefined : context.datagramPeers.get(token);
+    return token === undefined
+      ? undefined
+      : context.datagramPeers.get(context.fdTable, token)?.unexpected;
   }
   return !/^(?:127\.|\[::1\]:|\[::ffff:127\.)/i.test(peer);
 }
@@ -1238,12 +1335,18 @@ interface CloneEntry {
   readonly shares: boolean;
   /** The flags could not be read: whether the cwd is shared or copied is unknown. */
   readonly unknown: boolean;
+  /** CLONE_FILES: the child works on its parent's fd table. */
+  readonly files: boolean;
   created: boolean;
 }
 
 /** The comma-free `flags=A|B` list of a clone/clone3 call. */
 function cloneFlags(args: string): string | undefined {
   return /flags=([A-Za-z0-9_|]+)/.exec(args)?.[1];
+}
+
+function sharesFiles(flags: string | undefined): boolean {
+  return flags?.split('|').includes('CLONE_FILES') === true;
 }
 
 function sharesCwd(flags: string | undefined): boolean {
@@ -1270,6 +1373,9 @@ class CwdTracker {
   private readonly records = new Map<number, CwdRecord>();
   private readonly pending = new Map<number, CloneEntry[]>();
   private readonly byLine = new Map<number, CloneEntry>();
+  /** Thread (or process) that shares the fd table of each child made with CLONE_FILES. */
+  private readonly fdParents = new Map<number, number>();
+  private readonly initialProcess = new Map<number, number>();
 
   constructor(
     lines: readonly (StraceLine | null)[],
@@ -1279,6 +1385,7 @@ class CwdTracker {
     // later chdir by any of them is seen by all (they share an fs_struct).
     const shared = new Map<string, CwdRecord>();
     for (const [tid, { dir, process }] of initial) {
+      this.initialProcess.set(tid, process);
       if (!dir.startsWith('/')) continue;
       const key = `${process}\0${dir}`;
       const record = shared.get(key) ?? { dir: normalPath(dir) };
@@ -1309,9 +1416,11 @@ class CwdTracker {
           own === undefined &&
           line.operation !== 'fork' &&
           line.operation !== 'vfork',
+        files: sharesFiles(own),
         created: false,
       };
       this.byLine.set(index, entry);
+      if (entry.files) this.fdParents.set(Number(child), line.pid);
       const queue = this.pending.get(Number(child)) ?? [];
       queue.push(entry);
       this.pending.set(Number(child), queue);
@@ -1344,6 +1453,24 @@ class CwdTracker {
     if (!entry) return undefined;
     this.materialize(entry, pid);
     return this.records.get(pid);
+  }
+
+  /**
+   * Identifies the fd table a thread works on: threads sharing it (CLONE_FILES,
+   * which is what pthreads use) map to the same id, the pid of the group's
+   * first known member, as do threads that were already running at attach and
+   * belong to one process. Another process, even a forked copy, gets its own
+   * table, so state kept per fd is never carried across unrelated tables.
+   */
+  fdTable(pid: number | null): number | null {
+    if (pid === null) return null;
+    let current = pid;
+    for (let hops = 0; hops < 64; hops++) {
+      const parent = this.fdParents.get(current);
+      if (parent === undefined) break;
+      current = parent;
+    }
+    return this.initialProcess.get(current) ?? current;
   }
 
   /** The thread's cwd, or null when it is not provable. */
@@ -1411,7 +1538,7 @@ export function parseStraceLog(
   }
   const parsedLines = lines.map(parseStraceLine);
   const cwds = new CwdTracker(parsedLines, options.cwds);
-  const datagramPeers = new Map<string, boolean>();
+  const datagramPeers = new DatagramPeers();
   /** Index of the event made from each pid's unfinished call, until its resumed half. */
   const interrupted = new Map<string, number>();
   for (const [index, parsed] of parsedLines.entries()) {
@@ -1440,6 +1567,8 @@ export function parseStraceLog(
             : null,
         };
       }
+      for (const fd of newFds(parsed.operation, parsed.args, parsed.result))
+        datagramPeers.forgetFd(cwds.fdTable(parsed.pid), fd);
       cwds.follow(parsed, index);
       continue;
     }
@@ -1452,6 +1581,11 @@ export function parseStraceLog(
     const failed = parsed.result.startsWith('-1');
     const attempted = parsed.unfinished || parsed.result.startsWith('?');
     cwds.observe(parsed);
+    const fdTable = cwds.fdTable(parsed.pid);
+    const token =
+      channel === 'network' ? datagramToken(parsed.args) : undefined;
+    const remembered =
+      token === undefined ? undefined : datagramPeers.get(fdTable, token);
     const unexpected = classifyUnexpected(
       channel,
       parsed.operation,
@@ -1462,10 +1596,14 @@ export function parseStraceLog(
             pid: parsed.pid,
             pids,
             cwd: cwds.cwd(parsed.pid),
+            fdTable,
             datagramPeers,
           }
         : undefined,
     );
+    for (const fd of newFds(parsed.operation, parsed.args, parsed.result))
+      datagramPeers.forgetFd(fdTable, fd);
+    if (parsed.operation === 'exit_group') datagramPeers.forgetTable(fdTable);
     cwds.follow(parsed, index);
     if (parsed.unfinished && parsed.pid !== null)
       interrupted.set(`${parsed.pid}:${parsed.operation}`, events.length);
@@ -1476,7 +1614,7 @@ export function parseStraceLog(
       operation: parsed.operation,
       outcome: failed ? 'failed' : attempted ? 'attempted' : 'succeeded',
       pid: parsed.pid,
-      target: eventTarget(channel, parsed.args, redactions),
+      target: eventTarget(channel, parsed.args, redactions, remembered),
       error: failed
         ? sanitizeTarget(
             /^-1\s+([A-Z0-9_]+)/.exec(parsed.result)?.[1] ?? 'failed',

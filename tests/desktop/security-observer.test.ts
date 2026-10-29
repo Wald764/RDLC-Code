@@ -1845,3 +1845,165 @@ test('an addressless send on a connect()ed datagram socket is judged by the obse
   );
   assert.deepEqual(classify(send('23<TCP:[0.0.0.0:36948]>')), [true]);
 });
+
+test('datagram peers belong to one fd table and are forgotten when the fd number is handed out again', () => {
+  const allowed = { open: ['/work/fixture'], exec: [], home: '/home/alice' };
+  const fd = '23<UDP:[0.0.0.0:36948]>';
+  const connect = (pid: number, peer: string, id = fd) =>
+    `${pid} 1700000000.1 connect(${id}, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("${peer}")}, 16) = 0`;
+  const send = (pid: number, id = fd) =>
+    `${pid} 1700000000.2 sendto(${id}, "q", 1, 0, NULL, 0) = 1`;
+  const run = (...lines: string[]) =>
+    parseStraceLog(lines.join('\n'), { allowed }).events.map(
+      (event) => event.unexpected,
+    );
+  // Another process holding the same fd token does not see the peer: fail closed.
+  assert.deepEqual(run(connect(900, '127.0.0.53'), send(901)), [false, true]);
+  assert.deepEqual(run(connect(900, '8.8.8.8'), send(901)), [false, true]);
+  // A thread made with CLONE_FILES shares the table; a plain fork does not.
+  const thread =
+    '900 1700000000.05 clone(child_stack=NULL, flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD) = 902';
+  const fork = '900 1700000000.05 clone(child_stack=NULL, flags=SIGCHLD) = 903';
+  assert.deepEqual(run(thread, connect(900, '127.0.0.53'), send(902)), [
+    undefined,
+    false,
+    false,
+  ]);
+  assert.deepEqual(run(thread, connect(902, '127.0.0.53'), send(900)), [
+    undefined,
+    false,
+    false,
+  ]);
+  assert.deepEqual(run(fork, connect(900, '127.0.0.53'), send(903)), [
+    undefined,
+    false,
+    true,
+  ]);
+  // A new socket handed the same fd number drops the stale (even non-local) peer.
+  const reused = '23<UDP:[0.0.0.0:36948]>';
+  assert.deepEqual(
+    run(
+      connect(900, '8.8.8.8'),
+      `900 1700000000.15 socket(AF_INET, SOCK_DGRAM, IPPROTO_IP) = ${reused}`,
+      send(900),
+    ),
+    [false, undefined, true],
+  );
+  assert.deepEqual(
+    run(
+      connect(900, '127.0.0.53'),
+      '900 1700000000.15 socket(AF_INET, SOCK_DGRAM|SOCK_CLOEXEC, IPPROTO_IP) = 23',
+      connect(900, '127.0.0.53', '23<UDP:[0.0.0.0:41111]>'),
+      send(900, '23<UDP:[0.0.0.0:41111]>'),
+    ),
+    [false, undefined, false, false],
+  );
+  // The same holds for accept4, socketpair and an interrupted socket().
+  for (const line of [
+    '900 1700000000.15 accept4(3<TCP:[127.0.0.1:1]>, NULL, NULL, SOCK_CLOEXEC) = 23<TCP:[127.0.0.1:1->127.0.0.1:2]>',
+    '900 1700000000.15 socketpair(AF_UNIX, SOCK_STREAM, 0, [22<UNIX-STREAM:[1->2]>, 23<UNIX-STREAM:[2->1]>]) = 0',
+  ])
+    assert.deepEqual(run(connect(900, '8.8.8.8'), line, send(900)), [
+      false,
+      undefined,
+      true,
+    ]);
+  assert.deepEqual(
+    run(
+      connect(900, '127.0.0.53'),
+      '900 1700000000.15 socket(AF_INET, SOCK_DGRAM, IPPROTO_IP <unfinished ...>',
+      '900 1700000000.16 <... socket resumed>) = 23<UDP:[0.0.0.0:36948]>',
+      send(900),
+    ),
+    [false, undefined, true],
+  );
+  // A failed socket() hands out nothing, so the peer stays.
+  assert.deepEqual(
+    run(
+      connect(900, '127.0.0.53'),
+      '900 1700000000.15 socket(AF_INET, SOCK_DGRAM, IPPROTO_IP) = -1 EMFILE (Too many open files)',
+      send(900),
+    ),
+    [false, undefined, false],
+  );
+  // exit_group frees the table.
+  assert.deepEqual(
+    run(
+      connect(900, '127.0.0.53'),
+      '900 1700000000.15 exit_group(0) = ?',
+      send(900),
+    ),
+    [false, undefined, true],
+  );
+});
+
+test('a connected datagram socket to a non-local resolver stays unexpected', () => {
+  const allowed = { open: ['/work/fixture'], exec: [], home: '/home/alice' };
+  const fd = '9<UDPv6:[123]>';
+  const connect = (address: string, port: number) =>
+    `900 1700000000.1 connect(${fd}, {sa_family=AF_INET6, sin6_port=htons(${port}), inet_pton(AF_INET6, "${address}", &sin6_addr)}, 28) = 0`;
+  const send =
+    '900 1700000000.2 sendto(9<UDPv6:[123]>, "q", 1, 0, NULL, 0) = 1';
+  for (const [address, port] of [
+    ['2001:4860:4860::8888', 53],
+    ['2001:4860:4860::8888', 443],
+    ['2606:4700:4700::1111', 853],
+    ['2001:db8::1', 53],
+  ] as const) {
+    const events = parseStraceLog([connect(address, port), send].join('\n'), {
+      allowed,
+    }).events;
+    assert.deepEqual(
+      events.map((event) => event.unexpected),
+      [false, true],
+      `${address}:${port}`,
+    );
+  }
+  // An explicit non-local destination on a socket connected to loopback is outbound too.
+  const events = parseStraceLog(
+    [
+      connect('::1', 53),
+      '900 1700000000.2 sendto(9<UDPv6:[123]>, "q", 1, 0, {sa_family=AF_INET6, sin6_port=htons(53), inet_pton(AF_INET6, "2001:4860:4860::8888", &sin6_addr)}, 28) = 1',
+    ].join('\n'),
+    { allowed },
+  ).events;
+  assert.deepEqual(
+    events.map((event) => event.unexpected),
+    [false, true],
+  );
+});
+
+test('addressless network events say what the fd is, with inodes and paths redacted', () => {
+  const allowed = { open: ['/work/fixture'], exec: [], home: '/home/alice' };
+  const targets = (...lines: string[]) =>
+    parseStraceLog(lines.join('\n'), {
+      allowed,
+      redactions: ['/home/alice'],
+    }).events.map((event) => event.target);
+  const v6 =
+    '{sa_family=AF_INET6, sin6_port=htons(53), inet_pton(AF_INET6, "2001:4860:4860::8888", &sin6_addr)}';
+  assert.deepEqual(
+    targets(
+      `900 1700000000.1 connect(5<UDPv6:[2754321]>, ${v6}, 28) = 0`,
+      '900 1700000000.2 sendto(5<UDPv6:[2754321]>, "q", 1, 0, NULL, 0) = 1',
+      '900 1700000000.3 sendto(6<UDP:[0.0.0.0:36948]>, "q", 1, 0, NULL, 0) = 1',
+      '900 1700000000.4 sendto(7<UNIX-STREAM:[272961->272962]>, "q", 1, 0, NULL, 0) = 1',
+      '900 1700000000.5 sendto(8<UNIX-STREAM:[10->11,"/run/user/1000/bus"]>, "q", 1, 0, NULL, 0) = 1',
+      '900 1700000000.6 sendto(9<TCPv6:[[2a01::1]:4000->[::1]:9222]>, "q", 1, 0, NULL, 0) = 1',
+      '900 1700000000.7 sendto(10<socket:[12345]>, "q", 1, 0, NULL, 0) = 1',
+      '900 1700000000.8 sendto(11, "q", 1, 0, NULL, 0) = 1',
+      '900 1700000000.9 sendto(12<UNIX-DGRAM:[3,"/home/alice/s.sock"]>, "q", 1, 0, NULL, 0) = 1',
+    ),
+    [
+      '[2001:4860:4860::8888]:53',
+      'udp6->[2001:4860:4860::8888]:53',
+      'UDP:[0.0.0.0:36948]',
+      'UNIX-STREAM:[<ino>-><ino>]',
+      'UNIX-STREAM:[<ino>-><ino>,"/run/user/1000/bus"]',
+      'TCPv6:[[2a01::1]:4000->[::1]:9222]',
+      'socket:[<ino>]',
+      'socket',
+      'UNIX-DGRAM:[<ino>,"<path>/s.sock"]',
+    ],
+  );
+});
