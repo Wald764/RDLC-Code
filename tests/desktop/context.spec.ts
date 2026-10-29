@@ -62,6 +62,24 @@ interface Ctx {
   path(name: string): string;
 }
 
+/**
+ * Bound an await that has no timeout of its own (inspector replies, frame
+ * probes): a stuck step then fails with its name instead of consuming the whole
+ * test timeout, which would also hide the error behind the shutdown.
+ */
+function within<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  return Promise.race([
+    work,
+    new Promise<never>((_, fail) => {
+      timer = setTimeout(
+        () => fail(new Error(`${what} did not complete within ${ms} ms`)),
+        ms,
+      );
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 const freePort = (): Promise<number> =>
   new Promise((done, fail) => {
     const server = createServer();
@@ -113,6 +131,13 @@ async function session(
   } catch (error) {
     failed = true;
     failure = error;
+    // Shutdown can outlast the test timeout, which then reports only the
+    // timeout: keep the journey's own error visible first.
+    console.error(
+      `[context] journey failed before shutdown: ${
+        error instanceof Error ? (error.stack ?? error.message) : String(error)
+      }`,
+    );
   }
   // Shutdown must never replace the journey's own error, and the temp workspace
   // must go in both cases: collect first, then report everything together.
@@ -295,22 +320,29 @@ async function palette(
 }
 
 /**
- * Close the active editor. A synthetic Cmd+W never reached the workbench on
- * macOS (the designer tab stayed open), so there the tab's own close button is
- * the gesture; elsewhere the keystroke is unchanged.
+ * Close the active editor through its tab's own close button on every
+ * platform. A synthetic Ctrl/Cmd+W depends on where focus sits (a designer
+ * webview swallows it, and it never reached the workbench on macOS), and a
+ * missed close leaves a held request undisturbed or a designer open.
  */
 async function closeActiveEditor(page: Page): Promise<void> {
-  if (process.platform === 'darwin') await closeActiveTab(page);
-  else await page.keyboard.press(`${MOD}+w`);
+  await closeActiveTab(page);
 }
 
 /** Designer webviews currently hosting `rdlc-editor`; detached frames are ignored. */
 async function designerFrames(page: Page): Promise<Frame[]> {
   const frames: Frame[] = [];
   for (const frame of page.frames()) {
-    if (frame === page.mainFrame()) continue;
+    if (frame === page.mainFrame() || frame.isDetached()) continue;
     try {
-      if ((await frame.locator('rdlc-editor').count()) > 0) frames.push(frame);
+      // A webview frame being disposed can leave the query waiting for an
+      // execution context that never comes: it is not a designer.
+      const hosted = await within(
+        frame.locator('rdlc-editor').count(),
+        3_000,
+        'designer frame probe',
+      );
+      if (hosted > 0) frames.push(frame);
     } catch {
       // A frame torn down between switches is not a designer.
     }
@@ -558,6 +590,19 @@ async function save(ctx: Ctx): Promise<void> {
   await expect(ctx.page.locator('.monaco-workbench .tab.dirty')).toHaveCount(0);
 }
 
+/**
+ * Save an edit that was just requested (designer commit, native creation or
+ * Undo). The edit reaches the host asynchronously: saving while no tab is dirty
+ * yet saves nothing and the "no dirty tab" wait is already satisfied, so the
+ * disk read that follows would see the old bytes.
+ */
+async function saveEdit(ctx: Ctx): Promise<void> {
+  await expect
+    .poll(() => dirtyCount(ctx.page), 'the edit reached the host (dirty tab)')
+    .toBeGreaterThan(0);
+  await save(ctx);
+}
+
 type RaceAction = 'select' | 'properties' | 'create';
 type RaceDisturbance = 'edit' | 'switch' | 'non-report' | 'close';
 
@@ -609,16 +654,22 @@ async function armOpeningHold(port: number): Promise<{
   release(): Promise<void>;
 }> {
   const targets = (await (
-    await fetch(`http://127.0.0.1:${port}/json/list`)
+    await fetch(`http://127.0.0.1:${port}/json/list`, {
+      signal: AbortSignal.timeout(10_000),
+    })
   ).json()) as { webSocketDebuggerUrl: string }[];
   expect(targets.length, 'extension host inspector target').toBeGreaterThan(0);
   const socket = new WebSocket(targets[0]!.webSocketDebuggerUrl);
-  await new Promise<void>((done, fail) => {
-    socket.addEventListener('open', () => done(), { once: true });
-    socket.addEventListener('error', () => fail(new Error('inspector')), {
-      once: true,
-    });
-  });
+  await within(
+    new Promise<void>((done, fail) => {
+      socket.addEventListener('open', () => done(), { once: true });
+      socket.addEventListener('error', () => fail(new Error('inspector')), {
+        once: true,
+      });
+    }),
+    10_000,
+    'inspector connection',
+  );
   let id = 0;
   const replies = new Map<number, (result: unknown) => void>();
   const scripts: { scriptId: string; url: string }[] = [];
@@ -637,10 +688,14 @@ async function armOpeningHold(port: number): Promise<{
     else if (message.method === 'Debugger.paused') onPaused();
   });
   const send = <T>(method: string, params: object = {}) =>
-    new Promise<T>((done) => {
-      replies.set(++id, done as (result: unknown) => void);
-      socket.send(JSON.stringify({ id, method, params }));
-    });
+    within(
+      new Promise<T>((done) => {
+        replies.set(++id, done as (result: unknown) => void);
+        socket.send(JSON.stringify({ id, method, params }));
+      }),
+      10_000,
+      `inspector ${method}`,
+    );
   await send('Debugger.enable');
   // Both the installed VSIX and the development build load build/extension.cjs.
   const script = scripts.find((entry) => {
@@ -674,10 +729,14 @@ async function armOpeningHold(port: number): Promise<{
     paused,
     async release() {
       if (socket.readyState !== WebSocket.OPEN) return;
-      await send('Debugger.removeBreakpoint', { breakpointId });
-      await send('Debugger.resume');
-      await send('Debugger.disable');
-      socket.close();
+      try {
+        await send('Debugger.removeBreakpoint', { breakpointId });
+        await send('Debugger.resume');
+        await send('Debugger.disable');
+      } finally {
+        // Closing the session also resumes a host that is still held.
+        socket.close();
+      }
     },
   };
 }
@@ -713,7 +772,9 @@ async function runRace(
   // tab click the renderer applies while the host is held.
   for (const name of ['notes.txt', 'b.rdlc', 'a.rdlc']) {
     await openFile(ctx, name);
-    if (!(await sourceEditorActive(page))) {
+    // The status bar lags the newly opened editor: give a text editor time to
+    // show its position before deciding that the designer opened instead.
+    if (!(await editorIs(page, 'source'))) {
       await palette(page, 'View: Reopen Editor With...', 'Text Editor');
     }
     await expect
@@ -737,37 +798,51 @@ async function runRace(
   const tabs = page.locator('.part.editor .tabs-container .tab');
   const baseline = await tabs.count();
   const hold = await armOpeningHold(ctx.inspector);
-  if (options.action === 'select') await row(page, 'Front').click();
-  else if (options.action === 'properties') {
-    await row(page, 'Front').click({ button: 'right' });
-    // VS Code arms context-menu mouseup handlers 100ms after render.
-    await page
-      .getByRole('menuitem', { name: /Properties/ })
-      .click({ delay: 250 });
-  } else await page.getByRole('treeitem', { name: /^Textbox, Insert/ }).click();
+  try {
+    if (options.action === 'select') await row(page, 'Front').click();
+    else if (options.action === 'properties') {
+      await row(page, 'Front').click({ button: 'right' });
+      // VS Code arms context-menu mouseup handlers 100ms after render.
+      await page
+        .getByRole('menuitem', { name: /Properties/ })
+        .click({ delay: 250 });
+    } else
+      await page.getByRole('treeitem', { name: /^Textbox, Insert/ }).click();
 
-  // The host stops right after the real opening; the refusal below is
-  // mandatory, so a request that never reached that point cannot pass.
-  await hold.paused;
-  await observeOpening(page, baseline);
+    // The host stops right after the real opening; the refusal below is
+    // mandatory, so a request that never reached that point cannot pass.
+    await within(
+      hold.paused,
+      45_000,
+      `${options.id}: the opening reaching the held line`,
+    );
+    await observeOpening(page, baseline);
 
-  if (options.disturbance === 'edit')
-    await writeFile(ctx.path('a.rdlc'), markers.markedA);
-  else if (options.disturbance === 'switch')
-    await activateEditor(page, 'b.rdlc', 'source');
-  else if (options.disturbance === 'non-report')
-    await activateEditor(page, 'notes.txt', 'source');
-  else {
-    // Dispose the panel that is opening, never the source editor: closing the
-    // source would leave the panel to finish and dispatch.
-    if ((await sourceEditorActive(page)) === true)
-      await activateEditor(page, 'a.rdlc', 'designer');
-    await closeActiveEditor(page);
+    if (options.disturbance === 'edit')
+      await writeFile(ctx.path('a.rdlc'), markers.markedA);
+    else if (options.disturbance === 'switch')
+      await activateEditor(page, 'b.rdlc', 'source');
+    else if (options.disturbance === 'non-report')
+      await activateEditor(page, 'notes.txt', 'source');
+    else {
+      // Dispose the panel that is opening, never the source editor: closing
+      // the source would leave the panel to finish and dispatch.
+      if ((await sourceEditorActive(page)) === true)
+        await activateEditor(page, 'a.rdlc', 'designer');
+      await closeActiveEditor(page);
+    }
+    // Bounded settle for the renderer to apply the disturbance (the disk
+    // watcher reload is the slowest); the resumed host then meets it before
+    // readiness.
+    await page.waitForTimeout(2_500);
+  } finally {
+    // A failed step must not leave the extension host held: the shutdown
+    // would wait on it and the failure would surface as a bare test timeout.
+    // Releasing twice is a no-op.
+    await hold.release().catch((error: unknown) => {
+      console.error(`[context] ${options.id}: releasing the host: ${error}`);
+    });
   }
-  // Bounded settle for the renderer to apply the disturbance (the disk watcher
-  // reload is the slowest); the resumed host then meets it before readiness.
-  await page.waitForTimeout(2_500);
-  await hold.release();
 
   await expect
     .poll(() => notifications(page), {
@@ -879,7 +954,7 @@ test('US5.1-switches', async () => {
     await expect(name).toHaveValue('Front');
     await name.fill('FrontRenamed');
     await name.press('Enter');
-    await save(ctx);
+    await saveEdit(ctx);
     await expect
       .poll(() => readFile(ctx.path('a.rdlc'), 'utf8'))
       .toContain('Name="FrontRenamed"');
@@ -888,7 +963,7 @@ test('US5.1-switches', async () => {
       'B is untouched by an A edit',
     ).toBe(original.get('b.rdlc')!.toString('utf8'));
     await frame.getByRole('button', { name: 'Undo', exact: true }).click();
-    await save(ctx);
+    await saveEdit(ctx);
     await expectPristine(ctx, original);
     await writeLog('race-log-us5-1-switches', {
       requirement: 'AT-06: 100 document/view switches',
@@ -1069,14 +1144,14 @@ test('US5.3-two-views', async () => {
         return counts.every((count) => count > 0);
       })
       .toBe(true);
-    await save(ctx);
+    await saveEdit(ctx);
     const updated = await readFile(ctx.path('a.rdlc'), 'utf8');
     expect(updated).toContain('Behind updated');
     expect(updated.replace('Behind updated', 'Behind &amp; preserved')).toBe(
       original.get('a.rdlc')!.toString('utf8'),
     );
     await view1.getByRole('button', { name: 'Undo', exact: true }).click();
-    await save(ctx);
+    await saveEdit(ctx);
     await expectPristine(ctx, original);
     await writeLog('race-log-us5-3-two-views', {
       requirement: 'US5.3: two designers of one document',
@@ -1213,7 +1288,7 @@ test('US5.5-draft-guard', async () => {
       applied.getByRole('group', { name: 'Unapplied draft' }),
     ).toBeVisible();
     await applied.getByRole('button', { name: 'Apply draft' }).click();
-    await save(ctx);
+    await saveEdit(ctx);
     const afterApply = await readFile(ctx.path('a.rdlc'), 'utf8');
     expect(afterApply).toContain('Name="DraftFront"');
     expect(afterApply.replace('Name="DraftFront"', 'Name="Front"')).toBe(
@@ -1225,7 +1300,7 @@ test('US5.5-draft-guard', async () => {
 
     // Exactly one history step, and B is never touched.
     await applied.getByRole('button', { name: 'Undo', exact: true }).click();
-    await save(ctx);
+    await saveEdit(ctx);
     await expectPristine(ctx, original);
     expect(await readFile(ctx.path('b.rdlc'), 'utf8')).toBe(
       original.get('b.rdlc')!.toString('utf8'),
@@ -1402,7 +1477,7 @@ test('FR-019-authoritative', async () => {
     const name = await inspectorField(frame, 'Name');
     await name.fill('Authoritative');
     await name.press('Enter');
-    await save(ctx);
+    await saveEdit(ctx);
     const edited = await readFile(ctx.path('a.rdlc'), 'utf8');
     // Byte-exact: only the Name attribute changed, nothing was rewritten.
     expect(edited.replace('Name="Authoritative"', 'Name="Front"')).toBe(
@@ -1417,7 +1492,7 @@ test('FR-019-authoritative', async () => {
 
     // The designer's history is the host document's history: one step back.
     await frame.getByRole('button', { name: 'Undo', exact: true }).click();
-    await save(ctx);
+    await saveEdit(ctx);
     await expectPristine(ctx, original);
     expect(await readdir(ctx.dir)).toEqual(files);
     await writeLog('race-log-fr-019-authoritative', {
@@ -1589,7 +1664,7 @@ test('FR-021-view-local', async () => {
         .poll(() => designerCount(page), `${creation.row.source} opens A once`)
         .toBe(1);
       await expectHeaders(page, 'a.rdlc');
-      await save(ctx);
+      await saveEdit(ctx);
       const created = await readFile(ctx.path('a.rdlc'), 'utf8');
       expect(created).toMatch(creation.created);
       expect(await readFile(ctx.path('b.rdlc'), 'utf8')).toBe(
@@ -1598,7 +1673,7 @@ test('FR-021-view-local', async () => {
       await activateEditor(page, 'a.rdlc', 'designer');
       const opened = (await designerFrames(page))[0]!;
       await opened.getByRole('button', { name: 'Undo', exact: true }).click();
-      await save(ctx);
+      await saveEdit(ctx);
       await expectPristine(ctx, original);
     }
 
@@ -1648,7 +1723,7 @@ test('FR-023-orders', async () => {
     // item is the one selected afterwards.
     await ctx.driver.command('Focus on Components View');
     await page.getByRole('treeitem', { name: /^Textbox, Insert/ }).click();
-    await save(ctx);
+    await saveEdit(ctx);
     const created = await readFile(ctx.path('a.rdlc'), 'utf8');
     const inserted = created.match(/<Textbox Name="Textbox\d+">/);
     expect(inserted).toBeTruthy();
@@ -1848,7 +1923,7 @@ test('EDGE-01-identity', async () => {
       const name = await inspectorField(frame, 'Name');
       await name.fill('TwinRenamed');
       await name.press('Enter');
-      await save(ctx);
+      await saveEdit(ctx);
       const twin = await readFile(ctx.path('other/saved.rdlc'), 'utf8');
       expect(twin).toContain('Name="TwinRenamed"');
       expect(twin.replace('Name="TwinRenamed"', 'Name="Front"')).toBe(
