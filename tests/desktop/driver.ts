@@ -872,6 +872,10 @@ export async function launchDesktop(
         'window.menuStyle': 'custom',
         'git.enabled': false,
         'git.autoRepositoryDetection': false,
+        // An "update available" badge appears on the Manage gear at random,
+        // which no reference capture can reproduce.
+        'update.mode': 'none',
+        'extensions.autoCheckUpdates': false,
       },
       null,
       2,
