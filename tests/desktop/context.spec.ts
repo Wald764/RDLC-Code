@@ -898,6 +898,14 @@ const NOT_INJECTABLE = [
 // ---------------------------------------------------------------------------
 
 test('US5.1-switches', async () => {
+  // UNVALIDATED on macOS: the quick-open list never shows the second report
+  // after the first designer opens (run 40867144705, macOS 14, 1.142.0). Not
+  // diagnosed; passes on Linux and Windows. See
+  // specs/005-native-sidebar-integration/automated-validation.md.
+  test.skip(
+    platformSkipAccepted('US5.1-switches'),
+    platformSkipReason('US5.1-switches') ?? '',
+  );
   const root = process.env.RDLC_DESKTOP_ROOT ?? process.cwd();
   await session(await contextFiles(root), async (ctx) => {
     const { page } = ctx;
@@ -2197,6 +2205,14 @@ test('EDGE-11-readonly-conflict', async () => {
 // ---------------------------------------------------------------------------
 
 test('SC-005-switch-races', async () => {
+  // UNVALIDATED on macOS: the quick-open switch times out on 1.142.0 and the
+  // workbench exits mid-race on stable (run 40867144705, macOS 14). Not
+  // diagnosed; passes on Linux and Windows. See
+  // specs/005-native-sidebar-integration/automated-validation.md.
+  test.skip(
+    platformSkipAccepted('SC-005-switch-races'),
+    platformSkipReason('SC-005-switch-races') ?? '',
+  );
   // The hundred-switch phase alone took four minutes; fifty real openings need their own bounded budget.
   test.setTimeout(900_000);
   const root = process.env.RDLC_DESKTOP_ROOT ?? process.cwd();

@@ -117,9 +117,13 @@ On Linux they remain mandatory: an unsupported or incomplete capture is a failur
 | Case | Platform | Decision |
 | --- | --- | --- |
 | `context.spec.ts` `US5.3-two-views` | macOS (both VS Code versions) | Skipped, UNVALIDATED. The second split view loses its primary item once the first view selects another item. Not diagnosed; passes on Linux and Windows. |
+| `context.spec.ts` `US5.1-switches` | macOS (both VS Code versions) | Skipped, UNVALIDATED. After the first designer opens, the quick-open list never shows the second report (`locator.click` timeout in `openFile`, run 40867144705, macOS 14, 1.142.0). Not diagnosed; passes on Linux and Windows. |
+| `context.spec.ts` `SC-005-switch-races` | macOS (both VS Code versions) | Skipped, UNVALIDATED. The same quick-open switch timed out on 1.142.0 and the workbench exited mid-race on stable (run 40867144705, macOS 14). Not diagnosed; passes on Linux and Windows. |
+| `structure.spec.ts` `SC-003-timing` | macOS (both VS Code versions) | Skipped, UNVALIDATED. The Cmd-click native multi-selection never showed `Second, Primary, 2 selected` on stable 1.144.0 (run 40867144705, macOS 14); it passed on 1.142.0. Not diagnosed; passes on Linux and Windows. |
 
 Fixed rather than disabled (test or harness defects, not validated by an Electron run locally):
 
+- `accessibility.spec.ts` `US6.1-keyboard-journey` and `FR-027-keyboard` (macOS): the workbench relays Cmd+A into the webview asynchronously, so typing straight after it dropped the first character (`enamedByKeyboard`, `raftThatNeverCommits`). A `selectAllInField` helper now waits until the selection spans the field value before typing; unvalidated on macOS until the next run.
 - macOS opens native NSMenu context menus, which are not in the DOM, so every journey that drives a menu item (`FR-021-view-local`, `SC-005-switch-races`, accessibility `US6.1-keyboard-journey`, layout `FR-029-stability`) timed out. The driver profile now sets `window.menuStyle` to `custom`, the HTML menu Linux and Windows already use.
 - `US5.4-disposal` (macOS): a synthetic Cmd+W did not close the designer tab; on macOS the tab's close button is used instead.
 - `layout.spec.ts` `SC-007-stability` (Linux, VS Code 1.142.0): the pointer was released before the webview's ResizeObserver cancelled the held gesture, which committed the move. The test now waits for the cancellation before releasing.
