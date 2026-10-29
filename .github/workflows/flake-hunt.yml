@@ -1,0 +1,219 @@
+name: Desktop flake hunt
+
+# Manual measurement of per-test instability across the Desktop matrix of ci.yml.
+# Every suite is repeated `repeat` times with retries disabled; failures are
+# recorded, never retried or hidden, and the final report gives each test's
+# failure rate per environment. One matrix job runs one Playwright invocation
+# (probe, functional or installed journeys), so its 290 minute global timeout
+# always leaves the job time to upload. Test failures never fail a job; harness
+# errors, truncated runs and missing results fail the job or the aggregate.
+# ci.yml is untouched.
+# See docs/validation/github-actions.md.
+on:
+  workflow_dispatch:
+    inputs:
+      repeat:
+        description: Repeats of every test (integer from 1 to 10)
+        type: number
+        default: 5
+      groups:
+        description: Comma-separated groups to run (core, authoring, context); empty runs all
+        type: string
+        default: ''
+      os:
+        description: Comma-separated runners to use (ubuntu-24.04, windows-2022, macos-14); empty runs all
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flake-hunt-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Validate inputs and select the matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      repeat: ${{ steps.plan.outputs.repeat }}
+    steps:
+      - id: plan
+        env:
+          REPEAT: ${{ inputs.repeat }}
+          GROUPS_FILTER: ${{ inputs.groups }}
+          OS_FILTER: ${{ inputs.os }}
+        run: |
+          node - <<'EOF'
+          const fs = require('node:fs');
+          const repeat = Number(process.env.REPEAT);
+          if (!Number.isInteger(repeat) || repeat < 1 || repeat > 10) {
+            console.error(`repeat must be an integer from 1 to 10, got "${process.env.REPEAT}"`);
+            process.exit(1);
+          }
+          const pick = (name, raw, allowed) => {
+            const wanted = raw.split(',').map((item) => item.trim()).filter(Boolean);
+            const unknown = wanted.filter((item) => !allowed.includes(item));
+            if (unknown.length) {
+              console.error(`Unknown ${name}: ${unknown.join(', ')} (expected ${allowed.join(', ')})`);
+              process.exit(1);
+            }
+            return wanted.length ? allowed.filter((item) => wanted.includes(item)) : allowed;
+          };
+          // Same axes as the `desktop` job of ci.yml, split one job per run mode.
+          // The capability probe runs once per OS/version, in core.
+          const modes = [
+            { mode: 'probe-packaged', args: '--probe --packaged' },
+            { mode: 'functional', args: '' },
+            { mode: 'packaged', args: '--packaged' },
+          ];
+          const oses = pick('os', process.env.OS_FILTER, ['ubuntu-24.04', 'windows-2022', 'macos-14']);
+          const groups = pick('groups', process.env.GROUPS_FILTER, ['core', 'authoring', 'context']);
+          const include = [];
+          for (const os of oses)
+            for (const vscode of ['1.142.0', 'stable'])
+              for (const group of groups)
+                for (const { mode, args } of modes)
+                  if (mode !== 'probe-packaged' || group === 'core')
+                    include.push({ os, vscode, group, mode, args });
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `repeat=${repeat}\nmatrix=${JSON.stringify({ include })}\n`);
+          console.log(`repeat=${repeat}, ${include.length} matrix entries`);
+          EOF
+
+  desktop:
+    name: Measure ${{ matrix.os }} / ${{ matrix.vscode }} / ${{ matrix.group }} / ${{ matrix.mode }}
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    # Budget: up to 30 minutes of setup, the 300 minute run step (Playwright
+    # global timeout 290 minutes plus 10 minutes for teardown), then at least 20
+    # minutes left for the always-run upload. 360 is the hosted maximum.
+    timeout-minutes: 350
+    env:
+      VSCODE_VERSION: ${{ matrix.vscode }}
+      RDLC_DESKTOP_GROUP: ${{ matrix.group }}
+      REPEAT: ${{ needs.plan.outputs.repeat }}
+      MODE_ARGS: ${{ matrix.args }}
+    # Test failures exit 0 in --measure mode; the run step only fails on a
+    # harness error. Every job and the aggregate run regardless (fail-fast: false).
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@9fd676a19091d4595eefd76e4bd31c97133911f1 # v4.2.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            .node-version
+            package.json
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm package
+      # The default 1024x768 runner desktop cannot hold the 1440x900 workbench.
+      - name: Use a 1920x1080 Windows desktop
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
+      - name: Prepare Linux Desktop observation environment
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends strace iptables fontconfig fonts-dejavu-core locales
+          sudo locale-gen en_US.UTF-8
+          # The native observer attaches strace to the running Desktop process tree.
+          sudo sysctl -w kernel.yama.ptrace_scope=0
+          mkdir -p .vscode-test/desktop-artifacts
+          {
+            echo "image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            grep -E '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release
+            dpkg-query -W -f='${Package} ${Version}\n' strace iptables fontconfig fonts-dejavu-core locales
+            echo "ptrace_scope: $(sysctl -n kernel.yama.ptrace_scope)"
+            echo "node: $(node --version)"
+          } | tee .vscode-test/desktop-artifacts/linux-environment.txt
+      # One Playwright invocation per job. $MODE_ARGS is split on purpose.
+      - name: Measure Desktop ${{ matrix.mode }} on Linux
+        if: runner.os == 'Linux'
+        timeout-minutes: 300
+        env:
+          TZ: UTC
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e $MODE_ARGS --measure --repeat-each="$REPEAT"
+      - name: Measure Desktop ${{ matrix.mode }} on Windows and macOS
+        if: runner.os != 'Linux'
+        timeout-minutes: 300
+        shell: bash
+        run: pnpm test:e2e $MODE_ARGS --measure --repeat-each="$REPEAT"
+      # Only the JSON results and the runner status are kept: traces and
+      # screenshots of repeated failures would run to gigabytes.
+      - name: Upload Playwright JSON results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: flake-results-${{ matrix.os }}-${{ matrix.vscode }}-${{ matrix.group }}-${{ matrix.mode }}
+          path: |
+            .vscode-test/desktop-artifacts/run-*/playwright-report.json
+            .vscode-test/desktop-artifacts/run-*/runner-status.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  aggregate:
+    name: Aggregate failure rates
+    # Runs after every matrix job, whatever their outcome.
+    if: ${{ always() }}
+    needs: [plan, desktop]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@9fd676a19091d4595eefd76e4bd31c97133911f1 # v4.2.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            .node-version
+            package.json
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/compile.ts
+      - run: mkdir -p flake-results flake-report
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          pattern: flake-results-*
+          path: flake-results
+      # Test failures are data and do not fail this step. An incomplete
+      # environment (interrupted or never-run tests) or a missing report does.
+      # The summary is truncated (1 MiB limit); the artifact has everything.
+      - name: Write the flake report
+        env:
+          MATRIX: ${{ needs.plan.outputs.matrix }}
+        run: |
+          printf '%s' "$MATRIX" > flake-matrix.json
+          rc=0
+          node dist/scripts/flake-report.js flake-results flake-report --expected flake-matrix.json || rc=$?
+          if [ -f flake-report/flake-summary.md ]; then
+            cat flake-report/flake-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$rc"
+      - name: Upload the flake report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: flake-report
+          path: |
+            flake-report/flake-report.md
+            flake-report/flake-report.json
+          if-no-files-found: warn
+          retention-days: 30

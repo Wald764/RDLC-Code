@@ -17,24 +17,65 @@ import {
 } from './host-observer-scope.js';
 import { sweepHostBlockingRules } from './security-observer.js';
 
+/** `measure` and `repeatEach` exist only in measurement mode, so default runs keep their schema. */
+export interface DesktopMode {
+  probe: boolean;
+  packaged: boolean;
+  visual: boolean;
+  updateBaselines: boolean;
+  group: DesktopGroup | null;
+  measure?: true;
+  repeatEach?: number;
+}
+
 export function desktopArguments(
   args: readonly string[],
   env: Record<string, string | undefined> = process.env,
   platform: NodeJS.Platform = process.platform,
-) {
-  const flags = new Set(args.filter((arg) => arg !== '--'));
-  for (const flag of flags) {
-    if (
-      !['--probe', '--packaged', '--visual', '--update-baselines'].includes(
-        flag,
+): DesktopMode {
+  let repeatEach: number | null = null;
+  const flags = new Set<string>();
+  for (const arg of args) {
+    if (arg === '--') continue;
+    if (arg === '--repeat-each' || arg.startsWith('--repeat-each=')) {
+      const value = /^--repeat-each=(\d+)$/.exec(arg)?.[1];
+      if (repeatEach !== null) throw new Error('--repeat-each given twice');
+      repeatEach = value === undefined ? Number.NaN : Number(value);
+      if (
+        !Number.isSafeInteger(repeatEach) ||
+        repeatEach < MIN_REPEAT_EACH ||
+        repeatEach > MAX_REPEAT_EACH
       )
-    ) {
-      throw new Error(`Unknown Desktop argument: ${flag}`);
+        throw new Error(
+          `--repeat-each must be --repeat-each=<n> with an integer from ${MIN_REPEAT_EACH} to ${MAX_REPEAT_EACH}`,
+        );
+      continue;
     }
+    if (
+      ![
+        '--probe',
+        '--packaged',
+        '--visual',
+        '--update-baselines',
+        '--measure',
+      ].includes(arg)
+    ) {
+      throw new Error(`Unknown Desktop argument: ${arg}`);
+    }
+    flags.add(arg);
   }
   if (flags.has('--probe') && flags.has('--visual')) {
     throw new Error('--probe and --visual cannot be combined');
   }
+  if (repeatEach !== null && !flags.has('--measure'))
+    throw new Error('--repeat-each requires --measure');
+  if (
+    flags.has('--update-baselines') &&
+    (flags.has('--measure') || repeatEach !== null)
+  )
+    throw new Error(
+      '--update-baselines cannot be combined with --measure or --repeat-each',
+    );
   if (flags.has('--update-baselines')) {
     if (flags.size > 1)
       throw new Error('--update-baselines cannot be combined with other modes');
@@ -71,7 +112,143 @@ export function desktopArguments(
     visual: flags.has('--visual'),
     updateBaselines: flags.has('--update-baselines'),
     group: group as DesktopGroup | null,
+    ...(flags.has('--measure')
+      ? {
+          measure: true as const,
+          ...(repeatEach !== null ? { repeatEach } : {}),
+        }
+      : {}),
   };
+}
+
+export const MIN_REPEAT_EACH = 1;
+export const MAX_REPEAT_EACH = 10;
+const GLOBAL_TIMEOUT_MS = 7_200_000;
+/**
+ * Measurement runs scale the Playwright global timeout with the repeat count.
+ * The cap (290 min) leaves the flake-hunt job (350 min) room for setup and for
+ * uploading the results after a truncated run.
+ */
+export const MEASURE_GLOBAL_TIMEOUT_CAP_MS = 17_400_000;
+
+/** Playwright global timeout (ms) for a measurement run; null leaves the config value. */
+export function measurementGlobalTimeout(mode: DesktopMode): number | null {
+  if (mode.measure !== true) return null;
+  return Math.min(
+    GLOBAL_TIMEOUT_MS * (mode.repeatEach ?? 1),
+    MEASURE_GLOBAL_TIMEOUT_CAP_MS,
+  );
+}
+
+/**
+ * Measurement mode records failing tests; only these harness problems (a
+ * suite that cannot run or a missing report) make the run itself fail.
+ */
+export function measurementHarnessErrors(
+  exitCode: number,
+  presentCount: number,
+  missing: readonly string[],
+  stats: ReturnType<typeof playwrightStats>,
+): string[] {
+  const errors: string[] = [];
+  if (missing.length > 0)
+    errors.push(`missing mandatory suites: ${missing.join(', ')}`);
+  if (presentCount === 0) errors.push('no suite to run');
+  else if (stats === null)
+    errors.push(
+      `no readable Playwright JSON report (runner exit code ${exitCode})`,
+    );
+  return errors;
+}
+
+/**
+ * What a measurement run could not measure: tests that were interrupted or never
+ * started (for example cut short by the global timeout), required suite files
+ * absent from the report, and report-level errors. Any of them is incomplete.
+ */
+export function measurementCompleteness(
+  value: unknown,
+  required: readonly string[],
+): {
+  interrupted: number;
+  notRun: number;
+  missingFiles: string[];
+  reportErrors: number;
+  incomplete: boolean;
+} {
+  let interrupted = 0;
+  let notRun = 0;
+  const files = new Set<string>();
+  const visit = (suite: unknown, depth: number) => {
+    if (!suite || typeof suite !== 'object' || depth > 32) return;
+    const node = suite as { specs?: unknown; suites?: unknown };
+    for (const spec of Array.isArray(node.specs) ? node.specs : []) {
+      const item = spec as { file?: unknown; tests?: unknown };
+      if (typeof item?.file === 'string')
+        files.add(basename(item.file.replaceAll('\\', '/')));
+      for (const test of Array.isArray(item?.tests) ? item.tests : []) {
+        const results = (test as { results?: unknown })?.results;
+        if (!Array.isArray(results) || results.length === 0) notRun++;
+        else if (
+          results.some(
+            (result) =>
+              (result as { status?: unknown } | null)?.status === 'interrupted',
+          )
+        )
+          interrupted++;
+      }
+    }
+    for (const child of Array.isArray(node.suites) ? node.suites : [])
+      visit(child, depth + 1);
+  };
+  const report = (value ?? {}) as { suites?: unknown; errors?: unknown };
+  for (const suite of Array.isArray(report.suites) ? report.suites : [])
+    visit(suite, 0);
+  const missingFiles = required.filter((file) => !files.has(file));
+  const reportErrors = Array.isArray(report.errors) ? report.errors.length : 0;
+  return {
+    interrupted,
+    notRun,
+    missingFiles,
+    reportErrors,
+    incomplete:
+      interrupted > 0 ||
+      notRun > 0 ||
+      missingFiles.length > 0 ||
+      reportErrors > 0,
+  };
+}
+
+/**
+ * Counts from a Playwright JSON report, or null when it is not one. Measurement
+ * mode records these instead of judging them.
+ */
+export function playwrightStats(value: unknown): {
+  expected: number;
+  unexpected: number;
+  skipped: number;
+  flaky: number;
+} | null {
+  const stats = (value as { stats?: Record<string, unknown> } | null)?.stats;
+  const read = (key: string): number | null => {
+    const count = stats?.[key];
+    return typeof count === 'number' && Number.isSafeInteger(count)
+      ? count
+      : null;
+  };
+  const expected = read('expected');
+  const unexpected = read('unexpected');
+  const skipped = read('skipped');
+  const flaky = read('flaky');
+  if (
+    expected === null ||
+    unexpected === null ||
+    skipped === null ||
+    flaky === null ||
+    !Array.isArray((value as { suites?: unknown }).suites)
+  )
+    return null;
+  return { expected, unexpected, skipped, flaky };
 }
 
 /** Disjoint partition of the functional journeys; together they are all of them. */
@@ -96,7 +273,7 @@ export type DesktopGroup = keyof typeof DESKTOP_GROUPS;
 
 /** Playwright CLI arguments; reference generation is the only path that updates snapshots. */
 export function desktopPlaywrightArguments(
-  mode: ReturnType<typeof desktopArguments>,
+  mode: DesktopMode,
   config: string,
   files: readonly string[],
 ): string[] {
@@ -106,13 +283,18 @@ export function desktopPlaywrightArguments(
     config,
     '--reporter=line,json',
     ...(mode.updateBaselines ? ['--update-snapshots=all'] : []),
+    // Retries stay 0 in the config: repeats measure instability, they never mask it.
+    ...(mode.repeatEach !== undefined
+      ? [`--repeat-each=${mode.repeatEach}`]
+      : []),
+    ...(measurementGlobalTimeout(mode) !== null
+      ? [`--global-timeout=${measurementGlobalTimeout(mode)}`]
+      : []),
     ...files,
   ];
 }
 
-export function requiredDesktopSuites(
-  mode: ReturnType<typeof desktopArguments>,
-) {
+export function requiredDesktopSuites(mode: DesktopMode) {
   if (mode.updateBaselines) return ['bootstrap.spec.ts'];
   if (mode.probe)
     return [
@@ -472,9 +654,14 @@ export async function runDesktop(
   const unvalidatedPlatformSkips: string[] = [];
   let probeComplete = !mode.probe;
   let visual: { eligible: boolean; reasons: string[] } | null = null;
+  let measuredStats: ReturnType<typeof playwrightStats> = null;
+  let completeness: ReturnType<typeof measurementCompleteness> | null = null;
   try {
+    const report: unknown = JSON.parse(await readFile(reportPath, 'utf8'));
+    measuredStats = playwrightStats(report);
+    completeness = measurementCompleteness(report, required);
     reportComplete = completeDesktopReport(
-      JSON.parse(await readFile(reportPath, 'utf8')),
+      report,
       required,
       platform,
       unvalidatedSkips,
@@ -526,6 +713,15 @@ export async function runDesktop(
       );
     }
   }
+  const harnessErrors =
+    mode.measure === true
+      ? measurementHarnessErrors(
+          exitCode,
+          present.length,
+          missing,
+          measuredStats,
+        )
+      : [];
   const status = {
     schemaVersion: 1,
     artifactDir,
@@ -549,9 +745,31 @@ export async function runDesktop(
     reportComplete,
     probeComplete,
     visual,
-    // Reference generation is never acceptance evidence.
+    ...(mode.measure === true
+      ? {
+          measurement: {
+            repeatEach: mode.repeatEach ?? 1,
+            stats: measuredStats,
+            // Interrupted or never-started tests: the aggregate job fails on these.
+            ...(completeness ?? {
+              interrupted: 0,
+              notRun: 0,
+              missingFiles: [...required],
+              reportErrors: 0,
+              incomplete: true,
+            }),
+            testFailures:
+              exitCode !== 0 &&
+              measuredStats !== null &&
+              harnessErrors.length === 0,
+            harnessErrors,
+          },
+        }
+      : {}),
+    // Reference generation and measurement are never acceptance evidence.
     validated:
       !mode.updateBaselines &&
+      mode.measure !== true &&
       exitCode === 0 &&
       missing.length === 0 &&
       reportComplete &&
@@ -567,6 +785,11 @@ export async function runDesktop(
   );
   if (missing.length > 0) {
     console.error(`Missing mandatory Desktop suites: ${missing.join(', ')}`);
+  }
+  if (mode.measure === true) {
+    for (const error of harnessErrors)
+      console.error(`Measurement harness error: ${error}`);
+    return harnessErrors.length === 0 ? 0 : 1;
   }
   if (mode.updateBaselines)
     return exitCode === 0 && missing.length === 0 && reportComplete ? 0 : 1;

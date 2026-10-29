@@ -9,6 +9,11 @@ import {
   deriveSecurityObserverCapability,
   desktopArguments,
   desktopPlaywrightArguments,
+  measurementCompleteness,
+  measurementGlobalTimeout,
+  MEASURE_GLOBAL_TIMEOUT_CAP_MS,
+  measurementHarnessErrors,
+  playwrightStats,
   FUNCTIONAL_CAPABILITIES as FUNCTIONAL,
   mergeProbeCapabilities,
   DESKTOP_GROUPS,
@@ -605,4 +610,229 @@ test('the runner sweeps leftover host blocking rules on Linux only and never thr
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('--repeat-each is validated from 1 to 10 and forwarded to Playwright', () => {
+  for (const n of [1, 5, 10])
+    assert.equal(
+      desktopArguments(['--measure', `--repeat-each=${n}`], {}).repeatEach,
+      n,
+    );
+  assert.throws(
+    () => desktopArguments(['--repeat-each=3'], {}),
+    /requires --measure/,
+  );
+  for (const bad of [
+    '--repeat-each=0',
+    '--repeat-each=11',
+    '--repeat-each=-1',
+    '--repeat-each=2.5',
+    '--repeat-each=x',
+    '--repeat-each=',
+    '--repeat-each',
+  ])
+    assert.throws(
+      () => desktopArguments(['--measure', bad], {}),
+      /--repeat-each/,
+      bad,
+    );
+  assert.throws(
+    () =>
+      desktopArguments(['--measure', '--repeat-each=2', '--repeat-each=3'], {}),
+    /twice/,
+  );
+  assert.throws(
+    () =>
+      desktopArguments(
+        ['--update-baselines', '--measure', '--repeat-each=2'],
+        {},
+        'linux',
+      ),
+    /cannot be combined/,
+  );
+  assert.throws(
+    () => desktopArguments(['--update-baselines', '--measure'], {}, 'linux'),
+    /cannot be combined/,
+  );
+  const repeated = desktopPlaywrightArguments(
+    desktopArguments(['--', '--packaged', '--measure', '--repeat-each=3'], {}),
+    '/c.ts',
+    ['a.spec.ts'],
+  );
+  assert.deepEqual(
+    repeated.filter((arg) => arg.startsWith('--repeat-each')),
+    ['--repeat-each=3'],
+  );
+  assert.ok(!repeated.some((arg) => arg.startsWith('--retries')));
+});
+
+test('measurement mode leaves the default Playwright arguments and timeouts alone', () => {
+  const normal = desktopArguments(['--packaged'], {});
+  // Default mode keeps its schema: no measurement keys at all.
+  assert.ok(!('measure' in normal) && !('repeatEach' in normal));
+  assert.equal(measurementGlobalTimeout(normal), null);
+  const args = desktopPlaywrightArguments(normal, '/c.ts', ['a.spec.ts']);
+  assert.deepEqual(args, [
+    'test',
+    '--config',
+    '/c.ts',
+    '--reporter=line,json',
+    'a.spec.ts',
+  ]);
+  const measure = desktopArguments(
+    ['--packaged', '--measure', '--repeat-each=5'],
+    {},
+  );
+  assert.equal(measure.measure, true);
+  assert.deepEqual(
+    requiredDesktopSuites(measure),
+    requiredDesktopSuites(normal),
+  );
+  assert.equal(
+    measurementGlobalTimeout(measure),
+    MEASURE_GLOBAL_TIMEOUT_CAP_MS,
+  );
+  assert.equal(MEASURE_GLOBAL_TIMEOUT_CAP_MS, 17_400_000);
+  assert.equal(
+    measurementGlobalTimeout(
+      desktopArguments(['--measure', '--repeat-each=2'], {}),
+    ),
+    14_400_000,
+  );
+  assert.ok(
+    desktopPlaywrightArguments(measure, '/c.ts', ['a.spec.ts']).includes(
+      '--global-timeout=17400000',
+    ),
+  );
+  assert.deepEqual(
+    playwrightStats({
+      stats: { expected: 1, unexpected: 2, skipped: 0, flaky: 0 },
+      suites: [],
+    }),
+    { expected: 1, unexpected: 2, skipped: 0, flaky: 0 },
+  );
+  assert.equal(playwrightStats({ stats: { expected: 1 }, suites: [] }), null);
+  assert.equal(playwrightStats(null), null);
+});
+
+test('the default report check still rejects failures and flaky tests', () => {
+  const spec = (id: string, status: string, outcome: string) => ({
+    id,
+    title: id,
+    file: 'tests/desktop/data.spec.ts',
+    tests: [
+      {
+        expectedStatus: 'passed',
+        status: outcome,
+        results: [{ status }],
+      },
+    ],
+  });
+  const report = (stats: Record<string, number>, specs: unknown[]) => ({
+    stats: { skipped: 0, ...stats },
+    suites: [{ file: 'tests/desktop/data.spec.ts', specs }],
+  });
+  assert.equal(
+    completeDesktopReport(
+      report({ expected: 1, unexpected: 0, flaky: 0 }, [
+        spec('a', 'passed', 'expected'),
+      ]),
+      ['data.spec.ts'],
+    ),
+    true,
+  );
+  assert.equal(
+    completeDesktopReport(
+      report({ expected: 0, unexpected: 1, flaky: 0 }, [
+        spec('a', 'failed', 'unexpected'),
+      ]),
+      ['data.spec.ts'],
+    ),
+    false,
+  );
+  assert.equal(
+    completeDesktopReport(
+      report({ expected: 1, unexpected: 0, flaky: 1 }, [
+        spec('a', 'passed', 'flaky'),
+      ]),
+      ['data.spec.ts'],
+    ),
+    false,
+  );
+});
+
+test('measurement mode records missing suites as a harness error and stays unvalidated', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rdlc-desktop-measure-'));
+  try {
+    assert.equal(
+      await runDesktop(['--probe', '--measure', '--repeat-each=2'], root),
+      1,
+    );
+    const status = JSON.parse(
+      await readFile(
+        join(root, '.vscode-test/desktop-artifacts/runner-status.json'),
+        'utf8',
+      ),
+    );
+    assert.equal(status.validated, false);
+    assert.equal(status.mode.measure, true);
+    assert.equal(status.measurement.repeatEach, 2);
+    assert.equal(status.measurement.testFailures, false);
+    assert.match(
+      status.measurement.harnessErrors.join(' '),
+      /missing mandatory suites/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('measurement mode records failing tests without making the run fail', () => {
+  const failing = { expected: 3, unexpected: 2, skipped: 1, flaky: 1 };
+  // Failed, flaky and skipped tests with a readable report are data, not errors.
+  assert.deepEqual(measurementHarnessErrors(1, 5, [], failing), []);
+  assert.deepEqual(measurementHarnessErrors(0, 5, [], failing), []);
+  // A suite that cannot run or an unreadable report is a harness error.
+  assert.match(
+    measurementHarnessErrors(1, 4, ['x.spec.ts'], failing).join(),
+    /missing mandatory suites: x\.spec\.ts/,
+  );
+  assert.match(
+    measurementHarnessErrors(1, 5, [], null).join(),
+    /no readable Playwright JSON report \(runner exit code 1\)/,
+  );
+  assert.match(measurementHarnessErrors(1, 0, [], null).join(), /no suite/);
+});
+
+test('measurement completeness flags interrupted, never-started and absent suites', () => {
+  const spec = (file: string, results: unknown[]) => ({
+    file,
+    tests: [{ results }],
+  });
+  const clean = {
+    suites: [
+      { specs: [spec('tests/desktop/a.spec.ts', [{ status: 'passed' }])] },
+    ],
+  };
+  assert.equal(measurementCompleteness(clean, ['a.spec.ts']).incomplete, false);
+  const cut = measurementCompleteness(
+    {
+      errors: [{ message: 'global timeout' }],
+      suites: [
+        {
+          specs: [spec('a.spec.ts', [{ status: 'interrupted' }])],
+          suites: [{ specs: [spec('b.spec.ts', [])] }],
+        },
+      ],
+    },
+    ['a.spec.ts', 'b.spec.ts', 'c.spec.ts'],
+  );
+  assert.deepEqual(cut, {
+    interrupted: 1,
+    notRun: 1,
+    missingFiles: ['c.spec.ts'],
+    reportErrors: 1,
+    incomplete: true,
+  });
+  assert.equal(measurementCompleteness(null, ['a.spec.ts']).incomplete, true);
 });

@@ -75,6 +75,78 @@ The workflow never commits or pushes, and `ci.yml` never updates references.
 Generating on a developer machine is refused unless the platform and VS Code version
 match the reference environment, and the fonts must match the recorded list.
 
+## Measuring Desktop flakiness
+
+The manual **Desktop flake hunt** workflow (`.github/workflows/flake-hunt.yml`,
+`workflow_dispatch` only, `contents: read`) measures how unstable each Desktop test
+is. It repeats every test and reports failure rates; it never retries, never hides a
+failure and never gates a merge. `ci.yml` is unchanged: retries stay 0, a flaky or
+failed test still fails normal runs and the Linux skip rules are the same.
+
+```sh
+gh workflow run flake-hunt.yml -f repeat=5
+gh workflow run flake-hunt.yml -f repeat=10 -f groups=core,context -f os=ubuntu-24.04
+```
+
+| Input    | Meaning                                                                   |
+| -------- | ------------------------------------------------------------------------- |
+| `repeat` | Repeats of every test, an integer from 1 to 10 (default 5).               |
+| `groups` | Comma-separated `core`, `authoring`, `context`; empty runs all three.     |
+| `os`     | Comma-separated `ubuntu-24.04`, `windows-2022`, `macos-14`; empty is all. |
+
+The matrix is the `desktop` job of `ci.yml` (OS x VS Code `1.142.0` and `stable` x
+group) with the same pinned actions, provisioning and environment, plus a `mode`
+dimension: one job per Playwright invocation, `probe-packaged` (`core` only),
+`functional` and `packaged`. Each job runs `pnpm test:e2e <mode flags> --measure
+--repeat-each=<repeat>`. The host suites (`pnpm test:vscode`, `pnpm test:package`) are
+not Playwright runs and are not repeated. Jobs use `fail-fast: false` and the
+`aggregate` job runs whatever the outcome.
+
+Time budget per job (timeout 350 minutes, CI uses 120): up to 30 minutes of setup,
+a run step limited to 300 minutes whose Playwright global timeout is 2 hours per
+repeat capped at 290 minutes, then at least 20 minutes for the `always()` upload.
+Tests cut short by the global timeout are reported as interrupted or never started.
+
+The runner options behind it are also usable locally:
+
+- `--measure` keeps the normal reports (`runner-status.json`, `playwright-report.json`
+  in a fresh `run-<uuid>` folder per invocation) but records failing, flaky or skipped
+  tests under `measurement` in the status instead of failing. The exit code is
+  non-zero only for harness errors: a mandatory suite that is missing or no readable
+  Playwright report. `measurement` also counts interrupted and never-started tests,
+  absent suites and report-level errors, and sets `incomplete`. A measurement run is
+  never `validated`.
+- `--repeat-each=<n>` (1 to 10, requires `--measure`) is passed to Playwright as
+  `--repeat-each`. Without `--measure` the option is refused.
+- `--update-baselines` cannot be combined with either option. Default runs add no keys
+  to `runner-status.json`.
+
+Each job uploads `flake-results-<os>-<vscode>-<group>-<mode>` (the Playwright JSON
+reports and runner statuses only). `aggregate` runs `scripts/flake-report.ts` over them
+with the planned matrix. It uploads the `flake-report` artifact (`flake-report.md` and
+`flake-report.json`, complete) and appends a truncated summary to the run (the top 25
+unstable tests plus any incomplete environments, because a step summary is limited to
+1 MiB). The aggregate job fails when any environment is incomplete or has no report;
+test failures alone do not fail it.
+
+Reading the report:
+
+- One row per test title and environment (OS, VS Code, group, mode: `probe-packaged`,
+  `functional` or `packaged`) with runs, passes, failures, failure rate and the first
+  line of the first error, sorted by failure rate. A rate strictly between 0% and
+  100% is a flaky test; 100% is a consistent failure; a timeout counts as a failure.
+  Interrupted and skipped executions are not runs.
+- "Tests that never ran" lists tests with no executed run, with the skip reason
+  (for example the UNVALIDATED host-observer and macOS skips) or an interruption note.
+- An **INCOMPLETE MEASUREMENT** banner lists environments with interrupted or
+  never-started tests (for example a global timeout), report-level errors, or no
+  report at all. Their rates are lower bounds only, and their rows are marked
+  `INCOMPLETE`. Do not read a missing row as a pass.
+- "Harness errors" appears when a job could not produce a result (missing suite or
+  report).
+- Rows only measure the repeats of one run; compare several runs before trusting a
+  low rate, since `repeat` repeats within one job on one runner.
+
 ## Optional follow-ups accepted as unrun
 
 - Exercise fork and same-repository PR secret isolation, without exposing secrets.
