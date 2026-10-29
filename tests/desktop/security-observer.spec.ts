@@ -26,9 +26,11 @@ import {
   newCanaryName,
   sanitizeTarget,
   SecurityObserverUnsupportedError,
+  startTracedCommand,
   unexpectedEvents,
   type AllowedAccess,
   type HostBlocking,
+  type NativeObservation,
   type SecurityCapability,
   type SecurityObservation,
 } from './security-observer.js';
@@ -48,10 +50,44 @@ const BLOCKED_ORIGIN = 'https://rdlc-blocked-control.invalid';
  * of the canary (outside every allowlist), a missing file, execve, a loopback
  * connect and a non-loopback connect that host blocking must refuse.
  */
-function hostProbe(canaryPath: string): string {
+function hostProbeScript(canaryPath: string): string {
   if (/["'\\\s]/.test(canaryPath))
     throw new Error('The canary path must be shell- and JS-safe.');
-  return `node -e 'const fs=require("node:fs");try{fs.openSync("/nonexistent/rdlc-security-host-file","r")}catch{};try{fs.openSync("${canaryPath}","r")}catch{};require("node:child_process").execFile("/nonexistent/rdlc-security-host-exec",()=>{});require("node:net").connect({host:"127.0.0.1",port:1}).on("error",()=>{});require("node:net").connect({host:"203.0.113.9",port:443}).on("error",()=>{});setTimeout(()=>process.exit(0),800)'`;
+  return `const fs=require("node:fs");try{fs.openSync("/nonexistent/rdlc-security-host-file","r")}catch{};try{fs.openSync("${canaryPath}","r")}catch{};require("node:child_process").execFile("/nonexistent/rdlc-security-host-exec",()=>{});require("node:net").connect({host:"127.0.0.1",port:1}).on("error",()=>{});require("node:net").connect({host:"203.0.113.9",port:443}).on("error",()=>{});setTimeout(()=>process.exit(0),800)`;
+}
+
+/** The probe as typed into the trusted window's terminal. */
+function hostProbe(canaryPath: string): string {
+  return `node -e '${hostProbeScript(canaryPath)}'`;
+}
+
+/**
+ * Restricted Mode has no terminal, so the same probe runs as a harness-owned node
+ * process under its own launch-mode strace, inside the blocked control window. It
+ * is not a descendant of the Desktop, so its events never enter the attached
+ * journey or control observations and cannot affect their zero-unexpected verdict;
+ * its pids are asserted disjoint from the Desktop tree's.
+ */
+async function runHarnessProbe(
+  canaryPath: string,
+  options: { redactions: readonly string[]; allowed: AllowedAccess },
+): Promise<NativeObservation> {
+  const traced = await startTracedCommand({
+    command: process.execPath,
+    args: ['-e', hostProbeScript(canaryPath)],
+    redactions: options.redactions,
+    allowed: options.allowed,
+  });
+  const exited = await new Promise<boolean>((done) => {
+    if (traced.child.exitCode !== null || traced.child.signalCode !== null)
+      return done(true);
+    traced.child.once('exit', () => done(true));
+    setTimeout(() => done(false), 15_000).unref();
+  });
+  const observation = await traced.stop();
+  if (!exited)
+    throw new Error('The harness host probe did not exit within 15 seconds.');
+  return observation;
 }
 
 /**
@@ -363,6 +399,7 @@ async function observe(
 interface ProfileRecord {
   journey?: SecurityObservation;
   control?: SecurityObservation;
+  harnessProbe?: NativeObservation;
   hostBlocking?: HostBlocking;
   webviewControl?: Awaited<ReturnType<typeof webviewControl>>;
   networkControl?: Awaited<ReturnType<typeof networkListenerControl>>;
@@ -575,12 +612,26 @@ test('security observer: real trust states, host tree and webview attempts fail 
             driver!.page,
             `https://127.0.0.1:${loopbackPort}/control`,
           );
-          // Restricted Mode cannot host the probe terminal: its refusal is the
-          // assertion, and the probe-only evidence is required of the trusted run.
+          // Restricted Mode cannot host the probe terminal: its refusal is
+          // asserted, and the same probe runs as a traced harness process.
           if (profile === 'restricted') {
             checks.terminalRefusedRestricted = 'failed';
             await expectTerminalRefused(driver!);
             checks.terminalRefusedRestricted = 'passed';
+            if (native) {
+              if (!capability.native.launch.supported)
+                throw new Error(
+                  `The restricted positive control needs launch capture: ${capability.native.launch.reason}`,
+                );
+              record.harnessProbe = await runHarnessProbe(canaryPath, {
+                redactions: [
+                  driver!.profileDir,
+                  root,
+                  driver!.identity.executablePath,
+                ],
+                allowed: allowedAccess(driver!, isolation),
+              });
+            }
           } else if (native) await runHostProbe(driver!, canaryPath);
         },
       );
@@ -647,95 +698,116 @@ test('security observer: real trust states, host tree and webview attempts fail 
           control.native.state === 'observed',
           `${profile} attached host observation was ${control.native.state}: ${control.native.reason ?? 'no reason'}`,
         );
-        if (profile === 'trusted') {
+        // Positive controls share one set of assertions: the probe ran in the
+        // Desktop terminal (trusted, in the attached tree) or as a traced harness
+        // process (restricted, no terminal).
+        const harness = record.harnessProbe;
+        if (profile === 'restricted') {
           check(
-            nativeEvents.some(
-              (event) =>
-                event.channel === 'network' &&
-                event.outcome === 'failed' &&
-                event.target === '127.0.0.1:1',
-            ),
-            `${profile}: failed host network attempt was not captured.`,
-          );
-          // Host-level blocking positive control: the refused attempt is a failed connect.
-          check(
-            nativeEvents.some(
-              (event) =>
-                event.channel === 'network' &&
-                event.outcome === 'failed' &&
-                event.target === '203.0.113.9:443' &&
-                event.unexpected === true,
-            ),
-            `${profile}: the non-loopback host connect was not observed as refused by host-level blocking.`,
+            harness !== undefined && harness.state === 'observed',
+            `${profile}: the harness host probe observation was ${harness?.state ?? 'missing'}: ${harness?.reason ?? 'no reason'}`,
           );
           check(
-            nativeEvents.some(
-              (event) =>
-                event.channel === 'file' &&
-                event.outcome === 'failed' &&
-                event.target.includes('rdlc-security-host-file') &&
-                event.unexpected === true,
-            ),
-            `${profile}: harness-only file open was not observed and classified outside the allowlist.`,
+            harness !== undefined && !harness.truncated && !harness.timedOut,
+            `${profile}: the harness host probe observation was incomplete.`,
           );
-          // The harness-only open of the canary must be detected as unexpected.
-          check(
-            nativeEvents.some(
-              (event) =>
-                event.channel === 'file' &&
-                event.target.includes(canaryName) &&
-                event.unexpected === true,
-            ),
-            `${profile}: the harness-only canary open was not detected as unexpected.`,
-          );
-          check(
-            nativeEvents.some(
-              (event) =>
-                event.channel === 'exec' &&
-                event.outcome === 'failed' &&
-                event.target === 'rdlc-security-host-exec' &&
-                event.unexpected === true,
-            ),
-            `${profile}: harness-only execve was not observed and classified outside the allowlist.`,
-          );
-          check(
-            nativeEvents.some((event) => event.channel === 'process'),
-            `${profile}: host process creation was not captured.`,
-          );
-          check(
-            new Set(
-              nativeEvents
-                .map((event) => event.pid)
-                .filter((pid): pid is number => pid !== null),
-            ).size > 1,
-            `${profile}: host capture did not include the short-lived probe descendant.`,
-          );
-        } else {
-          // No terminal exists in Restricted Mode: the probe must not have run.
+          // The refused terminal must have produced nothing in the Desktop tree,
+          // and the control must stay separate from the journey's verdict.
           check(
             !nativeEvents.some(
               (event) =>
                 event.target.includes('rdlc-security-host-') ||
                 event.target.includes(canaryName),
             ),
-            `${profile}: a host probe attempt was observed although the terminal was refused.`,
+            `${profile}: a host probe attempt was observed in the Desktop tree although the terminal was refused.`,
+          );
+          const desktopPids = new Set(
+            [...nativeEvents, ...journey.native.events]
+              .map((event) => event.pid)
+              .filter((pid): pid is number => pid !== null),
+          );
+          check(
+            !(harness?.events ?? []).some(
+              (event) => event.pid !== null && desktopPids.has(event.pid),
+            ),
+            `${profile}: the harness probe pids overlap the Desktop tree.`,
           );
         }
+        const probeEvents =
+          profile === 'restricted' ? (harness?.events ?? []) : nativeEvents;
+        check(
+          probeEvents.some(
+            (event) =>
+              event.channel === 'network' &&
+              event.outcome === 'failed' &&
+              event.target === '127.0.0.1:1',
+          ),
+          `${profile}: failed host network attempt was not captured.`,
+        );
+        // Host-level blocking positive control: the refused attempt is a failed connect.
+        check(
+          probeEvents.some(
+            (event) =>
+              event.channel === 'network' &&
+              event.outcome === 'failed' &&
+              event.target === '203.0.113.9:443' &&
+              event.unexpected === true,
+          ),
+          `${profile}: the non-loopback host connect was not observed as refused by host-level blocking.`,
+        );
+        check(
+          probeEvents.some(
+            (event) =>
+              event.channel === 'file' &&
+              event.outcome === 'failed' &&
+              event.target.includes('rdlc-security-host-file') &&
+              event.unexpected === true,
+          ),
+          `${profile}: harness-only file open was not observed and classified outside the allowlist.`,
+        );
+        // The harness-only open of the canary must be detected as unexpected.
+        check(
+          probeEvents.some(
+            (event) =>
+              event.channel === 'file' &&
+              event.target.includes(canaryName) &&
+              event.unexpected === true,
+          ),
+          `${profile}: the harness-only canary open was not detected as unexpected.`,
+        );
+        check(
+          probeEvents.some(
+            (event) =>
+              event.channel === 'exec' &&
+              event.outcome === 'failed' &&
+              event.target === 'rdlc-security-host-exec' &&
+              event.unexpected === true,
+          ),
+          `${profile}: harness-only execve was not observed and classified outside the allowlist.`,
+        );
+        check(
+          probeEvents.some((event) => event.channel === 'process'),
+          `${profile}: host process creation was not captured.`,
+        );
+        check(
+          new Set(
+            probeEvents
+              .map((event) => event.pid)
+              .filter((pid): pid is number => pid !== null),
+          ).size > 1,
+          `${profile}: host capture did not include the short-lived probe descendant.`,
+        );
         check(
           control.captureComplete && journey.captureComplete,
           `${profile} host observation was incomplete: ${[...control.failures, ...journey.failures].join(' ') || 'no failure recorded'}`,
         );
-        // The positive control needs the probe terminal, which only a trusted
-        // window can create.
-        const canaryControl = nativeEvents.some(
+        const canaryControl = probeEvents.some(
           (event) =>
             event.channel === 'file' &&
             event.target.includes(canaryName) &&
             event.unexpected === true,
         );
-        if (profile === 'trusted' && canaryControl)
-          checks[name('canaryControl')] = 'passed';
-        else if (profile === 'restricted') delete checks[name('canaryControl')];
+        if (canaryControl) checks[name('canaryControl')] = 'passed';
         checks[name('nativeHost')] =
           control.native.state === 'observed' &&
           journey.native.state === 'observed'
@@ -744,8 +816,7 @@ test('security observer: real trust states, host tree and webview attempts fail 
         if (
           checks[name('semanticProof')] === 'passed' &&
           (checks[name('nativeHost')] !== 'passed' ||
-            (profile === 'trusted' &&
-              !nativeEvents.some((event) => event.unexpected === true)))
+            !probeEvents.some((event) => event.unexpected === true))
         )
           checks[name('semanticProof')] = 'failed';
       }
@@ -857,6 +928,7 @@ test('security observer: real trust states, host tree and webview attempts fail 
         native: record.control?.native ?? null,
         webview: record.control?.webview ?? null,
         journeyNative: record.journey?.native ?? null,
+        harnessProbe: record.harnessProbe ?? null,
         captureComplete:
           !!record.control?.captureComplete &&
           !!record.journey?.captureComplete,
@@ -893,6 +965,7 @@ test('security observer: real trust states, host tree and webview attempts fail 
           native: restricted.native,
           webview: restricted.webview,
           journeyNative: restricted.journeyNative,
+          harnessProbe: restricted.harnessProbe,
           captureComplete:
             restricted.captureComplete && trusted.captureComplete,
           hostBlocking: restricted.hostBlocking,
