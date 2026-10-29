@@ -217,6 +217,23 @@ export function desktopPaths(
   };
 }
 
+/**
+ * Built-in extensions that reach the network or probe the machine in the
+ * background (Copilot Chat, sign-in providers, tunnels, GitHub, npm registry,
+ * JS/TS chat features, the debugger companion). None is needed by an RDLC
+ * journey, and the host observers must only see traffic the product causes.
+ */
+export const DISABLED_BUILTIN_EXTENSIONS: readonly string[] = [
+  'GitHub.copilot-chat',
+  'TypeScriptTeam.jsts-chat-features',
+  'vscode.github',
+  'vscode.github-authentication',
+  'vscode.microsoft-authentication',
+  'vscode.tunnel-forwarding',
+  'vscode.npm',
+  'ms-vscode.js-debug-companion',
+];
+
 export function desktopLaunchArgs(
   options: DesktopLaunchOptions,
   paths: DesktopPaths,
@@ -233,6 +250,7 @@ export function desktopLaunchArgs(
     '--no-cached-data',
     '--disable-gpu',
     '--no-sandbox',
+    ...DISABLED_BUILTIN_EXTENSIONS.map((id) => `--disable-extension=${id}`),
   ];
   // Workspace trust stays native so trusted and restricted runs remain real.
   if (!options.packaged) {
@@ -933,6 +951,22 @@ export async function launchDesktop(
         // which no reference capture can reproduce.
         'update.mode': 'none',
         'extensions.autoCheckUpdates': false,
+        // No background network or feature activity: the host observers
+        // must only see what the RDLC extension and the journeys cause.
+        // Workspace trust settings are deliberately left untouched.
+        'telemetry.telemetryLevel': 'off',
+        'workbench.enableExperiments': false,
+        'workbench.settings.enableNaturalLanguageSearch': false,
+        'extensions.autoUpdate': false,
+        'extensions.ignoreRecommendations': true,
+        'npm.fetchOnlinePackageInfo': false,
+        'json.schemaDownload.enable': false,
+        'typescript.disableAutomaticTypeAcquisition': true,
+        'workbench.cloudChanges.autoResume': 'off',
+        'workbench.cloudChanges.continueOn': 'off',
+        'chat.disableAIFeatures': true,
+        'workbench.startupEditor': 'none',
+        'workbench.welcomePage.walkthroughs.openOnInstall': false,
       },
       null,
       2,

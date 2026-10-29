@@ -35,6 +35,21 @@ rejection, configured/unconfigured/conflicting authentication, full destination
 inventories, draft asset conflicts, failed-job discovery of prior uploads and
 missing/expired provenance. These test results are not hosted failure injections.
 
+## Quiet Desktop host
+
+The Desktop driver (`tests/desktop/driver.ts`) launches VS Code with telemetry,
+experiments, natural-language search, extension auto-update and recommendations,
+npm/JSON-schema/TypeScript package fetching, cloud-changes resume and the built-in AI
+features (`chat.disableAIFeatures`) switched off, and with the network-active built-in
+extensions disabled (`GitHub.copilot-chat`, `TypeScriptTeam.jsts-chat-features`,
+`vscode.github`, `vscode.github-authentication`, `vscode.microsoft-authentication`,
+`vscode.tunnel-forwarding`, `vscode.npm`, `ms-vscode.js-debug-companion`). The Linux
+host observer therefore reports traffic and file probes caused by the product and the
+journeys rather than by VS Code background features; its allowlists are not widened.
+Workspace trust settings are unchanged. Hiding the Chat view alters the secondary side
+bar and the designer width, so the pixel references below must be regenerated after
+this change.
+
 ## Regenerating the Desktop pixel references
 
 `tests/desktop/baselines/` holds the only pixel references, valid for one pinned
