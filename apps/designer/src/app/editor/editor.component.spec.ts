@@ -2455,6 +2455,147 @@ describe('property drafts, limitations and focus', () => {
   });
 });
 
+describe('focusProperties retries', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** A selected report whose inspector gets a controllable, initially disabled field. */
+  async function mountedWithLateField() {
+    const m = mount();
+    m.host.ingest({
+      ...snapshotMessage({}),
+      viewBinding: {
+        viewId: 'view-1',
+        documentLifetimeId: 'document-1',
+        contextGeneration: 1,
+      },
+    });
+    await m.settle();
+    m.fixture.componentInstance.select(0);
+    await m.settle();
+    const inspector = m.element.querySelector('.inspector')!;
+    const field = (name: string, disabled: boolean) => {
+      const input = document.createElement('input');
+      input.dataset['late'] = name;
+      input.disabled = disabled;
+      inspector.appendChild(input);
+      return input;
+    };
+    // Fake timers only start once the component is settled and rendered.
+    vi.useFakeTimers();
+    return { ...m, component: m.fixture.componentInstance, field };
+  }
+
+  it('focuses the preferred field once it becomes enabled within the retry budget', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    m.component.focusProperties(
+      '.inspector input[data-late="a"], .inspector input',
+    );
+    m.fixture.detectChanges();
+    // Other enabled inputs exist, but they are lower priority until exhaustion.
+    vi.advanceTimersByTime(300);
+    expect(document.activeElement).not.toBe(late);
+    expect(m.element.contains(document.activeElement)).toBe(false);
+    late.disabled = false;
+    vi.advanceTimersByTime(50);
+    expect(document.activeElement).toBe(late);
+  });
+
+  it('falls back to a lower-priority match only once the retries are exhausted', async () => {
+    const m = await mountedWithLateField();
+    m.field('a', true);
+    m.component.focusProperties(
+      '.inspector input[data-late="a"], .inspector [data-property="name"]',
+    );
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(900);
+    expect(document.activeElement).not.toBe(
+      m.element.querySelector('[data-property="name"]'),
+    );
+    vi.advanceTimersByTime(200);
+    expect(document.activeElement).toBe(
+      m.element.querySelector('[data-property="name"]'),
+    );
+  });
+
+  it('does not steal focus the user moved elsewhere during the retries', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    const outside = document.createElement('button');
+    m.element.appendChild(outside);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    outside.focus();
+    late.disabled = false;
+    vi.advanceTimersByTime(500);
+    expect(document.activeElement).toBe(outside);
+  });
+
+  it('does not steal focus the user moved to another inspector field', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    const other = m.field('b', false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    other.focus();
+    late.disabled = false;
+    vi.advanceTimersByTime(500);
+    expect(document.activeElement).toBe(other);
+  });
+
+  it('takes the button or summary fallback only after the budget when no input is enabled', async () => {
+    const m = await mountedWithLateField();
+    // Disable every input in the inspector so only the lower parts can match.
+    const inspector = m.element.querySelector('.inspector')!;
+    for (const input of inspector.querySelectorAll('input'))
+      input.disabled = true;
+    const button = inspector.querySelector<HTMLElement>('button')!;
+    m.component.focusProperties();
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(900);
+    expect(document.activeElement).not.toBe(button);
+    vi.advanceTimersByTime(200);
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('stops retrying when the component is destroyed', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    const focus = vi.spyOn(late, 'focus');
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    const before = focus.mock.calls.length;
+    m.fixture.destroy();
+    late.disabled = false;
+    vi.advanceTimersByTime(2_000);
+    expect(focus.mock.calls.length).toBe(before);
+  });
+
+  it('cancels the previous loop when called again', async () => {
+    const m = await mountedWithLateField();
+    const first = m.field('a', true);
+    const second = m.field('b', false);
+    const firstFocus = vi.spyOn(first, 'focus');
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    const before = firstFocus.mock.calls.length;
+    m.component.focusProperties('.inspector input[data-late="b"]');
+    m.fixture.detectChanges();
+    expect(document.activeElement).toBe(second);
+    first.disabled = false;
+    vi.advanceTimersByTime(2_000);
+    expect(firstFocus.mock.calls.length).toBe(before);
+    expect(document.activeElement).toBe(second);
+  });
+});
+
 describe('context menu retargeting', () => {
   beforeEach(() => TestBed.resetTestingModule());
   it('reopens the extension menu where a second right-click lands', async () => {

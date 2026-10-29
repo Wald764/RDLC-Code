@@ -411,6 +411,9 @@ export class EditorComponent {
   private focusedControl: HTMLElement | null = null;
   /** Control that owned focus when a pending edit started; `undefined` = no cycle. */
   private pendingFocus: HTMLElement | null | undefined = undefined;
+  /** The live `focusProperties` call; a newer call, a user move or destroy ends it. */
+  private focusRun: object | undefined = undefined;
+  private focusTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   private refusedForm: { requestId: string; form: HTMLFormElement } | null =
     null;
   private readonly reconciled = computed(() => {
@@ -619,7 +622,10 @@ export class EditorComponent {
   }
 
   constructor() {
-    inject(DestroyRef).onDestroy(() => this.cancelGesture());
+    inject(DestroyRef).onDestroy(() => {
+      this.cancelGesture();
+      this.cancelFocusProperties();
+    });
     const root = this.element.nativeElement;
     afterNextRender(() => {
       if (typeof ResizeObserver === 'undefined') return;
@@ -1355,21 +1361,69 @@ export class EditorComponent {
     entry.run();
   }
 
+  private cancelFocusProperties(): void {
+    clearTimeout(this.focusTimer);
+    this.focusTimer = undefined;
+    this.focusRun = undefined;
+  }
+
+  /**
+   * Focus the first usable match of the selector list, in priority order (the
+   * creation selector prefers the Name field over any other input).
+   */
   focusProperties(
     selector = '.inspector input, .inspector button, .inspector summary',
   ): void {
+    this.cancelFocusProperties();
     this.revealPanel('right');
+    const run = {};
+    this.focusRun = run;
+    const root = this.element.nativeElement;
+    const parts = selector.split(',').map((part) => part.trim());
+    const origin = document.activeElement;
+    // What our own focus() calls last left active; anything else is the user.
+    let owned = origin;
+    const attempt = (last: boolean): boolean => {
+      const usable = (element: HTMLElement) => !element.matches(':disabled');
+      const groups = parts.map((part) => [
+        ...root.querySelectorAll<HTMLElement>(part),
+      ]);
+      // A lower-priority match is only taken once the retries are exhausted.
+      const all = groups.flat();
+      const target =
+        groups[0]?.find(usable) ??
+        (last ? (all.find(usable) ?? all[0]) : undefined);
+      target?.focus();
+      owned = document.activeElement;
+      return !!target && document.activeElement === target;
+    };
+    const finish = (): void => {
+      if (this.focusRun === run) this.cancelFocusProperties();
+    };
     afterNextRender(
       () => {
-        // Document order puts the panel chrome before the fields, so the first
-        // field has to win; otherwise the panel button steals focus from it.
-        const matches = [
-          ...this.element.nativeElement.querySelectorAll<HTMLElement>(selector),
-        ];
-        const target =
-          matches.find((element) => element.matches('input:not(:disabled)')) ??
-          matches[0];
-        target?.focus();
+        if (this.focusRun !== run) return;
+        if (attempt(false)) return finish();
+        // The inspector can still be rebuilding for the new selection or be
+        // disabled by the edit that is settling, and a disabled or detached
+        // field ignores focus(): retry on the next frames until it sticks.
+        let remaining = 20;
+        const retry = (): void => {
+          if (this.focusRun !== run) return;
+          const active = document.activeElement;
+          // Focus moved elsewhere on purpose: never steal it back.
+          if (
+            active &&
+            active !== document.body &&
+            active !== origin &&
+            active !== owned
+          )
+            return finish();
+          const last = --remaining <= 0;
+          if (attempt(last) || last) return finish();
+          this.focusTimer = setTimeout(retry, 50);
+        };
+        this.focusTimer = setTimeout(retry, 50);
       },
       { injector: this.injector },
     );
