@@ -414,6 +414,8 @@ export class EditorComponent {
   /** The live `focusProperties` call; a newer call, a user move or destroy ends it. */
   private focusRun: object | undefined = undefined;
   private focusTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+  /** Removes the window blur and user input listeners of the live loop. */
+  private focusUnlisten: (() => void) | undefined = undefined;
   private refusedForm: { requestId: string; form: HTMLFormElement } | null =
     null;
   private readonly reconciled = computed(() => {
@@ -1365,6 +1367,8 @@ export class EditorComponent {
     clearTimeout(this.focusTimer);
     this.focusTimer = undefined;
     this.focusRun = undefined;
+    this.focusUnlisten?.();
+    this.focusUnlisten = undefined;
   }
 
   /**
@@ -1378,9 +1382,23 @@ export class EditorComponent {
     this.revealPanel('right');
     const run = {};
     this.focusRun = run;
+    // The webview losing focus to the workbench (e.g. the command palette) or
+    // any user input ends the loop; none of our own focus() calls emit these.
+    const stop = (event: Event): void => {
+      if ((event as KeyboardEvent).repeat) return;
+      if (this.focusRun === run) this.cancelFocusProperties();
+    };
+    const events = ['keydown', 'pointerdown'] as const;
+    window.addEventListener('blur', stop);
+    for (const type of events) document.addEventListener(type, stop, true);
+    this.focusUnlisten = () => {
+      window.removeEventListener('blur', stop);
+      for (const type of events) document.removeEventListener(type, stop, true);
+    };
     const root = this.element.nativeElement;
     const parts = selector.split(',').map((part) => part.trim());
     const origin = document.activeElement;
+    let hadFocus = document.hasFocus();
     // What our own focus() calls last left active; anything else is the user.
     let owned = origin;
     const attempt = (last: boolean): boolean => {
@@ -1410,6 +1428,12 @@ export class EditorComponent {
         let remaining = 20;
         const retry = (): void => {
           if (this.focusRun !== run) return;
+          // Focus left the webview for the host: do not pull it back. If it
+          // never had focus (late iframe focus), wait for it within the
+          // budget, but never focus() while the document is unfocused.
+          const focused = document.hasFocus();
+          if (focused) hadFocus = true;
+          else if (hadFocus) return finish();
           const active = document.activeElement;
           // Focus moved elsewhere on purpose: never steal it back.
           if (
@@ -1420,6 +1444,11 @@ export class EditorComponent {
           )
             return finish();
           const last = --remaining <= 0;
+          if (!focused) {
+            if (last) return finish();
+            this.focusTimer = setTimeout(retry, 50);
+            return;
+          }
           if (attempt(last) || last) return finish();
           this.focusTimer = setTimeout(retry, 50);
         };

@@ -2485,7 +2485,9 @@ describe('focusProperties retries', () => {
     };
     // Fake timers only start once the component is settled and rendered.
     vi.useFakeTimers();
-    return { ...m, component: m.fixture.componentInstance, field };
+    // Deterministic document focus instead of jsdom's ambient state.
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    return { ...m, component: m.fixture.componentInstance, field, hasFocus };
   }
 
   it('focuses the preferred field once it becomes enabled within the retry budget', async () => {
@@ -2575,6 +2577,152 @@ describe('focusProperties retries', () => {
     late.disabled = false;
     vi.advanceTimersByTime(2_000);
     expect(focus.mock.calls.length).toBe(before);
+  });
+
+  it('stops retrying when the window loses focus to the host', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    const focus = vi.spyOn(late, 'focus');
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    const before = focus.mock.calls.length;
+    window.dispatchEvent(new Event('blur'));
+    late.disabled = false;
+    vi.advanceTimersByTime(2_000);
+    expect(focus.mock.calls.length).toBe(before);
+    expect(document.activeElement).not.toBe(late);
+  });
+
+  it('does not call focus() once the document has lost focus', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    const focus = vi.spyOn(late, 'focus');
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    const before = focus.mock.calls.length;
+    m.hasFocus.mockReturnValue(false);
+    late.disabled = false;
+    vi.advanceTimersByTime(2_000);
+    expect(focus.mock.calls.length).toBe(before);
+    m.hasFocus.mockReturnValue(true);
+    vi.advanceTimersByTime(2_000);
+    expect(focus.mock.calls.length).toBe(before);
+  });
+
+  it('makes one attempt then no focus() while the document is unfocused', async () => {
+    const m = await mountedWithLateField();
+    const field = m.field('a', false);
+    const focus = vi.spyOn(field, 'focus').mockImplementation(() => {});
+    m.hasFocus.mockReturnValue(false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    expect(focus).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(2_000);
+    expect(focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('focuses the target when the document gains focus mid-budget', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    m.hasFocus.mockReturnValue(false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    late.disabled = false;
+    vi.advanceTimersByTime(300);
+    expect(document.activeElement).not.toBe(late);
+    m.hasFocus.mockReturnValue(true);
+    vi.advanceTimersByTime(50);
+    expect(document.activeElement).toBe(late);
+  });
+
+  it('ignores auto-repeat keydowns but stops on a real one', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'a', repeat: true }),
+    );
+    late.disabled = false;
+    vi.advanceTimersByTime(50);
+    expect(document.activeElement).toBe(late);
+    const other = m.field('b', true);
+    m.component.focusProperties('.inspector input[data-late="b"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+    other.disabled = false;
+    vi.advanceTimersByTime(2_000);
+    expect(document.activeElement).not.toBe(other);
+  });
+
+  it('stops retrying on a user keydown', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+    late.disabled = false;
+    vi.advanceTimersByTime(2_000);
+    expect(document.activeElement).not.toBe(late);
+  });
+
+  it('stops retrying on a user pointerdown', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    late.disabled = false;
+    vi.advanceTimersByTime(2_000);
+    expect(document.activeElement).not.toBe(late);
+  });
+
+  it('removes its listeners on completion, cancel and destroy', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
+    const docAdd = vi.spyOn(document, 'addEventListener');
+    const docRemove = vi.spyOn(document, 'removeEventListener');
+    const count = (spy: typeof add, type: string) =>
+      spy.mock.calls.filter(([t]) => t === type).length;
+    // Completion: the retries run out and take the fallback field.
+    m.component.focusProperties(
+      '.inspector input[data-late="b"], .inspector input',
+    );
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(2_000);
+    expect(count(add, 'blur')).toBe(1);
+    expect(count(remove, 'blur')).toBe(1);
+    expect(count(docRemove, 'keydown')).toBe(1);
+    expect(count(docRemove, 'pointerdown')).toBe(1);
+    // Cancel by a newer call, then destroy: every registration is balanced.
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    m.fixture.destroy();
+    const handlers = (spy: typeof add, type: string) =>
+      spy.mock.calls.filter(([t]) => t === type).map(([, h, o]) => [h, o]);
+    expect(handlers(remove, 'blur')).toEqual(
+      expect.arrayContaining(handlers(add, 'blur')),
+    );
+    for (const type of ['keydown', 'pointerdown']) {
+      expect(handlers(docAdd, type).length).toBe(3);
+      expect(handlers(docRemove, type)).toEqual(handlers(docAdd, type));
+    }
+    // A later blur has no effect.
+    const focus = vi.spyOn(late, 'focus');
+    late.disabled = false;
+    window.dispatchEvent(new Event('blur'));
+    vi.advanceTimersByTime(2_000);
+    expect(focus).not.toHaveBeenCalled();
   });
 
   it('cancels the previous loop when called again', async () => {
