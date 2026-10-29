@@ -186,7 +186,10 @@ test('bootstrap: real Desktop insertion, source oracle, Undo, semantics and pixe
       // (updateSnapshots stays 'none'); only an explicit --update-baselines run,
       // which the runner rejects in CI, may write it.
       capabilities.screenshotComparison = 'failed';
-      await expect(driver.page).toHaveScreenshot(
+      // Only the designer root is compared: the whole window also holds the
+      // Explorer tree and the breadcrumb, which carry random fixture names and
+      // vary with the checkout (.vscode-test, profile and artifact folders).
+      await expect(frame.locator('rdlc-editor')).toHaveScreenshot(
         ['bootstrap', 'bootstrap.png'],
         { threshold: 0.1, maxDiffPixelRatio: 0.001 },
       );

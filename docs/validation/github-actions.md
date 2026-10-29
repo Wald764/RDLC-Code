@@ -43,7 +43,9 @@ at DPR 1, `en_US.UTF-8`, UTC and the fonts reported by `fc-list` after installin
 `fontconfig fonts-dejavu-core locales`. Other OS and VS Code combinations never
 compare pixels (`referenceEnvironmentReasons` in `tests/desktop/evidence.ts`):
 `bootstrap.spec.ts` records "non-reference environment" there and does not use the
-reference.
+reference. The bootstrap reference captures only the designer root (`rdlc-editor`
+inside the webview), never the whole window, because the Explorer tree and the
+breadcrumb carry random fixture names and checkout-dependent folders.
 
 | File under `tests/desktop/baselines/`               | Consumed by                                                    |
 | --------------------------------------------------- | -------------------------------------------------------------- |
