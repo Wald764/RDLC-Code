@@ -106,8 +106,8 @@ The host observer (strace process-tree capture plus iptables owner-uid blocking)
 | Case | Why it depends on host observation |
 | --- | --- |
 | `security-observer.spec.ts` "security observer: real trust states, host tree and webview attempts fail closed" | Native host capture and blocking control (also the capability probe) |
-| `offline.spec.ts` `FR-030-trust` | Provisions the shared blocked session |
-| `offline.spec.ts` `SC-009-monitored-offline`, `FR-014-no-fetch`, `EDGE-05-inert` | Run inside FR-030's shared blocked session |
+| `offline.spec.ts` `FR-030-trust` | Provisions its own blocked session |
+| `offline.spec.ts` `SC-009-monitored-offline`, `FR-014-no-fetch`, `EDGE-05-inert` | Each provisions its own blocked session through FR-030's setup |
 | `offline.spec.ts` `US6.4-trusted-restricted` | Repeats the monitored journeys under real restricted and trusted profiles |
 
 On Linux they remain mandatory: an unsupported or incomplete capture is a failure. `tests/desktop/run-tests.ts` accepts these skips only off Linux and only for these titles; any other skip still invalidates the run. In `--probe` mode the `securityObserver` capability is recorded as `unsupported` (never `passed`) off Linux and only that capability may be unsupported. AT-09 (offline, trust, host-observed network attempts) is therefore not validated on Windows or macOS.

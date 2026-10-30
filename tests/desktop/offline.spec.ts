@@ -3,13 +3,13 @@
  * observation.
  *
  * Every test title is the executable assertion ID registered in coverage.json
- * (`tests/desktop/offline.spec.ts::<title>`). FR-030-trust provisions the one
- * shared disposable window (download, VSIX install, real trust grant) and only
- * then activates host blocking; SC-009, FR-014 and EDGE-05 run inside that
- * blocked session, each report journey inside its own observer window.
- * US6.4-trusted-restricted then closes that session and repeats the full
- * monitored journey set in a separate restricted profile and a separate
- * trusted profile.
+ * (`tests/desktop/offline.spec.ts::<title>`). FR-030-trust, SC-009, FR-014 and
+ * EDGE-05 each open their own disposable window through the same setup
+ * (download, VSIX install, real trust grant) and only then activate host
+ * blocking, each report journey inside its own observer window. No test
+ * reuses another test's session, so they are independent of order and of
+ * repetition. US6.4-trusted-restricted repeats the full monitored journey set
+ * in a separate restricted profile and a separate trusted profile.
  *
  * Playwright route aborts are supporting coverage only; this file never
  * reports them as host-level proof. Host evidence is strace capture of the
@@ -1030,42 +1030,62 @@ async function webviewControls(
   );
 }
 
-interface SharedSession {
+interface OfflineSession {
   readonly root: string;
   readonly capability: SecurityCapability;
-  driver: DesktopDriver | null;
+  readonly driver: DesktopDriver;
+  readonly fixture: FixtureSet;
+  /** Set by `provisionOffline`; recorded even when a later step fails. */
+  trust: { initial: boolean | null; granted: boolean | null };
+  isolation: Record<string, unknown>;
   blocking: HostBlocking | null;
-  fixture: FixtureSet | null;
   blocked: { blocked: number; hosts: string[] } | null;
   close(): Promise<void>;
 }
 
-interface ActiveSession extends SharedSession {
-  readonly driver: DesktopDriver;
-  readonly blocking: HostBlocking;
-  readonly fixture: FixtureSet;
-  readonly blocked: { blocked: number; hosts: string[] };
-}
-
-let shared: SharedSession | null = null;
-
 /**
- * Provision one disposable window: download, profile, own fixture workspace
- * and the real restricted state. Blocking and journeys belong to the tests.
+ * Open one disposable window of its own: download, profile, own fixture
+ * workspace and the real restricted state. Every offline test opens and closes
+ * its own session, so no test depends on another one or on the run order.
+ * Trust, blocking and journeys follow in `provisionOffline` and the test.
  */
-async function openShared(
+async function openOfflineSession(
   root: string,
   capability: SecurityCapability,
-): Promise<SharedSession> {
-  if (shared) return shared;
-  const session: SharedSession = {
+): Promise<OfflineSession> {
+  const fixture = await createFixtureSet(root);
+  let driver: DesktopDriver;
+  try {
+    driver = await launchDesktop({
+      root,
+      version: process.env.VSCODE_VERSION ?? '1.142.0',
+      packaged: process.env.RDLC_DESKTOP_PACKAGED === 'true',
+      // Test-only trust probe; the product extension is never replaced by it.
+      testHarness: true,
+      artifactDir: artifactRoot(root),
+      workspaceDir: fixture.dir,
+    });
+  } catch (error) {
+    try {
+      await destroyFixtureSet(fixture);
+    } catch {
+      // The launch error is the one worth reporting.
+    }
+    throw error;
+  }
+  let closed = false;
+  const session: OfflineSession = {
     root,
     capability,
-    driver: null,
+    driver,
+    fixture,
+    trust: { initial: null, granted: null },
+    isolation: {},
     blocking: null,
-    fixture: null,
     blocked: null,
     async close() {
+      if (closed) return;
+      closed = true;
       // Every step runs even when an earlier one fails: a stranded rule or
       // window must never hide the remaining cleanup.
       const errors: string[] = [];
@@ -1077,78 +1097,99 @@ async function openShared(
         }
         this.blocking = null;
       }
-      if (this.driver) {
-        const driver = this.driver;
-        this.driver = null;
-        try {
-          await driver.close();
-        } catch (error) {
-          errors.push(`Desktop shutdown: ${describeError(error)}`);
-        }
+      try {
+        await driver.close();
+      } catch (error) {
+        errors.push(`Desktop shutdown: ${describeError(error)}`);
       }
-      if (this.fixture) {
-        const fixture = this.fixture;
-        this.fixture = null;
-        try {
-          await destroyFixtureSet(fixture);
-        } catch (error) {
-          errors.push(`fixture cleanup: ${describeError(error)}`);
-        }
+      try {
+        await destroyFixtureSet(fixture);
+      } catch (error) {
+        errors.push(`fixture cleanup: ${describeError(error)}`);
       }
       if (errors.length) throw new Error(errors.join(' '));
     },
   };
-  shared = session;
-  const fixture = await createFixtureSet(root);
-  session.fixture = fixture;
-  session.driver = await launchDesktop({
-    root,
-    version: process.env.VSCODE_VERSION ?? '1.142.0',
-    packaged: process.env.RDLC_DESKTOP_PACKAGED === 'true',
-    // Test-only trust probe; the product extension is never replaced by it.
-    testHarness: true,
-    artifactDir: artifactRoot(root),
-    workspaceDir: fixture.dir,
-  });
   return session;
 }
 
-function requireShared(): ActiveSession {
-  const session = shared;
-  if (!session)
-    throw new Error(
-      'The shared offline session was not created by FR-030-trust.',
-    );
-  if (!session.driver)
-    throw new Error(
-      'The shared Desktop window is unavailable: session setup failed earlier.',
-    );
-  if (!session.blocking)
-    throw new Error(
-      'Host-level outbound blocking is unavailable: FR-030-trust did not activate it, so offline journeys cannot run.',
-    );
-  if (!session.fixture)
-    throw new Error('The own fixture workspace is unavailable.');
-  if (!session.blocked)
-    throw new Error('The browser blocking counter was not recorded.');
-  return {
-    ...session,
-    driver: session.driver,
-    blocking: session.blocking,
-    fixture: session.fixture,
-    blocked: session.blocked,
-  };
+/**
+ * Setup shared by every offline test (FR-030): the real trust grant, the
+ * isolation checks, then browser and host outbound blocking. Provisioning
+ * (download, profile, VSIX, trust) is complete before anything is blocked.
+ * Check failures are recorded, not thrown, so the caller keeps its evidence.
+ */
+async function provisionOffline(
+  session: OfflineSession,
+  failures: string[],
+): Promise<{
+  blocked: { blocked: number; hosts: string[] };
+  blocking: HostBlocking;
+}> {
+  const { driver, fixture, root, trust } = session;
+
+  // Real trust state through the public API; trust is never forced by flags.
+  const initial = await readWorkspaceTrust(driver);
+  trust.initial = initial;
+  record(
+    failures,
+    initial === false,
+    `The fresh restricted profile reported isTrusted=${initial}.`,
+  );
+  if (!initial) {
+    await grantWorkspaceTrust(driver);
+    await closeTrustEditor(driver);
+  }
+  const granted = await readWorkspaceTrust(driver);
+  trust.granted = granted;
+  record(
+    failures,
+    granted === true,
+    `Workspace trust stayed ${granted} after the real editor grant.`,
+  );
+
+  const launchArgs =
+    (driver.identity['launchArgs'] as string[] | undefined) ?? [];
+  session.isolation = { workspace: driver.identity.workspace, launchArgs };
+  record(
+    failures,
+    driver.identity.workspace === fixture.dir,
+    'The window did not open the own fixture copy as its workspace.',
+  );
+  record(
+    failures,
+    fixture.dir.startsWith(resolve(root, '.vscode-test')),
+    `The fixture workspace escaped the disposable directory: ${fixture.dir}`,
+  );
+  record(
+    failures,
+    !launchArgs.some((arg) => /workspace-trust/i.test(arg)),
+    'A launch flag forced workspace trust.',
+  );
+  record(
+    failures,
+    !launchArgs.includes(root),
+    'The repository root was opened as the workspace.',
+  );
+
+  // Provisioning (download, profile, VSIX, trust) is complete: block now.
+  const blocked = await blockOutbound(driver.context);
+  session.blocked = blocked;
+  const blocking = await enableHostBlocking();
+  session.blocking = blocking;
+  return { blocked, blocking };
 }
 
-/** Close the shared session; used before the independent two-profile run. */
-async function closeShared(failures: string[]): Promise<void> {
-  if (!shared) return;
-  const session = shared;
-  shared = null;
+/** Close the session of one test; a cleanup error fails that test. */
+async function closeOfflineSession(
+  session: OfflineSession | null,
+  failures: string[],
+): Promise<void> {
+  if (!session) return;
   try {
     await session.close();
   } catch (error) {
-    failures.push(`shared session cleanup: ${describeError(error)}`);
+    failures.push(`offline session cleanup: ${describeError(error)}`);
   }
 }
 
@@ -1159,67 +1200,11 @@ test('FR-030-trust', async () => {
   const root = desktopRoot();
   const capability = await gatedCapability(root, 'FR-030-trust');
   const windows: ObservationWindow[] = [];
-  const trust: { initial: boolean | null; granted: boolean | null } = {
-    initial: null,
-    granted: null,
-  };
-  let isolation: Record<string, unknown> = {};
-  let session: SharedSession | null = null;
+  let session: OfflineSession | null = null;
   try {
-    session = await openShared(root, capability);
-    if (!session.driver) throw new Error('The Desktop window was not created.');
-    const driver = session.driver;
-    const fixture = session.fixture;
-    if (!fixture) throw new Error('The own fixture workspace was not created.');
-
-    // Real trust state through the public API; trust is never forced by flags.
-    const initial = await readWorkspaceTrust(driver);
-    trust.initial = initial;
-    record(
-      failures,
-      initial === false,
-      `The fresh restricted profile reported isTrusted=${initial}.`,
-    );
-    if (!initial) {
-      await grantWorkspaceTrust(driver);
-      await closeTrustEditor(driver);
-    }
-    const granted = await readWorkspaceTrust(driver);
-    trust.granted = granted;
-    record(
-      failures,
-      granted === true,
-      `Workspace trust stayed ${granted} after the real editor grant.`,
-    );
-
-    const launchArgs =
-      (driver.identity['launchArgs'] as string[] | undefined) ?? [];
-    isolation = { workspace: driver.identity.workspace, launchArgs };
-    record(
-      failures,
-      driver.identity.workspace === fixture.dir,
-      'The window did not open the own fixture copy as its workspace.',
-    );
-    record(
-      failures,
-      fixture.dir.startsWith(resolve(root, '.vscode-test')),
-      `The fixture workspace escaped the disposable directory: ${fixture.dir}`,
-    );
-    record(
-      failures,
-      !launchArgs.some((arg) => /workspace-trust/i.test(arg)),
-      'A launch flag forced workspace trust.',
-    );
-    record(
-      failures,
-      !launchArgs.includes(root),
-      'The repository root was opened as the workspace.',
-    );
-
-    // Provisioning (download, profile, VSIX, trust) is complete: block now.
-    const blocked = await blockOutbound(driver.context);
-    session.blocked = blocked;
-    session.blocking = await enableHostBlocking();
+    session = await openOfflineSession(root, capability);
+    const { driver, fixture } = session;
+    await provisionOffline(session, failures);
 
     windows.push(
       await observationWindow(driver, capability, root, fixture, async () => {
@@ -1255,15 +1240,19 @@ test('FR-030-trust', async () => {
   } catch (error) {
     failures.push(describeError(error));
   } finally {
+    // Read before the cleanup releases the host rule.
+    const hostBlocking = blockingSummary(session?.blocking ?? null);
+    const browserBlocking = session?.blocked ?? null;
+    await closeOfflineSession(session, failures);
     try {
       await writeArtifact(root, 'FR-030-trust', {
         schemaVersion: 1,
         assertion: 'tests/desktop/offline.spec.ts::FR-030-trust',
         capability: capabilitySummary(capability),
-        trust,
-        isolation,
-        hostBlocking: blockingSummary(session?.blocking ?? null),
-        browserBlocking: session?.blocked ?? null,
+        trust: session?.trust ?? { initial: null, granted: null },
+        isolation: session?.isolation ?? {},
+        hostBlocking,
+        browserBlocking,
         windows: windows.map(summarizeWindow),
         observationRecordsSha256: sha256(observationRecords(windows)),
         ...scopeRecord(),
@@ -1281,7 +1270,7 @@ test('FR-030-trust', async () => {
 });
 
 test('SC-009-monitored-offline', async () => {
-  test.setTimeout(600_000);
+  test.setTimeout(900_000);
   test.skip(hostObserverUnsupported(), hostObserverSkipReason() ?? '');
   const failures: string[] = [];
   const root = desktopRoot();
@@ -1293,9 +1282,11 @@ test('SC-009-monitored-offline', async () => {
     hostProbe: boolean;
   } = { webview: null, hostProbe: false };
   let loopbackEvidence: Record<string, unknown> = {};
+  let session: OfflineSession | null = null;
   try {
-    const session = requireShared();
+    session = await openOfflineSession(root, capability);
     const { driver, fixture } = session;
+    const { blocked, blocking } = await provisionOffline(session, failures);
 
     // Positive controls, outside every report journey, before the journeys run.
     windows.push(
@@ -1393,8 +1384,8 @@ test('SC-009-monitored-offline', async () => {
     );
     record(
       failures,
-      session.blocking.hits > 0,
-      `the host blocking rule matched no probe packet (hits=${session.blocking.hits}).`,
+      blocking.hits > 0,
+      `the host blocking rule matched no probe packet (hits=${blocking.hits}).`,
     );
     const webviewEvents = control.observation.webview.events;
     record(
@@ -1416,9 +1407,9 @@ test('SC-009-monitored-offline', async () => {
     );
     record(
       failures,
-      session.blocked.blocked >= 1 &&
-        session.blocked.hosts.includes('rdlc-offline-blocked.invalid'),
-      `the refused request was not counted (blocked=${session.blocked.blocked}).`,
+      blocked.blocked >= 1 &&
+        blocked.hosts.includes('rdlc-offline-blocked.invalid'),
+      `the refused request was not counted (blocked=${blocked.blocked}).`,
     );
     record(
       failures,
@@ -1434,7 +1425,7 @@ test('SC-009-monitored-offline', async () => {
             driver,
             hostile: fixture.hostile.path,
             source: fixture.hostile.source,
-            // FR-030 granted real trust in this shared session.
+            // provisionOffline granted real trust (FR-030) in this session.
             history: 'designer',
           },
           ALL_JOURNEYS,
@@ -1460,14 +1451,17 @@ test('SC-009-monitored-offline', async () => {
   } catch (error) {
     failures.push(describeError(error));
   } finally {
-    const session = shared;
+    // Read before the cleanup releases the host rule.
+    const hostBlocking = blockingSummary(session?.blocking ?? null);
+    const browserBlocking = session?.blocked ?? null;
+    await closeOfflineSession(session, failures);
     try {
       await writeArtifact(root, 'SC-009-monitored-offline', {
         schemaVersion: 1,
         assertion: 'tests/desktop/offline.spec.ts::SC-009-monitored-offline',
         capability: capabilitySummary(capability),
-        hostBlocking: blockingSummary(session?.blocking ?? null),
-        browserBlocking: session?.blocked ?? null,
+        hostBlocking,
+        browserBlocking,
         positiveControls: controls,
         loopback: loopbackEvidence,
         windows: windows.map(summarizeWindow),
@@ -1521,9 +1515,11 @@ test('FR-014-no-fetch', async () => {
     matches: [] as { where: string; label: string }[],
     tooltipObserved: false,
   };
+  let session: OfflineSession | null = null;
   try {
-    const session = requireShared();
+    session = await openOfflineSession(root, capability);
     const { driver, fixture } = session;
+    await provisionOffline(session, failures);
     const samples: { where: string; text: string }[] = [];
     windows.push(
       await observationWindow(driver, capability, root, fixture, async () => {
@@ -1636,6 +1632,7 @@ test('FR-014-no-fetch', async () => {
   } catch (error) {
     failures.push(describeError(error));
   } finally {
+    await closeOfflineSession(session, failures);
     try {
       await writeArtifact(root, 'FR-014-no-fetch', {
         schemaVersion: 1,
@@ -1671,9 +1668,11 @@ test('EDGE-05-inert', async () => {
   const capability = await gatedCapability(root, 'EDGE-05-inert');
   const windows: ObservationWindow[] = [];
   const states: Record<string, string> = {};
+  let session: OfflineSession | null = null;
   try {
-    const session = requireShared();
+    session = await openOfflineSession(root, capability);
     const { driver, fixture } = session;
+    await provisionOffline(session, failures);
     const malformed = join(fixture.dir, 'malformed.rdlc');
     const unsafe = join(fixture.dir, 'unsafe-dtd.rdlc');
     const malformedSource = await readFile(
@@ -1739,6 +1738,7 @@ test('EDGE-05-inert', async () => {
   } catch (error) {
     failures.push(describeError(error));
   } finally {
+    await closeOfflineSession(session, failures);
     try {
       await writeArtifact(root, 'EDGE-05-inert', {
         schemaVersion: 1,
@@ -1928,9 +1928,6 @@ test('US6.4-trusted-restricted', async () => {
   const capability = await gatedCapability(root, 'US6.4-trusted-restricted');
   const legs: LegRecord[] = [];
   try {
-    // The shared session must stop first: its blocking rules and environment
-    // belong to the four earlier tests, and provisioning happens before block.
-    await closeShared(failures);
     for (const profile of ['restricted', 'trusted'] as const)
       legs.push(await runProfileLeg(profile, root, capability));
     for (const leg of legs) failures.push(...leg.failures);
@@ -2006,11 +2003,4 @@ test('US6.4-trusted-restricted', async () => {
     throw new Error(
       `US6.4 trusted/restricted offline journeys failed: ${unique(failures).join(' ')}`,
     );
-});
-
-test.afterAll(async () => {
-  const failures: string[] = [];
-  await closeShared(failures);
-  if (failures.length)
-    throw new Error(`Offline session cleanup failed: ${failures.join(' ')}`);
 });
