@@ -24,6 +24,7 @@ import {
   parseOpenResult,
   parseTrustProbe,
   readExecutableVersion,
+  retryTransientEvaluate,
   trustProbePath,
   validateDesktopOptions,
   workbenchCommand,
@@ -102,6 +103,7 @@ function palettePage(escapeHangs: boolean) {
     bringToFront: async () => {},
     evaluate: async () => {},
     locator: (selector: string) => ({
+      fill: async () => {},
       waitFor: async (options: { state?: string }) => {
         // Only "the palette is still open after its budget" fails here.
         if (selector.endsWith('input') && options.state === 'hidden')
@@ -762,4 +764,40 @@ test('functional journeys grant trust through the public path and confirm it bef
   } finally {
     fake.cleanup();
   }
+});
+
+test('a transient evaluate failure is repeated at most three times, nothing else is', async () => {
+  const garbage = new Error(
+    'electronApplication.evaluate: Resulting promise was garbage collected.',
+  );
+  let calls = 0;
+  assert.equal(
+    await retryTransientEvaluate(async () => {
+      if (++calls < 3) throw garbage;
+      return 'done';
+    }),
+    'done',
+  );
+  assert.equal(calls, 3);
+
+  calls = 0;
+  await assert.rejects(
+    retryTransientEvaluate(async () => {
+      calls++;
+      throw garbage;
+    }),
+    garbage,
+  );
+  assert.equal(calls, 3);
+
+  calls = 0;
+  const other = new Error('Target closed');
+  await assert.rejects(
+    retryTransientEvaluate(async () => {
+      calls++;
+      throw other;
+    }),
+    other,
+  );
+  assert.equal(calls, 1);
 });

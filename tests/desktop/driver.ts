@@ -603,6 +603,28 @@ async function withTimeout<T>(
   }
 }
 
+/**
+ * Playwright can drop a just-launched app's evaluate with "Resulting promise
+ * was garbage collected". The caller's action must be idempotent: it is
+ * repeated up to three attempts in total, after a short backoff.
+ */
+export async function retryTransientEvaluate<T>(
+  action: () => Promise<T>,
+  attempts = 3,
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await action();
+    } catch (error) {
+      const transient =
+        error instanceof Error &&
+        /Resulting promise was garbage collected/i.test(error.message);
+      if (!transient || attempt >= attempts) throw error;
+      await delay(250 * attempt);
+    }
+  }
+}
+
 async function settle(
   label: string,
   action: () => Promise<unknown>,
@@ -951,7 +973,10 @@ export async function workbenchCommand(page: Page, id: string): Promise<void> {
       });
       await page.keyboard.press(shortcut);
       await input.waitFor({ state: 'visible', timeout: PALETTE_STEP_TIMEOUT });
-      await page.keyboard.type(id, { delay: 10 });
+      // fill() writes into the palette input itself: typed keys would land in
+      // the focused editor (and dirty it) whenever the palette loses focus to
+      // a late-focusing editor between the shortcut and the first character.
+      await input.fill(`>${id}`);
       const listed = rows.filter({ hasText: id }).first();
       await listed.waitFor({ state: 'visible', timeout: PALETTE_STEP_TIMEOUT });
       // Fuzzy ranking can list other commands first: prefer the exact label.
@@ -1158,19 +1183,26 @@ export async function launchDesktop(
     page.setDefaultTimeout(COMMAND_TIMEOUT);
     // One window geometry on every host: a 1024x768 CI desktop otherwise puts
     // the workbench and designer into their narrow layouts.
-    if (app)
-      await withTimeout(
-        app.evaluate(({ BrowserWindow }, size) => {
-          const window = BrowserWindow.getAllWindows().find(
-            (candidate: { isDestroyed(): boolean }) => !candidate.isDestroyed(),
-          );
-          if (!window) return;
-          if (window.isMaximized()) window.unmaximize();
-          window.setContentSize(size.width, size.height);
-        }, WINDOW_CONTENT_SIZE),
-        COMMAND_TIMEOUT,
-        'Desktop window size',
+    if (app) {
+      const electronApp = app;
+      // Idempotent, so a transient Playwright evaluate failure right after
+      // launch may be repeated; any other error is rethrown at once.
+      await retryTransientEvaluate(() =>
+        withTimeout(
+          electronApp.evaluate(({ BrowserWindow }, size) => {
+            const window = BrowserWindow.getAllWindows().find(
+              (candidate: { isDestroyed(): boolean }) =>
+                !candidate.isDestroyed(),
+            );
+            if (!window) return;
+            if (window.isMaximized()) window.unmaximize();
+            window.setContentSize(size.width, size.height);
+          }, WINDOW_CONTENT_SIZE),
+          COMMAND_TIMEOUT,
+          'Desktop window size',
+        ),
       );
+    }
     const workbenchPage = page;
     const workbenchContext = context;
     const actualTransport = transport;

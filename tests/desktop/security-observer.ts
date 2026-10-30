@@ -1154,6 +1154,50 @@ const PATH_PROBE_CALLS = new Set([
   'faccessat2',
 ]);
 /**
+ * Executable names the shared process ExtensionTipsService looks for. Derived
+ * from `exeBasedExtensionTips` in the product.json of VS Code 1.143.1: every
+ * key usable as a file name on Linux (the Windows-only entries with spaces,
+ * such as "Mozilla Firefox", are left out). On Linux it stats
+ * `/usr/local/bin/<exe>`, `/usr/bin/<exe>` and `<userHome>/<exe>` for each.
+ */
+const EXE_TIP_NAMES = new Set([
+  'az',
+  'azd',
+  'azd-user',
+  'azure-powershell',
+  'heroku',
+  'mongo',
+  'serverless',
+  'func',
+  'mysql',
+  'postgres',
+  'sqlcmd',
+  'now',
+  'docker',
+  'kubectl',
+  'ng',
+  'create-react-app',
+  'react-native',
+  'p4',
+  'hg',
+  'git',
+  'svn',
+  'subl',
+  'atom',
+  'brackets',
+  'notepadplusplus',
+  'vi',
+  'mvn',
+  'gradle',
+  'ollama',
+  'cordova',
+  'gcloud',
+  'skaffold',
+  'minikube',
+  'podman',
+  'wsl',
+]);
+/**
  * True when `path` sits directly inside one of the usable entries of the PATH
  * the observed process was launched with. Only absolute, normalized entries
  * count, a file in a subdirectory of an entry does not match, and an entry
@@ -1212,6 +1256,14 @@ function isAllowedProbe(
     if (
       PATH_PROBE_CALLS.has(operation) &&
       isDirectlyOnSearchPath(path, context)
+    )
+      return true;
+    // The same tips also probe `<home>/<exe>`; the home is never a PATH
+    // entry we trust, so allow exactly those fixed names, metadata only.
+    if (
+      PATH_PROBE_CALLS.has(operation) &&
+      posix.dirname(path) === home &&
+      EXE_TIP_NAMES.has(posix.basename(path))
     )
       return true;
     if (

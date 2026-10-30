@@ -868,7 +868,7 @@
       "fixtures": ["local-blank"],
       "oracle": "Required suites run from root commands and GitHub Actions including installed-VSIX checks; quality/release gates, minimum/stable matrix, frozen dependencies and same-artifact release guarantees are preserved; missing/failed evidence blocks completion.",
       "tests": [
-        "tests/release/sidebar-gates.test.ts::the required aggregate depends on quality, the desktop matrix and the visual job",
+        "tests/release/sidebar-gates.test.ts::the required aggregate depends on quality, the desktop matrix, the visual job and the stability gate",
         "tests/release/sidebar-gates.test.ts::the desktop job keeps the six-entry OS and minimum/stable matrix",
         "tests/release/sidebar-gates.test.ts::every matrix entry runs the functional and installed journeys fail-closed",
         "tests/release/sidebar-gates.test.ts::both workflows install frozen and never weaken a required gate"

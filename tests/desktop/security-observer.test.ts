@@ -1766,6 +1766,51 @@ test('extension-tip probes are metadata-only directly inside an observed PATH en
   );
 });
 
+test('extension-tip probes of a home executable are fixed names and metadata-only', () => {
+  const statx = (path: string) =>
+    `statx(AT_FDCWD</>, "${path}", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`;
+  const cases: [string, boolean][] = [
+    [statx(`${HOME}/docker`), false],
+    [statx(`${HOME}/mvn`), false],
+    [statx(`${HOME}/gradle`), false],
+    [`stat("${HOME}/docker", 0x7ffd) = -1 ENOENT (x)`, false],
+    [`access("${HOME}/gradle", X_OK) = -1 ENOENT (x)`, false],
+    [`faccessat2(AT_FDCWD</>, "${HOME}/mvn", X_OK, 0) = -1 ENOENT (x)`, false],
+    // Anything beyond a metadata call stays unexpected.
+    [`openat(AT_FDCWD</>, "${HOME}/docker", O_RDONLY) = 3`, true],
+    [`execve("${HOME}/docker", ["docker"], 0x7ffd) = 0`, true],
+    [`readlink("${HOME}/docker", 0x7ffd, 64) = -1 ENOENT (x)`, true],
+    // Dotfiles, unknown names, subdirectories and other directories.
+    [statx(`${HOME}/.docker`), true],
+    [statx(`${HOME}/other-name`), true],
+    [statx(`${HOME}/sub/docker`), true],
+    [statx(`/home/bob/docker`), true],
+    [statx(`/elsewhere/docker`), true],
+  ];
+  for (const [text, expected] of cases)
+    assert.equal(classify(text), expected, text);
+});
+
+test('the home executable allowance follows path normalization and case', () => {
+  const statx = (path: string) =>
+    `statx(AT_FDCWD</>, "${path}", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)`;
+  const cases: [string, boolean][] = [
+    // Paths that normalize to exactly <home>/<exe> stay allowed.
+    [statx(`${HOME}/docker/`), false],
+    [statx(`${HOME}/./docker`), false],
+    [statx(`${HOME}/sub/../docker`), false],
+    // Names are case-sensitive on Linux: a different case is a different file.
+    [statx(`${HOME}/Docker`), true],
+    [statx(`${HOME}/DOCKER`), true],
+    // Normalization must not smuggle in a different directory or name.
+    [statx(`${HOME}/sub/../sub/docker`), true],
+    [statx(`${HOME}/docker/../other-name`), true],
+    [statx(`${HOME}/../bob/docker`), true],
+  ];
+  for (const [text, expected] of cases)
+    assert.equal(classify(text), expected, text);
+});
+
 test('PATH entries that could hold user data never enable the extension-tip allowance', () => {
   const entries = [
     '/',
@@ -1781,7 +1826,8 @@ test('PATH entries that could hold user data never enable the extension-tip allo
   const probe = (path: string) =>
     classify(`stat("${path}", 0x7ffd) = -1 ENOENT (x)`, withPath);
   assert.equal(probe('/docker'), true, 'the root directory');
-  assert.equal(probe(`${HOME}/docker`), true, 'the home directory');
+  // `${HOME}/docker` itself is covered by the fixed home-executable rule.
+  assert.equal(probe(`${HOME}/notes`), true, 'the home directory');
   assert.equal(probe(`${tmpdir()}/docker`), true, 'the OS tmp directory');
   assert.equal(probe('/work/docker'), true, 'an ancestor of a root');
   assert.equal(probe('/usr/bin/docker'), false, 'a plain system entry');

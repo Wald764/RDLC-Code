@@ -1324,7 +1324,15 @@ test('SC-004-insert-history', async () => {
     }
 
     // Leave one accepted creation in place: save, close, reopen.
+    // The earlier "Created DataSet1." notice survives Undo/Redo, so it is no
+    // proof of this insertion: the last Undo + save left the tab clean, and
+    // the accepted edit is the tab turning dirty.
+    await expect(dirtyTabs(ctx.page), 'the report is clean').toHaveCount(0);
     await pointerActivate(ctx, insertRow(ctx.page, 'Dataset'));
+    await expect(
+      dirtyTabs(ctx.page),
+      'the final creation reached the document (dirty tab)',
+    ).not.toHaveCount(0);
     await expect(createdNotice(frame, 'DataSet1')).toHaveCount(1);
     await save(ctx);
     await expect.poll(() => bytes(ctx, 'report.rdlc')).toBe(datasetMade);

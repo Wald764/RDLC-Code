@@ -898,9 +898,10 @@ test('FR-027-keyboard', async () => {
 
       // Escape restores the accepted value without committing anything.
       await expect(nameField).toBeFocused();
-      await selectAllInField(page, nameField);
+      // The draft text is the subject here, not key relay: on macOS the first
+      // typed key can be lost after select-all, so the draft is set directly.
+      await nameField.fill('DraftThatNeverCommits');
       await expect(nameField).toBeFocused();
-      await page.keyboard.type('DraftThatNeverCommits', { delay: 5 });
       expect(await nameField.inputValue()).toBe('DraftThatNeverCommits');
       await page.keyboard.press('Escape');
       await expect(frame.locator('input[data-property="name"]')).toHaveValue(

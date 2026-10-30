@@ -962,10 +962,16 @@ async function runRace(
     options.disturbance === 'edit' ? markers.markedA : markers.originalA;
   const bytesA = await readFile(ctx.path('a.rdlc'), 'utf8');
   const bytesB = await readFile(ctx.path('b.rdlc'), 'utf8');
-  const edited = (await dirtyCount(page)) > 0 || bytesA !== expectedA;
-  expect(edited, `${options.id}: opening produced no report history`).toBe(
-    false,
-  );
+  const dirty = await dirtyCount(page);
+  const dirtyLabels = await page
+    .locator('.monaco-workbench .tab.dirty .label-name')
+    .allTextContents();
+  const edited = dirty > 0 || bytesA !== expectedA;
+  // Two independent halves: name which one holds, never a bare boolean.
+  expect(
+    edited,
+    `${options.id}: opening produced no report history (dirtyCount=${dirty}, dirty tabs=${JSON.stringify(dirtyLabels)}, a.rdlc bytes equal expected=${bytesA === expectedA})`,
+  ).toBe(false);
   expect(bytesA, `${options.id}: A bytes`).toBe(expectedA);
   expect(bytesB, `${options.id}: B bytes`).toBe(markers.originalB);
   // Only A's own designer may open; the other report's view is never borrowed.
@@ -1195,7 +1201,37 @@ test('US5.3-two-views', async () => {
     // group owns its own tabs inside it.
     await expect(page.locator('.editor-group-container')).toHaveCount(2);
 
-    // Split focuses the new group: its selection identifies which frame is view 2.
+    // Split focuses the new group, but the workbench may hand the active group
+    // back to column 1 as the palette closes. Let the palette settle, then
+    // establish the precondition instead of assuming it: group 2 is active.
+    const group2 = page.locator('.editor-group-container').nth(1);
+    await step('US5.3: palette closed after the split', () =>
+      expect(page.locator('.quick-input-widget')).toBeHidden({
+        timeout: STEP_TIMEOUT,
+      }),
+    );
+    const group2Active = await expect(group2)
+      .toHaveClass(/\bactive\b/, { timeout: 2_000 })
+      .then(
+        () => true,
+        () => false,
+      );
+    if (!group2Active)
+      await step('US5.3: activating view 2 through its designer tab', () =>
+        group2.locator('.tabs-container .tab').first().click({
+          timeout: STEP_TIMEOUT,
+        }),
+      );
+    await step('US5.3: second editor group is the active group', () =>
+      expect(group2).toHaveClass(/\bactive\b/, { timeout: STEP_TIMEOUT }),
+    );
+    expect(await editorIs(page, 'designer')).toBe(true);
+    await expect(
+      page.getByRole('treeitem', { name: 'Textbox: Front', exact: true }),
+      'structure tree follows view 2',
+    ).toBeVisible();
+
+    // The active group is view 2: its selection identifies which frame it is.
     await selectRow(page, 'Front');
     expect(await primaryContents(page)).toEqual([TEXT.aFront]);
     const view2 = await frameShowing(page, TEXT.aFront);
@@ -2020,9 +2056,43 @@ test('EDGE-01-identity', async () => {
         '.quick-input-widget:visible .quick-input-box input',
       );
       await input.waitFor({ state: 'visible' });
-      await input.fill(ctx.path('saved.rdlc'));
-      await input.press('Enter');
-      await expect.poll(() => headersInclude(page, 'saved.rdlc')).toBe(true);
+      const target = ctx.path('saved.rdlc');
+      const dialog = page.locator('.quick-input-widget:visible');
+      try {
+        await input.fill(target);
+        // The simple file dialog rewrites the typed path (completion, folder
+        // resolution) and validates it asynchronously: Enter before it settles
+        // is swallowed. Wait for the exact path, an idle progress bar and no
+        // validation message, then accept.
+        const typed = async (): Promise<string> =>
+          (await input.inputValue()).replace(/\\/g, '/');
+        const wanted = target.replace(/\\/g, '/');
+        await expect
+          .poll(typed, { message: 'the dialog holds the target path' })
+          .toBe(wanted);
+        await expect(
+          dialog.locator('.monaco-progress-container.active'),
+          'the dialog finished resolving the path',
+        ).toHaveCount(0);
+        await expect(
+          dialog.locator('.quick-input-message'),
+          'no validation message is shown',
+        ).toBeHidden();
+        expect(await typed(), 'the path stayed settled').toBe(wanted);
+        await input.press('Enter');
+        await expect(dialog, 'the Save As dialog closed').toBeHidden();
+        await expect
+          .poll(() => headersInclude(page, 'saved.rdlc'), {
+            message: 'the saved report is the active context',
+          })
+          .toBe(true);
+      } catch (error) {
+        const listing = (await readdir(ctx.dir).catch(() => [])).sort();
+        throw new Error(
+          `Save As to ${target} failed; ${ctx.dir} holds [${listing.join(', ')}]: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        );
+      }
       expect((await readdir(ctx.dir)).sort()).toEqual(
         [...files, 'saved.rdlc'].sort(),
       );
