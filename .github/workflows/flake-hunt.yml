@@ -171,7 +171,16 @@ jobs:
             done
           ) &
           logger=$!
-          trap 'kill "$logger" 2>/dev/null; pkill -P "$logger" 2>/dev/null; true' EXIT
+          # bash -e also applies inside the trap: an unguarded failing command (pkill
+          # exits 1 when no child is left) would end the trap and replace the exit
+          # status of the tests. Every command here is guarded, so the step exits
+          # with the status of the test command below.
+          stop_logger() {
+            pkill -P "$logger" > /dev/null 2>&1 || true
+            kill "$logger" > /dev/null 2>&1 || true
+            pkill -P "$logger" > /dev/null 2>&1 || true
+          }
+          trap stop_logger EXIT
           xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e $MODE_ARGS --measure --repeat-each="$REPEAT"
       - name: Measure Desktop ${{ matrix.mode }} on Windows and macOS
         if: runner.os != 'Linux'
