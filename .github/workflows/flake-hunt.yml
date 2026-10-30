@@ -25,7 +25,7 @@ on:
         type: string
         default: ''
       os:
-        description: Comma-separated runners to use (ubuntu-24.04, windows-2022, macos-14); empty runs all
+        description: Comma-separated runners to use (ubuntu-24.04, windows-2022, macos-15); empty runs all
         type: string
         default: ''
       specs:
@@ -43,7 +43,7 @@ on:
         type: string
         default: ''
       os:
-        description: Comma-separated runners to use (ubuntu-24.04, windows-2022, macos-14); empty runs all
+        description: Comma-separated runners to use (ubuntu-24.04, windows-2022, macos-15); empty runs all
         type: string
         default: ''
       specs:

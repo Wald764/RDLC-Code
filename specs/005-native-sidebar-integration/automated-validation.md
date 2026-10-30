@@ -130,6 +130,8 @@ The Linux host observer (`tests/desktop/security-observer.ts`) classifies every 
 | `context.spec.ts` `SC-005-switch-races` | macOS (both VS Code versions) | Skipped, UNVALIDATED. The same quick-open switch timed out on 1.142.0 and the workbench exited mid-race on stable (run 40867144705, macOS 14). Not diagnosed; passes on Linux and Windows. |
 | `structure.spec.ts` `SC-003-timing` | macOS (both VS Code versions) | Skipped, UNVALIDATED. The Cmd-click native multi-selection never showed `Second, Primary, 2 selected` on stable 1.144.0 (run 40867144705, macOS 14); it passed on 1.142.0. Not diagnosed; passes on Linux and Windows. |
 
+The macOS runs cited above ran on `macos-14`. GitHub retires that image on 2026-11-02 (brownouts cancel its jobs, actions/runner-images#13518), so the matrix now uses `macos-15`. The macOS skip rows were diagnosed on `macos-14` and must be re-checked on `macos-15`.
+
 Fixed rather than disabled (test or harness defects, not validated by an Electron run locally):
 
 - `accessibility.spec.ts` `US6.1-keyboard-journey` and `FR-027-keyboard` (macOS): the workbench relays Cmd+A into the webview asynchronously, so typing straight after it dropped the first character (`enamedByKeyboard`, `raftThatNeverCommits`). A `selectAllInField` helper now waits until the selection spans the field value before typing; unvalidated on macOS until the next run.

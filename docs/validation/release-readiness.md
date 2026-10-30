@@ -9,7 +9,7 @@ versions. Only this readiness record may change between candidate and release.
 
 Hosted [CI run 40030382260](https://github.com/Wald764/RDLC-Code/actions/runs/40030382260)
 passed on this exact candidate: quality, all six desktop jobs and Required checks.
-The matrix covers Windows 2022, Ubuntu 24.04 and macOS 14, each on VS Code 1.142.0
+The matrix covers Windows 2022, Ubuntu 24.04 and macOS 15, each on VS Code 1.142.0
 and stable. Every desktop job builds and packages the extension, then runs both
 development-extension and installed-VSIX suites.
 

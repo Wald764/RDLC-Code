@@ -60,7 +60,7 @@ The activity/tree/menu requirements are supported by stable public APIs. Cross-s
 - Angular unit/component tests use Vitest/TestBed/jsdom. They do not establish real Desktop layout, painted focus/selection, pixel contrast, cross-surface drag or screenshot equality.
 - `tests/package/offline.test.ts` verifies CSP, packaged content channels and unsafe entity parsing statically. That is not the same as observing runtime network attempts during every journey.
 - No root Desktop UI E2E or visual comparison command/driver is currently present. Lockfile references to optional Vitest browser providers do not mean a Playwright driver is installed/configured.
-- `.github/workflows/ci.yml` runs quality checks plus minimum `1.142.0`/`stable` Desktop integration/package tests on Ubuntu 24.04, Windows 2022 and macOS 14; Ubuntu uses Xvfb. The required aggregate depends on both jobs. Release automation reuses quality gates; new mandatory test jobs must join that dependency chain rather than bypass it.
+- `.github/workflows/ci.yml` runs quality checks plus minimum `1.142.0`/`stable` Desktop integration/package tests on Ubuntu 24.04, Windows 2022 and macOS 15; Ubuntu uses Xvfb. The required aggregate depends on both jobs. Release automation reuses quality gates; new mandatory test jobs must join that dependency chain rather than bypass it.
 - Existing task/evidence status is heterogeneous: 003 T055 remains unchecked; 002 T082 latency collection was removed by an owner decision; 004 tasks include historical manual journeys/studies. This does not negate implemented code, but none supplies 005's required automated evidence. No inherited manual sign-off becomes a new mandatory gate.
 
 ## Format References and Compatibility Boundary

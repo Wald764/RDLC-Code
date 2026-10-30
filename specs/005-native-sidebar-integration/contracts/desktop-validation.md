@@ -19,7 +19,7 @@ These commands do not exist at planning time. Their runner must support the docu
 
 ## Reference environment and CI
 
-Functional Desktop and installed-package coverage join the existing Ubuntu 24.04 / Windows 2022 / macOS 14 × minimum `1.142.0` / stable matrix. Linux uses Xvfb. Add required jobs to the existing CI aggregate and reusable release quality call graph; preserve frozen installs, existing checks and same-VSIX publication rules. Resolve stable to an exact recorded binary for each run.
+Functional Desktop and installed-package coverage join the existing Ubuntu 24.04 / Windows 2022 / macOS 15 × minimum `1.142.0` / stable matrix. Linux uses Xvfb. Add required jobs to the existing CI aggregate and reusable release quality call graph; preserve frozen installs, existing checks and same-VSIX publication rules. Resolve stable to an exact recorded binary for each run.
 
 The release canonical job rebuilds its own VSIX. Run applicable installed E2E/security/visual checks on those exact bytes before `release-artifact.js`, or bind equivalent executed evidence to that exact digest. Earlier matrix checks on another artifact do not certify the canonical candidate. Keep publication's existing prebuilt artifact/digest handoff; the driver never enters publishing jobs or the VSIX.
 

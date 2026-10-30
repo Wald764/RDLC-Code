@@ -253,7 +253,7 @@ test('flags incomplete and missing environments and keeps test failures non-fata
         group: 'core',
         mode: 'packaged',
       },
-      { os: 'macos-14', vscode: 'stable', group: 'core', mode: 'functional' },
+      { os: 'macos-15', vscode: 'stable', group: 'core', mode: 'functional' },
       {
         os: 'windows-2022',
         vscode: 'stable',
@@ -304,7 +304,7 @@ test('flags incomplete and missing environments and keeps test failures non-fata
   assert.equal(summary.complete, false);
   assert.deepEqual(
     summary.missing.map((item) => item.os),
-    ['macos-14', 'windows-2022'],
+    ['macos-15', 'windows-2022'],
   );
   assert.equal(summary.incomplete.length, 1);
   assert.match(summary.incomplete[0]!.reasons.join(';'), /1 interrupted/);
@@ -314,7 +314,7 @@ test('flags incomplete and missing environments and keeps test failures non-fata
   );
   const markdown = renderMarkdown(summary);
   assert.match(markdown, /INCOMPLETE MEASUREMENT/);
-  assert.match(markdown, /macos-14 \/ stable \/ core \/ functional: no report/);
+  assert.match(markdown, /macos-15 \/ stable \/ core \/ functional: no report/);
   assert.match(markdown, /\| INCOMPLETE \|/);
   assert.doesNotMatch(renderMarkdown(complete), /INCOMPLETE/);
 });

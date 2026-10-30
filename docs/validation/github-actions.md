@@ -116,7 +116,7 @@ gh workflow run flake-hunt.yml -f repeat=10 -f groups=core,context -f os=ubuntu-
 | -------- | ------------------------------------------------------------------------- |
 | `repeat` | Repeats of every test, an integer from 1 to 10 (default 5).               |
 | `groups` | Comma-separated `core`, `authoring`, `context`; empty runs all three.     |
-| `os`     | Comma-separated `ubuntu-24.04`, `windows-2022`, `macos-14`; empty is all. |
+| `os`     | Comma-separated `ubuntu-24.04`, `windows-2022`, `macos-15`; empty is all. |
 | `specs`  | Comma-separated spec file names to restrict the run to; empty is all.     |
 
 The matrix is the `desktop` job of `ci.yml` (OS x VS Code `1.142.0` and `stable` x

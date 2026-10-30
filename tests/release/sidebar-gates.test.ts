@@ -120,7 +120,7 @@ test('the desktop job keeps the six-entry OS and minimum/stable matrix', () => {
   const vscode = matrix(block, 'vscode');
   assert.deepEqual(needs(block), ['quality']);
   assert.equal(field(block, 'runs-on'), '${{ matrix.os }}');
-  assert.deepEqual(os, ['ubuntu-24.04', 'windows-2022', 'macos-14']);
+  assert.deepEqual(os, ['ubuntu-24.04', 'windows-2022', 'macos-15']);
   assert.deepEqual(vscode, ['1.142.0', 'stable']);
   assert.equal(os.length * vscode.length, 6, 'six matrix entries');
   assert.equal(env(block, 'VSCODE_VERSION'), '${{ matrix.vscode }}');

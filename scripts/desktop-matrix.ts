@@ -16,7 +16,7 @@ import {
  * tests/desktop/run-tests.ts, the single source CI also runs.
  */
 
-export const DESKTOP_OSES = ['ubuntu-24.04', 'windows-2022', 'macos-14'];
+export const DESKTOP_OSES = ['ubuntu-24.04', 'windows-2022', 'macos-15'];
 export const DESKTOP_VSCODES = ['1.142.0', 'stable'];
 export const DESKTOP_GROUP_NAMES = Object.keys(
   DESKTOP_GROUPS,

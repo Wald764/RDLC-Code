@@ -143,7 +143,7 @@ test('specs that no matrix entry runs are reported, visual-only ones apart', () 
   // Filters still narrow the matrix.
   assert.equal(
     planMatrix({
-      os: ['macos-14'],
+      os: ['macos-15'],
       groups: ['context'],
       specs: ['context.spec.ts'],
     }).include.length,

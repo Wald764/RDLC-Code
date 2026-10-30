@@ -34,7 +34,7 @@ failed or unrun. Earlier execution notes describe their historical checkpoints.
 
 **Testing**: Existing Node tests, Vitest 5.0.5/jsdom Angular components, fixture roundtrip/compatibility, real extension-host and installed-VSIX tests. Add real Desktop E2E and fixed-reference pixel/semantic/geometry/contrast assertions; no browser stub or direct session call substitutes for UI evidence. See [Desktop validation contract](contracts/desktop-validation.md).
 
-**Target Platform**: Local VS Code Desktop minimum 1.142.0 and resolved stable on Windows/macOS/Linux; functional matrix Ubuntu 24.04, Windows 2022, macOS 14. Fixed Ubuntu reference build/display for visuals. No web/remote/cross-window support added.
+**Target Platform**: Local VS Code Desktop minimum 1.142.0 and resolved stable on Windows/macOS/Linux; functional matrix Ubuntu 24.04, Windows 2022, macOS 15. Fixed Ubuntu reference build/display for visuals. No web/remote/cross-window support added.
 
 **Project Type**: pnpm TypeScript monorepo; VS Code custom text editor extension plus bundled Angular webview and shared libraries.
 
