@@ -43,6 +43,7 @@
  */
 import { test, expect } from 'playwright/test';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import {
   copyFile,
   mkdir,
@@ -63,8 +64,10 @@ import {
   REPORT_ZERO_SCOPE,
   summarizeEvents,
   EXTENSION_ASSET_SCOPE,
+  describeResourceTarget,
   extensionAssetPath,
   extensionAssetRoots,
+  installedExtensionDirs,
   unclassifiedNetworkEvents,
 } from './offline-assertions.js';
 import {
@@ -369,15 +372,37 @@ async function destroyFixtureSet(set: FixtureSet): Promise<void> {
   await rm(dirname(set.canary.path), { recursive: true, force: true });
 }
 
-/** The extension sources Desktop loads (`--extensionDevelopmentPath`). */
+/** The product extension folders installed in a packaged profile. */
+function installedProductExtensionDirs(driver: DesktopDriver): string[] {
+  if (driver.identity['packaged'] !== true) return [];
+  const manifest = JSON.parse(
+    readFileSync(
+      join(desktopRoot(), 'apps', 'vscode-extension', 'package.json'),
+      'utf8',
+    ),
+  ) as { publisher: string; name: string };
+  return installedExtensionDirs(
+    join(driver.profileDir, 'extensions'),
+    manifest.publisher,
+    manifest.name,
+  );
+}
+
+/**
+ * The extension sources Desktop loads: `--extensionDevelopmentPath` folders,
+ * plus the installed product extension when the driver is packaged.
+ */
 function loadedExtensionDirs(driver: DesktopDriver): string[] {
   const launchArgs = Array.isArray(driver.identity['launchArgs'])
     ? (driver.identity['launchArgs'] as unknown[])
     : [];
-  return launchArgs
-    .filter((arg): arg is string => typeof arg === 'string')
-    .filter((arg) => arg.startsWith('--extensionDevelopmentPath='))
-    .map((arg) => arg.slice('--extensionDevelopmentPath='.length));
+  return [
+    ...launchArgs
+      .filter((arg): arg is string => typeof arg === 'string')
+      .filter((arg) => arg.startsWith('--extensionDevelopmentPath='))
+      .map((arg) => arg.slice('--extensionDevelopmentPath='.length)),
+    ...installedProductExtensionDirs(driver),
+  ];
 }
 
 /**
@@ -457,7 +482,8 @@ function trackRequests(driver: DesktopDriver): {
       // Only the extension's own bundle is exempt; any other local resource
       // (fixture dir, image, data) a report pulls in stays report traffic.
       const asset = extensionAssetPath(request.url(), assetRoots);
-      if (asset === null) report.push(target);
+      if (asset === null)
+        report.push(describeResourceTarget(request.url(), target));
       else extensionAssets.push(`${target}/${asset}`);
     } else background.push(target);
   };

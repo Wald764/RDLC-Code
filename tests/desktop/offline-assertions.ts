@@ -5,8 +5,11 @@
  * test can prove they reject an unclassified outgoing network attempt instead
  * of passing vacuously.
  */
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   SEMANTIC_PROOF_LIMITATION,
+  sanitizeTarget,
   unexpectedEvents,
   type SecurityEvent,
   type SecurityObservation,
@@ -84,6 +87,53 @@ export function extensionAssetRoots(
   return extensionDirs.map((dir) =>
     posixPath(`${dir.replace(/\\/g, '/')}/${EXTENSION_ASSET_DIR}`),
   );
+}
+
+/**
+ * Installed folders of the product extension in an `--extensions-dir`. VS Code
+ * names them `<publisher>.<name>-<version>[-<target>]` with the id lowercased,
+ * so the prefix match ignores case while the returned paths keep the on-disk
+ * spelling. A missing or unreadable directory yields none.
+ */
+export function installedExtensionDirs(
+  extensionsDir: string,
+  publisher: string,
+  name: string,
+): string[] {
+  const prefix = `${publisher}.${name}-`.toLowerCase();
+  try {
+    return readdirSync(extensionsDir, { withFileTypes: true })
+      .filter(
+        (entry) =>
+          entry.isDirectory() && entry.name.toLowerCase().startsWith(prefix),
+      )
+      .map((entry) => join(extensionsDir, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * A request target for failure messages: the origin, plus the decoded path for
+ * vscode-resource URLs so a failure names the resource. Query strings and
+ * fragments never appear; control characters are replaced, the path is
+ * redacted like any event target and the result is capped at 200 characters.
+ */
+export function describeResourceTarget(
+  url: string,
+  origin: string,
+  redactions: readonly string[] = [],
+): string {
+  try {
+    const parsed = new URL(url);
+    if (!VSCODE_RESOURCE_HOST.test(parsed.hostname)) return origin;
+    const path = decodeURIComponent(parsed.pathname)
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\x00-\x1f\x7f]/g, '_');
+    return `${origin}${sanitizeTarget(path, redactions)}`.slice(0, 200);
+  } catch {
+    return origin;
+  }
 }
 
 /**

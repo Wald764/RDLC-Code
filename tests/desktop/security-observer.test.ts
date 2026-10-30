@@ -268,6 +268,53 @@ test(
   },
 );
 
+test(
+  'a traced command session marks events outside its allowlist as unexpected',
+  { timeout: 60_000 },
+  async (t) => {
+    const capability = detectNativeCapability();
+    if (!capability.launch.supported) {
+      assert.ok(capability.launch.reason);
+      t.diagnostic(`launch capture unsupported: ${capability.launch.reason}`);
+      return;
+    }
+    const run = async (allowed?: typeof ALLOWED) => {
+      const traced = await startTracedCommand(
+        {
+          command: process.execPath,
+          args: [
+            '-e',
+            'try{require("node:fs").openSync("/nonexistent/rdlc-allowlist-probe","r")}catch{};setTimeout(()=>process.exit(0),200)',
+          ],
+          maxDurationMs: 30_000,
+          ...(allowed ? { allowed } : {}),
+        },
+        capability,
+      );
+      if (traced.child.exitCode === null && traced.child.signalCode === null)
+        await new Promise<void>((done) => {
+          const timer = setTimeout(done, 20_000);
+          traced.child.once('exit', () => {
+            clearTimeout(timer);
+            done();
+          });
+        });
+      const observation = await traced.stop();
+      assert.equal(observation.state, 'observed', observation.reason ?? '');
+      return observation.events.filter((event) =>
+        event.target.includes('rdlc-allowlist-probe'),
+      );
+    };
+    const restricted = await run({ ...ALLOWED, exec: [] });
+    assert.ok(restricted.length > 0);
+    assert.ok(restricted.every((event) => event.unexpected === true));
+    // Without an allowlist nothing is classified.
+    const unclassified = await run();
+    assert.ok(unclassified.length > 0);
+    assert.ok(unclassified.every((event) => event.unexpected === undefined));
+  },
+);
+
 class FakeContext extends EventEmitter {}
 
 function fakeRequest(url: string, method = 'GET', error?: string): Request {
@@ -464,6 +511,66 @@ test('denylisted secret paths are unexpected even where the allowlist would perm
       'openat(AT_FDCWD</>, "/home/alice/.config/other/a.json", O_RDONLY) = 3',
       profile,
     ),
+    true,
+  );
+});
+
+test('a read-only root nested in a writable root wins for writes and still allows reads', () => {
+  const allowed = {
+    ...ALLOWED,
+    open: [...ALLOWED.open, '/work/profile'],
+    readOnly: ['/work/profile/extensions/pub.ext-1.0.0'],
+  };
+  const verdict = (text: string) => classify(text, allowed);
+  const ext = '/work/profile/extensions/pub.ext-1.0.0';
+  assert.equal(
+    verdict(`openat(AT_FDCWD</work>, "${ext}/a.js", O_RDONLY) = 3`),
+    false,
+  );
+  assert.equal(
+    verdict(`openat(AT_FDCWD</work>, "${ext}/a.js", O_WRONLY|O_CREAT) = 3`),
+    true,
+  );
+  assert.equal(verdict(`unlink("${ext}/a.js") = 0`), true);
+  // The rest of the profile stays writable.
+  assert.equal(
+    verdict(
+      'openat(AT_FDCWD</work>, "/work/profile/User/a.json", O_WRONLY|O_CREAT) = 3',
+    ),
+    false,
+  );
+});
+
+test('utimensat with a NULL path acts on the dirfd file and is classified and reported by that path', () => {
+  const futimens = (path: string) =>
+    parseStraceLog(
+      call(
+        `utimensat(7<${path}>, NULL, [{tv_sec=1700000000, tv_nsec=0} /* 2023-11-14T22:13:20+0000 */, {tv_sec=1700000000, tv_nsec=0}], 0) = 0`,
+      ),
+      { allowed: ALLOWED },
+    ).events;
+  const [inside] = futimens('/work/fixture/out/report.pdf');
+  assert.equal(inside?.unexpected, false);
+  assert.equal(inside?.target, '/work/fixture/out/report.pdf');
+  const [outside] = futimens('/outside/secret.txt');
+  assert.equal(outside?.unexpected, true);
+  assert.equal(outside?.target, '/outside/secret.txt');
+  // A dirfd that does not name a path still fails closed.
+  assert.equal(
+    parseStraceLog(call('utimensat(7<pipe:[123]>, NULL, NULL, 0) = 0'), {
+      allowed: ALLOWED,
+    }).events[0]?.unexpected,
+    true,
+  );
+  assert.equal(
+    parseStraceLog(call('utimensat(AT_FDCWD, NULL, NULL, 0) = -1 EFAULT (x)'), {
+      allowed: ALLOWED,
+    }).events[0]?.unexpected,
+    true,
+  );
+  // A named path is untouched by the NULL rule.
+  assert.equal(
+    classify('utimensat(AT_FDCWD</work/fixture>, "/outside/a", NULL, 0) = 0'),
     true,
   );
 });
@@ -1817,6 +1924,138 @@ test('plain relative paths resolve against the cwd the trace has shown for that 
     );
     assert.equal(events.at(-1)?.unexpected, expected, `${extra} => ${text}`);
   }
+});
+
+test('a child keeps its relative paths resolvable through fork, chdir, fchdir and execve', () => {
+  const verdicts = (...lines: string[]) =>
+    parseStraceLog(lines.join('\n'), { allowed: ALLOWED })
+      .events.filter(
+        (event) => event.channel === 'file' || event.channel === 'exec',
+      )
+      .map((event) => event.unexpected);
+  const parent = '900 1700000000.0 chdir("/work/fixture") = 0';
+  const rg = (pid: number) =>
+    `${pid} 1700000001.0 execve("/opt/vscode/rg", ["rg", "--files"], 0x7ffd /* 3 vars */) = 0\n` +
+    `${pid} 1700000001.1 stat("./", {st_mode=S_IFDIR|0755, ...}) = 0\n` +
+    `${pid} 1700000001.2 open("./.rgignore", O_RDONLY) = -1 ENOENT (x)`;
+  // fork + execve without any chdir: the copy of the parent's cwd survives the exec.
+  assert.deepEqual(
+    verdicts(
+      parent,
+      '900 1700000000.5 clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0x7f) = 901',
+      rg(901),
+    ),
+    [false, false, false, false],
+  );
+  // vfork child: same.
+  assert.deepEqual(
+    verdicts(
+      parent,
+      '900 1700000000.5 vfork( <unfinished ...>',
+      rg(901),
+      '900 1700000001.9 <... vfork resumed>) = 901',
+    ),
+    [false, false, false, false],
+  );
+  // A child chdir before execve, cut in two by another process's output: the
+  // resumed half applies the target the unfinished half logged.
+  const forked =
+    '900 1700000000.5 clone(child_stack=NULL, flags=SIGCHLD) = 901';
+  const interrupted = (target: string, result: string) => [
+    parent,
+    forked,
+    `901 1700000000.6 chdir("${target}" <unfinished ...>`,
+    '902 1700000000.7 getpid() = 902',
+    `901 1700000000.8 <... chdir resumed>) = ${result}`,
+  ];
+  assert.deepEqual(
+    verdicts(...interrupted('/work/fixture/sub', '0'), rg(901)).slice(-2),
+    [false, false],
+  );
+  assert.deepEqual(verdicts(...interrupted('/etc', '0'), rg(901)).slice(-2), [
+    true,
+    true,
+  ]);
+  // A failed chdir keeps the parent's directory.
+  assert.deepEqual(
+    verdicts(...interrupted('/etc', '-1 EACCES (x)'), rg(901)).slice(-2),
+    [false, false],
+  );
+  // A resumed chdir whose unfinished half was never seen is not provable.
+  assert.deepEqual(
+    verdicts(
+      parent,
+      forked,
+      '901 1700000000.8 <... chdir resumed>) = 0',
+      rg(901),
+    ).slice(-2),
+    [true, true],
+  );
+  // fchdir moves the cwd (and is not itself an event); a non-path fd is unknown.
+  const fchdir = (target: string) =>
+    parseStraceLog(
+      [
+        parent,
+        `900 1700000000.2 fchdir(7<${target}>) = 0`,
+        '900 1700000000.3 stat("x", {st_mode=S_IFREG|0644, ...}) = 0',
+      ].join('\n'),
+      { allowed: ALLOWED },
+    ).events.map((event) => [event.operation, event.unexpected]);
+  assert.deepEqual(fchdir('/etc'), [
+    ['chdir', false],
+    ['stat', true],
+  ]);
+  assert.deepEqual(fchdir('/work/fixture/sub'), [
+    ['chdir', false],
+    ['stat', false],
+  ]);
+  assert.deepEqual(fchdir('pipe:[1]'), [
+    ['chdir', false],
+    ['stat', true],
+  ]);
+  assert.ok(STRACE_ARGS.join(' ').includes(',fchdir,'));
+  // A failed fchdir keeps the directory.
+  assert.deepEqual(
+    verdicts(
+      parent,
+      '900 1700000000.2 fchdir(7</etc>) = -1 EACCES (x)',
+      '900 1700000000.3 stat("x", {st_mode=S_IFREG|0644, ...}) = 0',
+    ),
+    [false, false],
+  );
+  // An interrupted fchdir applies its target on success, restores on failure.
+  const splitFchdir = (result: string) =>
+    verdicts(
+      parent,
+      '900 1700000000.2 fchdir(7</etc> <unfinished ...>',
+      '902 1700000000.25 getpid() = 902',
+      `900 1700000000.3 <... fchdir resumed>) = ${result}`,
+      '900 1700000000.4 stat("x", {st_mode=S_IFREG|0644, ...}) = 0',
+    );
+  assert.deepEqual(splitFchdir('0'), [false, true]);
+  assert.deepEqual(splitFchdir('-1 EACCES (x)'), [false, false]);
+  // A resumed chdir from another tid than the unfinished half leaves that tid unknown.
+  assert.deepEqual(
+    verdicts(
+      parent,
+      '900 1700000000.2 chdir("/work/fixture/sub" <unfinished ...>',
+      '903 1700000000.3 <... chdir resumed>) = 0',
+      '903 1700000000.4 stat("x", {st_mode=S_IFREG|0644, ...}) = 0',
+    ).slice(-1),
+    [true],
+  );
+  // A bare AT_FDCWD (no decoded cwd) resolves against the tracked cwd.
+  assert.deepEqual(
+    verdicts(
+      parent,
+      '900 1700000000.3 newfstatat(AT_FDCWD, "./.jj", 0x7ffd, 0) = -1 ENOENT (x)',
+    ),
+    [false, false],
+  );
+  assert.deepEqual(
+    verdicts('900 1700000000.3 newfstatat(AT_FDCWD, "./.jj", 0x7ffd, 0) = 0'),
+    [true],
+  );
 });
 
 test('working directories read at attach resolve relative paths; unknown ones still fail closed', () => {

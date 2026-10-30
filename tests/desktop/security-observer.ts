@@ -216,9 +216,10 @@ export const STRACE_ARGS = [
   // "every syscall except those" (futex, mmap, ... flood the trace). It is %file,
   // %process and the members of %network that put or tune something on a socket,
   // so the receive calls (recvfrom, recvmsg, recvmmsg: bulky, never outbound) are
-  // left out by omission.
+  // left out by omission. fchdir is a %desc call: it is listed on its own because
+  // it moves the cwd that plain relative paths resolve against.
   '-e',
-  `trace=%file,%process,${NETWORK_CALLS_TRACED}`,
+  `trace=%file,%process,fchdir,${NETWORK_CALLS_TRACED}`,
 ] as const;
 
 const DEFAULT_MAX_DURATION = 60_000;
@@ -489,6 +490,7 @@ function networkTarget(args: string, remembered?: DatagramPeer): string {
 
 function eventTarget(
   channel: NativeChannel,
+  operation: string,
   args: string,
   redactions: readonly string[],
   remembered?: DatagramPeer,
@@ -502,7 +504,7 @@ function eventTarget(
       : 'execve';
   }
   if (channel === 'process') return 'child-process';
-  const path = firstQuoted(args);
+  const path = firstQuoted(args) ?? nullPathDirfd(operation, args);
   return path ? sanitizeTarget(path, redactions) : 'file';
 }
 
@@ -584,6 +586,20 @@ function parseStraceLine(line: string): StraceLine | null {
 }
 
 type PathSlot = 'p' | 'd' | 's';
+
+/**
+ * *at calls where a NULL path means the dirfd itself (the futimens form of
+ * utimensat), so the target is the file the dirfd names.
+ */
+const NULL_PATH_IS_DIRFD = new Set(['utimensat']);
+
+/** The absolute path the dirfd of a NULL-path call names, null for any other shape. */
+function nullPathDirfd(operation: string, args: string): string | null {
+  if (!NULL_PATH_IS_DIRFD.has(operation)) return null;
+  const [dirfd, path] = splitArgs(args);
+  const base = path === 'NULL' ? fdPath(dirfd) : null;
+  return base?.startsWith('/') ? base : null;
+}
 
 /**
  * Path-taking file syscalls and their argument layout: `p` is a path, `d` a
@@ -881,6 +897,11 @@ function resolveSlot(
     return cwd !== null && path !== ''
       ? normalPath(posix.join(cwd, path))
       : null;
+  // A bare AT_FDCWD (strace could not read /proc/<pid>/cwd) is the process cwd.
+  if (dirfd === 'AT_FDCWD')
+    return cwd !== null && path !== ''
+      ? normalPath(posix.join(cwd, path))
+      : null;
   const base = fdPath(dirfd);
   if (base === null) return null;
   if (!base.startsWith('/')) return path === '' ? undefined : null;
@@ -904,7 +925,13 @@ function resolvedPaths(
     if (slot === 'p')
       return [resolveSlot(undefined, quotedPath(tokens[index++]), false, cwd)];
     const dirfd = tokens[index++];
-    return [resolveSlot(dirfd, quotedPath(tokens[index++]), true, cwd)];
+    const path = tokens[index++];
+    if (path === 'NULL' && NULL_PATH_IS_DIRFD.has(operation)) {
+      // futimens(fd): the call acts on the file the dirfd names.
+      const base = fdPath(dirfd);
+      return [base?.startsWith('/') ? normalPath(base) : null];
+    }
+    return [resolveSlot(dirfd, quotedPath(path), true, cwd)];
   });
 }
 
@@ -1161,6 +1188,16 @@ function isAllowedFile(
   context: ClassifyContext,
 ): boolean {
   const { open, readOnly = [] } = context.allowed;
+  // A read-only root nested inside a writable one (an installed extension in
+  // the profile) is the more specific rule: it wins for writes.
+  if (
+    write &&
+    readOnly.some(
+      (root) =>
+        underRoot(path, [root]) && open.some((dir) => underRoot(root, [dir])),
+    )
+  )
+    return false;
   if (underRoot(path, open) || underRoot(path, RUNTIME_WRITABLE)) return true;
   if (underRoot(path, [...readOnly, ...RUNTIME_PATHS])) return !write;
   if (
@@ -1386,6 +1423,15 @@ class CwdTracker {
   /** Thread (or process) that shares the fd table of each child made with CLONE_FILES. */
   private readonly fdParents = new Map<number, number>();
   private readonly initialProcess = new Map<number, number>();
+  /** chdir/fchdir calls interrupted by another tracee's output, until their resumed half. */
+  private readonly interruptedChdirs = new Map<
+    number,
+    {
+      readonly record: CwdRecord;
+      readonly base: string | undefined;
+      readonly target: string | undefined;
+    }
+  >();
 
   constructor(
     lines: readonly (StraceLine | null)[],
@@ -1495,6 +1541,23 @@ class CwdTracker {
       (this.lookup(line.pid) ?? this.recordFor(line.pid)).dir = normalPath(dir);
   }
 
+  /** The directory a chdir/fchdir call moves to; undefined when it is not provable. */
+  private chdirTarget(
+    line: StraceLine,
+    base: string | undefined,
+  ): string | undefined {
+    const [first] = splitArgs(line.args);
+    if (line.operation === 'fchdir') {
+      const dir = fdPath(first);
+      return dir?.startsWith('/') ? normalPath(dir) : undefined;
+    }
+    const target = quotedPath(first);
+    if (target?.startsWith('/')) return normalPath(target);
+    return target && base !== undefined
+      ? normalPath(posix.join(base, target))
+      : undefined;
+  }
+
   follow(line: StraceLine, index: number): void {
     const { pid } = line;
     if (pid === null) return;
@@ -1502,16 +1565,25 @@ class CwdTracker {
       this.records.delete(pid);
       return;
     }
-    if (line.operation === 'chdir' && !line.resumed) {
+    if (line.operation === 'chdir' || line.operation === 'fchdir') {
       const record = this.lookup(pid) ?? this.recordFor(pid);
-      const target = quotedPath(splitArgs(line.args)[0]);
+      if (line.resumed) {
+        // The target was logged on the unfinished half: a success applies it,
+        // a failure keeps the previous directory.
+        const interrupted = this.interruptedChdirs.get(pid);
+        this.interruptedChdirs.delete(pid);
+        if (!interrupted) record.dir = undefined;
+        else if (line.result.startsWith('-1'))
+          interrupted.record.dir = interrupted.base;
+        else interrupted.record.dir = interrupted.target;
+        return;
+      }
       const base = record.dir;
-      if (line.unfinished || line.result.startsWith('-1')) {
-        if (line.unfinished) record.dir = undefined;
-      } else if (target?.startsWith('/')) record.dir = normalPath(target);
-      else if (target && base !== undefined)
-        record.dir = normalPath(posix.join(base, target));
-      else record.dir = undefined;
+      const target = this.chdirTarget(line, base);
+      if (line.unfinished) {
+        this.interruptedChdirs.set(pid, { record, base, target });
+        record.dir = undefined;
+      } else if (!line.result.startsWith('-1')) record.dir = target;
       return;
     }
     const entry = this.byLine.get(index);
@@ -1587,7 +1659,11 @@ export function parseStraceLog(
       break;
     }
     const channel = channelFor(parsed.operation);
-    if (!channel) continue;
+    if (!channel) {
+      // fchdir is traced for the cwd bookkeeping only; it is not an event.
+      if (parsed.operation === 'fchdir') cwds.follow(parsed, index);
+      continue;
+    }
     const failed = parsed.result.startsWith('-1');
     const attempted = parsed.unfinished || parsed.result.startsWith('?');
     cwds.observe(parsed);
@@ -1624,7 +1700,13 @@ export function parseStraceLog(
       operation: parsed.operation,
       outcome: failed ? 'failed' : attempted ? 'attempted' : 'succeeded',
       pid: parsed.pid,
-      target: eventTarget(channel, parsed.args, redactions, remembered),
+      target: eventTarget(
+        channel,
+        parsed.operation,
+        parsed.args,
+        redactions,
+        remembered,
+      ),
       error: failed
         ? sanitizeTarget(
             /^-1\s+([A-Z0-9_]+)/.exec(parsed.result)?.[1] ?? 'failed',
@@ -2165,6 +2247,7 @@ export async function startTracedCommand(
     attachedPids: [],
     attachFailures: [],
     redactions: [...bounds.redactions, homedir()],
+    allowed: options.allowed,
     maxDurationMs: bounds.maxDurationMs,
     maxEvents: bounds.maxEvents,
     maxTraceBytes: bounds.maxTraceBytes,

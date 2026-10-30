@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   LOOPBACK_SCOPE,
   REPORT_ATTRIBUTION_SCOPE,
   REPORT_ZERO_SCOPE,
   cleanWindowFailures,
+  describeResourceTarget,
   extensionAssetPath,
   extensionAssetRoots,
+  installedExtensionDirs,
   summarizeEvents,
   unclassifiedNetworkEvents,
 } from './offline-assertions.js';
@@ -230,6 +235,71 @@ test('a Windows drive path is matched case-insensitively and fails closed otherw
   assert.equal(
     extensionAssetPath(`${ASSET_HOST}/c%3A/work/other/a.js`, roots),
     null,
+  );
+});
+
+test('the installed product extension is matched by id prefix, ignoring case, and its bundle is an asset', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rdlc-ext-'));
+  try {
+    mkdirSync(join(dir, 'wald764.rdlc-code-0.1.0'));
+    mkdirSync(join(dir, 'Wald764.RDLC-Code-0.2.0-linux-x64'));
+    mkdirSync(join(dir, 'wald764.rdlc-code-extra-1.0.0'));
+    mkdirSync(join(dir, 'other.rdlc-code-1.0.0'));
+    writeFileSync(join(dir, 'wald764.rdlc-code-9.9.9'), 'a file');
+    const found = installedExtensionDirs(dir, 'Wald764', 'rdlc-code');
+    assert.deepEqual(found.map((entry) => entry.slice(dir.length + 1)).sort(), [
+      'Wald764.RDLC-Code-0.2.0-linux-x64',
+      'wald764.rdlc-code-0.1.0',
+      'wald764.rdlc-code-extra-1.0.0',
+    ]);
+    const roots = extensionAssetRoots(found);
+    const installed = found.find((entry) => entry.endsWith('0.1.0')) ?? '';
+    assert.equal(
+      extensionAssetPath(
+        `${ASSET_HOST}${installed}/build/designer/assets/a.js`,
+        roots,
+      ),
+      'build/designer/assets/a.js',
+    );
+    assert.equal(
+      extensionAssetPath(`${ASSET_HOST}${installed}/package.json`, roots),
+      null,
+    );
+    assert.deepEqual(
+      installedExtensionDirs(join(dir, 'missing'), 'a', 'b'),
+      [],
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a vscode-resource failure names the decoded path and never the query', () => {
+  const origin = 'https://file+.vscode-resource.vscode-cdn.net';
+  assert.equal(
+    describeResourceTarget(
+      `${origin}/srv/a%20b/fixture/image.png?secret=1#frag`,
+      origin,
+    ),
+    `${origin}/srv/a b/fixture/image.png`,
+  );
+  // Redacted like any event target, control characters replaced, length capped.
+  assert.equal(
+    describeResourceTarget(
+      `${origin}/work/secret-root/a%0A%00b.png?x=1`,
+      origin,
+      ['/work/secret-root'],
+    ),
+    `${origin}<path>/a__b.png`,
+  );
+  const long = describeResourceTarget(
+    `${origin}/${'a%20b.'.repeat(100)}`,
+    origin,
+  );
+  assert.equal(long.length, 200);
+  assert.equal(
+    describeResourceTarget('https://example.com/x?q=1', 'https://example.com'),
+    'https://example.com',
   );
 });
 
