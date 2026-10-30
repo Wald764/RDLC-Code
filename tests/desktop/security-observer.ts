@@ -42,6 +42,13 @@ export interface SecurityEvent {
   readonly operation: string;
   readonly outcome: EventOutcome;
   readonly pid: number | null;
+  /**
+   * Sanitized executable of the calling process, tracked from the execve calls
+   * of the trace (a child inherits its parent's until it execs) and from
+   * /proc at attach; absent when the trace never showed it. Attribution only:
+   * no classification rule reads it.
+   */
+  readonly exe?: string;
   /** Sanitized target: origin only for network, basename for exec, redacted path for files. */
   readonly target: string;
   /** Sanitized errno/failure token, never a raw payload. */
@@ -1698,6 +1705,75 @@ class CwdTracker {
   }
 }
 
+/**
+ * Tracks the executable each pid runs: an execve that succeeds (or whose
+ * result is still unknown) replaces it, a failed one leaves it, and a pid first
+ * seen without one inherits its parent's current executable (a fork child runs
+ * its parent's program until it execs).
+ */
+class ExeTracker {
+  private readonly exes = new Map<number, string>();
+  private readonly parents = new Map<number, number>();
+  /** execve calls interrupted by another tracee's output, until their resumed half. */
+  private readonly interruptedExecs = new Map<number, string>();
+
+  constructor(
+    lines: readonly (StraceLine | null)[],
+    initial: ReadonlyMap<number, string> = new Map(),
+  ) {
+    for (const [pid, exe] of initial) this.exes.set(pid, exe);
+    for (const line of lines) {
+      if (
+        !line ||
+        line.pid === null ||
+        !PROCESS_SPAWN_CALLS.has(line.operation) ||
+        line.unfinished
+      )
+        continue;
+      const child = /^(\d+)/.exec(line.result)?.[1];
+      if (child !== undefined && !this.parents.has(Number(child)))
+        this.parents.set(Number(child), line.pid);
+    }
+  }
+
+  /** The executable of a pid at this point of the trace, if known. */
+  exe(pid: number | null): string | undefined {
+    if (pid === null) return undefined;
+    // Pid reuse can make the parent chain loop: stop at the first repeat.
+    const chain: number[] = [];
+    let current: number | undefined = pid;
+    let found: string | undefined;
+    while (current !== undefined && !chain.includes(current)) {
+      found = this.exes.get(current);
+      if (found !== undefined) break;
+      chain.push(current);
+      current = this.parents.get(current);
+    }
+    if (found !== undefined)
+      for (const seen of chain) this.exes.set(seen, found);
+    return found;
+  }
+
+  /** Applies an execve/execveat line (after the event of that line was attributed). */
+  follow(line: StraceLine): void {
+    if (line.pid === null || !EXEC_CALLS.has(line.operation)) return;
+    if (line.resumed) {
+      const path = this.interruptedExecs.get(line.pid);
+      this.interruptedExecs.delete(line.pid);
+      if (path !== undefined && !line.result.startsWith('-1'))
+        this.exes.set(line.pid, path);
+      return;
+    }
+    const path = firstQuoted(line.args) ?? undefined;
+    if (path === undefined) return;
+    if (line.unfinished) {
+      this.interruptedExecs.set(line.pid, path);
+      return;
+    }
+    if (!line.result.startsWith('-1')) this.exes.set(line.pid, path);
+  }
+}
+
 export function parseStraceLog(
   text: string,
   options: {
@@ -1711,6 +1787,8 @@ export function parseStraceLog(
      * began, read from /proc at attach; any other thread starts unknown.
      */
     readonly cwds?: ReadonlyMap<number, InitialCwd>;
+    /** Raw executables (/proc/<pid>/exe) of threads already running when tracing began. */
+    readonly exes?: ReadonlyMap<number, string>;
   } = {},
 ): ParsedStrace {
   const maxEvents = options.maxEvents ?? DEFAULT_MAX_EVENTS;
@@ -1725,6 +1803,7 @@ export function parseStraceLog(
   }
   const parsedLines = lines.map(parseStraceLine);
   const cwds = new CwdTracker(parsedLines, options.cwds);
+  const exes = new ExeTracker(parsedLines, options.exes);
   const datagramPeers = new DatagramPeers();
   /** Index of the event made from each pid's unfinished call, until its resumed half. */
   const interrupted = new Map<string, number>();
@@ -1757,6 +1836,7 @@ export function parseStraceLog(
       for (const fd of newFds(parsed.operation, parsed.args, parsed.result))
         datagramPeers.forgetFd(cwds.fdTable(parsed.pid), fd);
       cwds.follow(parsed, index);
+      exes.follow(parsed);
       continue;
     }
     if (events.length >= maxEvents) {
@@ -1796,6 +1876,9 @@ export function parseStraceLog(
       datagramPeers.forgetFd(fdTable, fd);
     if (parsed.operation === 'exit_group') datagramPeers.forgetTable(fdTable);
     cwds.follow(parsed, index);
+    // Attributed to the program that made the call, before an exec replaces it.
+    const exe = exes.exe(parsed.pid);
+    exes.follow(parsed);
     if (parsed.unfinished && parsed.pid !== null)
       interrupted.set(`${parsed.pid}:${parsed.operation}`, events.length);
     events.push({
@@ -1805,6 +1888,7 @@ export function parseStraceLog(
       operation: parsed.operation,
       outcome: failed ? 'failed' : attempted ? 'attempted' : 'succeeded',
       pid: parsed.pid,
+      ...(exe === undefined ? {} : { exe: sanitizeTarget(exe, redactions) }),
       target: eventTarget(
         channel,
         parsed.operation,
@@ -2146,6 +2230,8 @@ interface Session {
   readonly attachFailures: readonly string[];
   /** Thread working directories read from /proc before attaching. */
   readonly initialCwds: ReadonlyMap<number, InitialCwd>;
+  /** Executables read from /proc before attaching, per thread id. */
+  readonly initialExes: ReadonlyMap<number, string>;
   readonly stderr: () => string;
   timedOut: boolean;
   stopTimer: ReturnType<typeof setTimeout> | null;
@@ -2193,6 +2279,7 @@ async function finishSession(session: Session): Promise<NativeObservation> {
     redactions: session.redactions,
     pids: session.requestedPids,
     cwds: session.initialCwds,
+    exes: session.initialExes,
     ...(session.allowed ? { allowed: session.allowed } : {}),
   });
   const failures = [...session.attachFailures];
@@ -2245,6 +2332,7 @@ function createSession(
     attachedPids: readonly number[];
     attachFailures: readonly string[];
     initialCwds?: ReadonlyMap<number, InitialCwd>;
+    initialExes?: ReadonlyMap<number, string>;
     redactions: readonly string[];
     allowed?: AllowedAccess | undefined;
     maxDurationMs: number;
@@ -2266,6 +2354,7 @@ function createSession(
     attachedPids: options.attachedPids,
     attachFailures: options.attachFailures,
     initialCwds: options.initialCwds ?? new Map(),
+    initialExes: options.initialExes ?? new Map(),
     stderr: collectStderr(child),
     timedOut: false,
     stopTimer: null,
@@ -2415,6 +2504,28 @@ function threadCwds(pids: readonly number[]): Map<number, InitialCwd> {
   return cwds;
 }
 
+/** The executable of every thread of the given processes; unreadable ones are left out (unknown). */
+function threadExes(pids: readonly number[]): Map<number, string> {
+  const exes = new Map<number, string>();
+  for (const pid of pids) {
+    let exe: string;
+    try {
+      exe = readlinkSync(`/proc/${pid}/exe`).replace(/ \(deleted\)$/, '');
+    } catch {
+      continue;
+    }
+    let tasks: string[] = [];
+    try {
+      tasks = readdirSync(`/proc/${pid}/task`);
+    } catch {
+      // The process exited or hides its tasks.
+    }
+    for (const task of new Set([String(pid), ...tasks]))
+      exes.set(Number(task), exe);
+  }
+  return exes;
+}
+
 function processTree(rootPid: number): number[] {
   const parents = processParentMap();
   if (!parents.has(rootPid))
@@ -2483,6 +2594,7 @@ export async function startAttachedObservation(
   // Read before attaching: plain calls such as stat("./") of a process that was
   // already running resolve against a directory the trace never shows.
   const initialCwds = threadCwds(pids);
+  const initialExes = threadExes(pids);
   const { directory, tracePath } = traceDirectory();
   const child = spawn(
     'strace',
@@ -2563,6 +2675,7 @@ export async function startAttachedObservation(
     attachedPids: [...attached],
     attachFailures: failures,
     initialCwds,
+    initialExes,
     redactions: [...bounds.redactions, homedir()],
     allowed: options.allowed,
     maxDurationMs: bounds.maxDurationMs,

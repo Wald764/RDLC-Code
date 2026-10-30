@@ -12,6 +12,7 @@ import {
   extensionAssetPath,
   extensionAssetRoots,
   installedExtensionDirs,
+  attributeEvents,
   summarizeEvents,
   unclassifiedNetworkEvents,
 } from './offline-assertions.js';
@@ -320,4 +321,60 @@ test('event summaries list every distinct event with counts instead of the first
   assert.equal(summarizeEvents([]), 'none');
   const wide = Array.from({ length: 70 }, (_, index) => event(`/y/${index}`));
   assert.match(summarizeEvents(wide), /and 10 more distinct event\(s\)$/);
+});
+
+test('attributed summaries name the exe and pids of unexpected events, bounded', () => {
+  const event = (
+    target: string,
+    pid: number | null,
+    exe?: string,
+  ): SecurityEvent => ({
+    ...unclassifiedConnect,
+    channel: 'file',
+    operation: 'statfs',
+    target,
+    pid,
+    unexpected: true,
+    ...(exe === undefined ? {} : { exe }),
+  });
+  const events = [
+    event('/sys/fs/selinux', 11, '/opt/vscode/code'),
+    event('/sys/fs/selinux', 12, '/opt/vscode/code'),
+    event('/sys/fs/selinux', 13, '/opt/vscode/code'),
+    event('/sys/fs/selinux', 14, '/opt/vscode/code'),
+    event('/sys/fs/selinux', 21, '/usr/bin/helper'),
+    event('/selinux', null),
+  ];
+  const summary = summarizeEvents(events, { attribute: true });
+  assert.match(
+    summary,
+    /file:statfs:\/sys\/fs\/selinux \(x4\) \[exe=\/opt\/vscode\/code pid=11,12,13,\+1\]/,
+  );
+  assert.match(summary, /\[exe=\/usr\/bin\/helper pid=21\]/);
+  assert.match(summary, /file:statfs:\/selinux \[exe=unknown pid=unknown\]/);
+  // The unattributed form is unchanged.
+  assert.equal(
+    summarizeEvents(events),
+    'file:statfs:/sys/fs/selinux (x5), file:statfs:/selinux',
+  );
+  const attribution = attributeEvents(events);
+  assert.deepEqual(attribution[0], {
+    channel: 'file',
+    operation: 'statfs',
+    target: '/sys/fs/selinux',
+    exe: '/opt/vscode/code',
+    pids: [11, 12, 13, 14],
+    count: 4,
+  });
+  const huge = Array.from({ length: 70 }, (_, index) =>
+    event(`/y/${index}`, index, `/${'x'.repeat(300)}/exe`),
+  );
+  assert.ok(summarizeEvents(huge, { attribute: true }).length <= 6_000);
+  const message = cleanWindowFailures('w', windowOf(events), 'canary').join(
+    ' ',
+  );
+  assert.match(
+    message,
+    /6 unexpected host event\(s\):.*exe=\/usr\/bin\/helper pid=21/,
+  );
 });

@@ -44,26 +44,105 @@ export const REPORT_ZERO_SCOPE =
 
 /** Distinct targets listed by `summarizeEvents` before the remainder is only counted. */
 const SUMMARY_LIMIT = 60;
+/** Pids named per attributed entry before the remainder is only counted. */
+const ATTRIBUTION_PIDS = 3;
+/** Longest executable path kept in an attributed summary (the tail is the informative part). */
+const ATTRIBUTION_EXE_LIMIT = 80;
+/** Longest attributed summary; keeps assertion messages and reports bounded. */
+const ATTRIBUTED_SUMMARY_LIMIT = 6_000;
 
 /**
  * Distinct `channel:operation:target` entries with repeat counts, so a failure
  * with many events shows every distinct kind instead of the first few repeats.
+ * With `attribute`, entries are also split by the executable that made them and
+ * name that executable and the pids, so a stray host event can be traced to a
+ * helper process.
  */
-export function summarizeEvents(events: readonly SecurityEvent[]): string {
-  const counts = new Map<string, number>();
-  for (const event of events) {
-    const key = `${event.channel}:${event.operation}:${event.target}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  const entries = [...counts].map(([key, count]) =>
-    count > 1 ? `${key} (x${count})` : key,
-  );
+export function summarizeEvents(
+  events: readonly SecurityEvent[],
+  options: { readonly attribute?: boolean } = {},
+): string {
+  const groups = attributeEvents(events, options.attribute === true);
+  const entries = groups.map((group) => {
+    const key = `${group.channel}:${group.operation}:${group.target}`;
+    const counted = group.count > 1 ? `${key} (x${group.count})` : key;
+    return options.attribute === true
+      ? `${counted} ${attributionLabel(group)}`
+      : counted;
+  });
   const shown = entries.slice(0, SUMMARY_LIMIT).join(', ');
   const hidden = entries.length - SUMMARY_LIMIT;
-  return (
+  const text =
     (hidden > 0 ? `${shown}, and ${hidden} more distinct event(s)` : shown) ||
-    'none'
-  );
+    'none';
+  return options.attribute === true && text.length > ATTRIBUTED_SUMMARY_LIMIT
+    ? `${text.slice(0, ATTRIBUTED_SUMMARY_LIMIT - 3)}...`
+    : text;
+}
+
+export interface EventAttribution {
+  readonly channel: SecurityEvent['channel'];
+  readonly operation: string;
+  readonly target: string;
+  /** Sanitized executable of the calling process; null when the trace never showed it. */
+  readonly exe: string | null;
+  readonly pids: readonly number[];
+  readonly count: number;
+}
+
+/** Distinct events (by exe too when `byExe`) with their counts and pids, in first-seen order. */
+export function attributeEvents(
+  events: readonly SecurityEvent[],
+  byExe = true,
+): EventAttribution[] {
+  const groups = new Map<
+    string,
+    {
+      channel: SecurityEvent['channel'];
+      operation: string;
+      target: string;
+      exe: string | null;
+      pids: Set<number>;
+      count: number;
+    }
+  >();
+  for (const event of events) {
+    const exe = byExe ? (event.exe ?? null) : null;
+    const key = `${event.channel}:${event.operation}:${event.target}\0${exe ?? ''}`;
+    const group = groups.get(key) ?? {
+      channel: event.channel,
+      operation: event.operation,
+      target: event.target,
+      exe,
+      pids: new Set<number>(),
+      count: 0,
+    };
+    if (event.pid !== null) group.pids.add(event.pid);
+    group.count += 1;
+    groups.set(key, group);
+  }
+  return [...groups.values()].map((group) => ({
+    ...group,
+    pids: [...group.pids],
+  }));
+}
+
+function attributionLabel(group: EventAttribution): string {
+  const exe =
+    group.exe === null
+      ? 'unknown'
+      : group.exe.length > ATTRIBUTION_EXE_LIMIT
+        ? `...${group.exe.slice(-(ATTRIBUTION_EXE_LIMIT - 3))}`
+        : group.exe;
+  const shown = group.pids.slice(0, ATTRIBUTION_PIDS).join(',');
+  const more = group.pids.length - ATTRIBUTION_PIDS;
+  const pids =
+    group.pids.length === 0
+      ? 'unknown'
+      : more > 0
+        ? `${shown},+${more}`
+        : shown;
+  return `[exe=${exe} pid=${pids}]`;
 }
 
 export const EXTENSION_ASSET_SCOPE =
@@ -230,7 +309,7 @@ export function cleanWindowFailures(
   const unexpected = unexpectedEvents(observation.native.events);
   check(
     unexpected.length === 0,
-    `${unexpected.length} unexpected host event(s): ${summarizeEvents(unexpected)}`,
+    `${unexpected.length} unexpected host event(s): ${summarizeEvents(unexpected, { attribute: true })}`,
   );
   const canary = observation.native.events.filter((event) =>
     event.target.includes(canaryName),

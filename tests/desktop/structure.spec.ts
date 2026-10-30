@@ -612,7 +612,13 @@ test('SC-003-timing', async () => {
       ).toBeVisible();
       await expect(frame.locator('.item.selected')).toHaveCount(2);
       await page.keyboard.press(`${modifier}+s`);
-      expect(await source(ctx, 'native-structure.rdlc')).toBe(original);
+      // The tab is never dirty, so there is no dirty-to-clean transition to
+      // await; an immediate read can catch the save mid-write (truncated), so
+      // poll until the file settles on the original bytes.
+      await expect(page.locator('.monaco-workbench .tab.dirty')).toHaveCount(0);
+      await expect
+        .poll(() => source(ctx, 'native-structure.rdlc'))
+        .toBe(original);
       await driver.capture('native-structure-selection');
       // The accepted bound stays 95 of 100 samples within 200ms; never lowered.
       expect(

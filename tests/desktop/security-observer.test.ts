@@ -2411,3 +2411,52 @@ test('addressless network events say what the fd is, with inodes and paths redac
     ],
   );
 });
+
+test('events carry the sanitized executable of their pid: exec replaces it, children inherit it until they exec', () => {
+  const trace = [
+    '100 1700000000.1 execve("/opt/vscode/code", ["code"], 0x7ffd) = 0',
+    '100 1700000000.2 clone(child_stack=NULL, flags=SIGCHLD) = 101',
+    // The child's line precedes the parent's resumed clone: it still inherits.
+    '101 1700000000.3 statfs("/sys/fs/selinux", 0x1) = -1 ENOENT (No such file or directory)',
+    '101 1700000000.4 execve("/home/alice/bin/helper", ["helper"], 0x7ffd) = 0',
+    '101 1700000000.5 access("/etc/selinux/config", F_OK) = -1 ENOENT (No such file or directory)',
+    '100 1700000000.6 execve("/usr/bin/nope", ["nope"], 0x7ffd) = -1 ENOENT (No such file or directory)',
+    '100 1700000000.7 openat(AT_FDCWD, "/proc/version_signature", O_RDONLY) = 3',
+    '102 1700000000.8 execve("/usr/lib/gnutls-helper", ["g"], 0x7ffd <unfinished ...>',
+    '102 1700000000.9 <... execve resumed>) = 0',
+    '102 1700000001.0 openat(AT_FDCWD, "/etc/gnutls/config", O_RDONLY) = -1 ENOENT (No such file or directory)',
+    '103 1700000001.1 openat(AT_FDCWD, "/etc/other", O_RDONLY) = -1 ENOENT (No such file or directory)',
+  ].join('\n');
+  const { events } = parseStraceLog(trace, {
+    exes: new Map([[103, '/proc/seeded']]),
+  });
+  const byTarget = (target: string) =>
+    events.find((event) => event.target === target);
+  assert.equal(events[0]?.exe, undefined);
+  assert.equal(byTarget('/sys/fs/selinux')?.exe, '/opt/vscode/code');
+  assert.equal(byTarget('/sys/fs/selinux')?.pid, 101);
+  // Sanitized like other paths, and attributed to the program before the exec.
+  assert.equal(byTarget('/etc/selinux/config')?.exe, '<path>/bin/helper');
+  // A failed execve leaves the executable unchanged.
+  assert.equal(byTarget('/proc/version_signature')?.exe, '/opt/vscode/code');
+  // An interrupted execve takes effect at its resumed half.
+  assert.equal(byTarget('/etc/gnutls/config')?.exe, '/usr/lib/gnutls-helper');
+  // Executables read from /proc at attach seed the tracker.
+  assert.equal(byTarget('/etc/other')?.exe, '/proc/seeded');
+});
+
+test('attribution never changes the allow/deny classification', () => {
+  const trace = [
+    '100 1700000000.1 execve("/opt/vscode/code", ["code"], 0x7ffd) = 0',
+    '100 1700000000.2 openat(AT_FDCWD, "/var/secret/data", O_RDONLY) = 3',
+  ].join('\n');
+  const plain = parseStraceLog(trace.split('\n').slice(1).join('\n'), {
+    allowed: ALLOWED,
+  });
+  const tracked = parseStraceLog(trace, { allowed: ALLOWED });
+  const flags = (
+    events: readonly { operation: string; unexpected?: boolean }[],
+  ) => events.filter((e) => e.operation === 'openat').map((e) => e.unexpected);
+  assert.deepEqual(flags(tracked.events), flags(plain.events));
+  assert.deepEqual(flags(tracked.events), [true]);
+});

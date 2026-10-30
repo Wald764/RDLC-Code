@@ -742,7 +742,22 @@ test('FR-003-state-coverage', async () => {
       await expect(reportAction(page, 'Open Report')).toBeVisible();
       // Loading resolves synchronously on the host: covered by tests/vscode/sidebar-loading.test.ts::FR-003-loading.
       await openFile(ctx, 'big.rdlc');
+      // Wait for the 2100-node report to be loaded and its editor to own
+      // focus before moving focus: a focus command that lands first is taken
+      // back by the opening editor and End then moves the editor caret instead
+      // of the (virtualized) tree.
+      const structure = pane(page, 'Report Structure');
+      await expect(structure.locator('.pane-header')).toContainText('big.rdlc');
+      await expect(
+        structure.getByRole('treeitem', { name: 'Textbox: T0' }),
+      ).toBeVisible();
+      await expect(
+        page.locator('.monaco-workbench .tab.active', { hasText: 'big.rdlc' }),
+      ).toBeVisible();
       await ctx.driver.command('Focus on Report Structure View');
+      await expect(structure.locator('[role="tree"]:focus-within')).toHaveCount(
+        1,
+      );
       await page.keyboard.press('End');
       await expect(
         page.getByRole('treeitem', {
@@ -854,15 +869,21 @@ test('FR-004-fallback', async () => {
       frame.getByRole('textbox', { name: 'Name', exact: true }),
     ).toHaveValue('Textbox1');
     await page.keyboard.press(`${MOD}+s`);
+    // Poll until the save settles on the complete document (source plus the
+    // inserted textbox): a bare "differs from source" can match a truncated
+    // mid-write read.
+    const insertedTextbox = /<Textbox Name="Textbox1">[\s\S]*?<\/Textbox>/;
     await expect
-      .poll(() => readFile(ctx.path('fallback.rdlc'), 'utf8'))
-      .not.toBe(source);
+      .poll(async () => {
+        const saved = await readFile(ctx.path('fallback.rdlc'), 'utf8');
+        return insertedTextbox.test(saved)
+          ? saved.replace(insertedTextbox, '')
+          : null;
+      })
+      .toBe(source);
     const dragged = await readFile(ctx.path('fallback.rdlc'), 'utf8');
-    const inserted = dragged.match(
-      /<Textbox Name="Textbox1">[\s\S]*?<\/Textbox>/,
-    )?.[0];
-    expect(inserted).toBeTruthy();
-    expect(dragged.replace(inserted!, '')).toBe(source);
+    expect(dragged).toMatch(insertedTextbox);
+    expect(dragged.replace(insertedTextbox, '')).toBe(source);
     await expect(page.locator('.part.sidebar')).toBeHidden();
     await frame.getByRole('button', { name: 'Undo', exact: true }).click();
     await page.keyboard.press(`${MOD}+s`);
