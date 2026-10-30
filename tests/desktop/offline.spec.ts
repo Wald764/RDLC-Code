@@ -430,6 +430,7 @@ function allowedAccess(driver: DesktopDriver, set: FixtureSet): AllowedAccess {
       process.env['XAUTHORITY'] ?? join(home, '.Xauthority'),
     ],
     exec: [install],
+    ...(process.env['PATH'] ? { path: process.env['PATH'] } : {}),
   };
 }
 
@@ -688,6 +689,12 @@ async function openFixture(driver: DesktopDriver, path: string): Promise<void> {
     .first()
     .click();
   await expect(driver.page.locator('.quick-input-widget:visible')).toBeHidden();
+  // `Open Designer` acts on the extension host's active text editor: wait until
+  // this file's tab is the active one, or the command can open the designer of
+  // the previously opened report instead.
+  await expect(
+    driver.page.locator('.part.editor .tabs-container .tab.active'),
+  ).toContainText(name);
 }
 
 async function ensureDesigner(driver: DesktopDriver): Promise<Frame> {
@@ -696,6 +703,46 @@ async function ensureDesigner(driver: DesktopDriver): Promise<Frame> {
     throw new Error(`${DESIGNER_COMMAND} is not registered in the window.`);
   await driver.command(DESIGNER_COMMAND);
   return driver.designerFrame();
+}
+
+const UNSUPPORTED_IMAGE =
+  '[data-kind="preserved"][aria-label="Image (unsupported)"]';
+
+/**
+ * The designer frame that shows the hostile fixture, identified by its content.
+ * Neither the frame `ensureDesigner` returns nor `designerFrame` can be trusted
+ * here: right after `Open Designer` the only frame can still be the retained
+ * one of a previously opened report, and once the new one exists both are
+ * present (the old one hidden), so the frames are scanned again on every read.
+ */
+async function hostileDesigner(driver: DesktopDriver): Promise<Frame> {
+  const { page } = driver;
+  let shown: Frame | null = null;
+  await expect
+    .poll(
+      async () => {
+        shown = null;
+        for (const frame of page.frames()) {
+          if (frame === page.mainFrame()) continue;
+          if (
+            await frame
+              .locator(UNSUPPORTED_IMAGE)
+              .isVisible()
+              .catch(() => false)
+          ) {
+            shown = frame;
+            return true;
+          }
+        }
+        return false;
+      },
+      {
+        message: 'a designer frame shows the hostile fixture Image',
+        timeout: 45_000,
+      },
+    )
+    .toBe(true);
+  return shown!;
 }
 
 async function focusView(
@@ -732,16 +779,35 @@ async function savedSource(
   await expect.poll(() => readText(path), { timeout: 45_000 }).toBe(expected);
 }
 
-/** Save a creation and return the new bytes, which must differ from the original. */
+/**
+ * Save a creation and return the new bytes. The created item is awaited first
+ * (the designer announces it once the edit is accepted), then the file is read
+ * until it holds the created block. Ctrl+S is repeated only while the editor
+ * is still dirty: saving a clean editor is a no-op.
+ */
 async function creationSaved(
   driver: DesktopDriver,
   path: string,
-  original: string,
+  created: { name: string; block: RegExp },
 ): Promise<string> {
-  await driver.page.keyboard.press(`${MOD}+s`);
+  const { page } = driver;
+  const frame = await driver.designerFrame();
+  await expect(
+    frame.locator('.feedback').getByText(`Created ${created.name}.`, {
+      exact: true,
+    }),
+  ).toHaveCount(1);
+  const dirty = page.locator('.monaco-workbench .tab.dirty');
   await expect
-    .poll(() => readText(path), { timeout: 45_000 })
-    .not.toBe(original);
+    .poll(
+      async () => {
+        if (created.block.test(await readText(path))) return true;
+        if ((await dirty.count()) > 0) await page.keyboard.press(`${MOD}+s`);
+        return false;
+      },
+      { timeout: 45_000 },
+    )
+    .toBe(true);
   return readText(path);
 }
 
@@ -822,11 +888,9 @@ interface JourneyContext {
 async function journeyInspection(env: JourneyContext): Promise<void> {
   const { driver } = env;
   await openFixture(driver, env.hostile);
-  const frame = await ensureDesigner(driver);
+  await ensureDesigner(driver);
   // The hostile fixture really loaded: its external image never decodes.
-  await expect(
-    frame.locator('[data-kind="preserved"][aria-label="Image (unsupported)"]'),
-  ).toBeVisible();
+  const frame = await hostileDesigner(driver);
   await focusView(driver, 'Report Structure');
   await expect(
     driver.page.getByRole('treeitem', { name: /CanaryImage/ }),
@@ -855,7 +919,10 @@ async function journeyTextbox(env: JourneyContext): Promise<void> {
   const { driver } = env;
   await filterComponents(driver, 'Textbox');
   await driver.page.getByRole('treeitem', { name: /^Textbox, Insert/ }).click();
-  const created = await creationSaved(driver, env.hostile, env.source);
+  const created = await creationSaved(driver, env.hostile, {
+    name: 'Textbox1',
+    block: /<Textbox Name="Textbox1">[\s\S]*?<\/Textbox>/,
+  });
   const block = created.match(
     /<Textbox Name="Textbox1">[\s\S]*?<\/Textbox>/,
   )?.[0];
@@ -875,7 +942,10 @@ async function journeyTable(env: JourneyContext): Promise<void> {
   const { driver } = env;
   await filterComponents(driver, 'tAbL');
   await driver.page.getByRole('treeitem', { name: /^Table, Insert/ }).click();
-  const created = await creationSaved(driver, env.hostile, env.source);
+  const created = await creationSaved(driver, env.hostile, {
+    name: 'Table1',
+    block: /<Tablix Name="Table1">[\s\S]*?<\/Tablix>/,
+  });
   const block = created.match(/<Tablix Name="Table1">[\s\S]*?<\/Tablix>/)?.[0];
   expect(block, 'the created Table1 XML block').toBeTruthy();
   expect(created.replace(block!, '')).toBe(env.source);
@@ -886,7 +956,10 @@ async function journeyDataset(env: JourneyContext): Promise<void> {
   const { driver } = env;
   await filterComponents(driver, 'Dataset');
   await driver.page.getByRole('treeitem', { name: /^Dataset, Insert/ }).click();
-  const created = await creationSaved(driver, env.hostile, env.source);
+  const created = await creationSaved(driver, env.hostile, {
+    name: 'DataSet1',
+    block: /<DataSet Name="DataSet1">[\s\S]*?<\/DataSet>/,
+  });
   const block = created.match(
     /<DataSet Name="DataSet1">[\s\S]*?<\/DataSet>/,
   )?.[0];
@@ -1553,16 +1626,12 @@ test('FR-014-no-fetch', async () => {
 
         // Hostile definitions inspected as bounded, inert text.
         await openFixture(driver, fixture.hostile.path);
-        const frame = await ensureDesigner(driver);
+        await ensureDesigner(driver);
         await focusView(driver, 'Report Data');
         await expect(
           driver.page.getByRole('treeitem', { name: /CanarySource/ }),
         ).toBeVisible();
-        await expect(
-          frame.locator(
-            '[data-kind="preserved"][aria-label="Image (unsupported)"]',
-          ),
-        ).toBeVisible();
+        const frame = await hostileDesigner(driver);
         expect(await readText(fixture.hostile.path)).toBe(
           fixture.hostile.source,
         );

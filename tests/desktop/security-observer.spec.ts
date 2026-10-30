@@ -360,6 +360,7 @@ function allowedAccess(
       process.env.XAUTHORITY ?? join(home, '.Xauthority'),
     ],
     exec: [install],
+    ...(process.env.PATH ? { path: process.env.PATH } : {}),
   };
 }
 

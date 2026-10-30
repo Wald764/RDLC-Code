@@ -550,6 +550,14 @@ test('US6.1-keyboard-journey', async () => {
         name: 'Textbox: Scroll0, Primary, 1 selected',
       }),
     ).toBeVisible();
+    // The label carries a transient "Pending · " part until the host settles:
+    // capture the anchor only once the focused row reports its settled label.
+    await expect
+      .poll(async () => {
+        const label = await activeTreeRow(page);
+        return label !== null && !label.includes('Pending ·');
+      }, 'the focused tree row label is settled')
+      .toBe(true);
     const menuAnchor = await activeTreeRow(page);
     await menuTo(page, /^RDLC Code: Properties$/);
     await expect(
@@ -562,8 +570,12 @@ test('US6.1-keyboard-journey', async () => {
     expect(await activeTreeRow(page)).toBe(menuAnchor);
 
     // 6. Shift+F10 -> Properties reaches the inspector with the keyboard.
+    // menuTo returns once the menu is visible and Properties is the focused item.
     await menuTo(page, /^RDLC Code: Properties$/);
     await page.keyboard.press('Enter');
+    await expect(
+      page.locator('.context-view').getByRole('menuitem').first(),
+    ).toBeHidden();
     const properties = frame.getByRole('button', {
       name: 'Properties',
       exact: true,
@@ -910,14 +922,35 @@ test('FR-027-keyboard', async () => {
       // order against each other, so the selection is awaited before the arrow.
       await selectAllInField(page, nameField);
       await page.keyboard.press('ArrowRight');
-      // Relayed into the webview asynchronously, like the clipboard keys.
+      // Relayed into the webview asynchronously, like the clipboard keys, and
+      // occasionally dropped (macOS, VS Code 1.142). While the selection is
+      // still the full range the press did not land: ArrowRight at the end of
+      // the text is idempotent, so it is pressed again.
+      let arrowPresses = 1;
+      let arrowPolls = 0;
       await expect
-        .poll(() =>
-          nameField.evaluate(
-            (element) => (element as HTMLInputElement).selectionStart,
-          ),
-        )
+        .poll(async () => {
+          const { start, end, length } = await nameField.evaluate((element) => {
+            const input = element as HTMLInputElement;
+            return {
+              start: input.selectionStart,
+              end: input.selectionEnd,
+              length: input.value.length,
+            };
+          });
+          // The first read may precede the relay of the first press.
+          if (arrowPolls++ > 0 && start === 0 && end === length) {
+            arrowPresses++;
+            await page.keyboard.press('ArrowRight');
+          }
+          return start;
+        })
         .toBe(accepted.length);
+      if (arrowPresses > 1)
+        test.info().annotations.push({
+          type: 'dropped-key',
+          description: `ArrowRight after select-all needed ${arrowPresses} presses`,
+        });
       expect(await frame.locator('.item.primary').boundingBox()).toEqual(
         itemBox,
       );

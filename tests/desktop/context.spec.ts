@@ -1211,6 +1211,23 @@ test('US5.3-two-views', async () => {
       if (await editorIs(page, 'designer')) break;
     }
     expect(await editorIs(page, 'designer')).toBe(true);
+    // The sidebar tree follows the active view asynchronously: selecting a row
+    // while it is still bound to view 2 would replace view 2's primary item.
+    // View 1 has no selection yet, so the tree is bound to it once the Front
+    // row (primary in view 2) no longer reports Primary.
+    await expect(
+      page.locator('.editor-group-container').nth(0),
+      'first editor group is the active group',
+    ).toHaveClass(/\bactive\b/);
+    await expect(
+      page.getByRole('treeitem', { name: /^Textbox: Front, Primary/ }),
+      'structure tree rebound to view 1',
+    ).toHaveCount(0);
+    // The positive signal: the same row is published without Primary.
+    await expect(
+      page.getByRole('treeitem', { name: 'Textbox: Front', exact: true }),
+      'Front row bound to view 1 is not primary',
+    ).toBeVisible();
     await selectRow(page, 'Behind');
     await expect
       .poll(() => primaryContents(page))
