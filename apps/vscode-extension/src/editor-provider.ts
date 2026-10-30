@@ -2,36 +2,10 @@ import * as vscode from 'vscode';
 import { readFileSync } from 'node:fs';
 import { DocumentSession } from './document-session.js';
 import { createNonce, renderWebviewHtml } from './webview.js';
+import { activateHistoryTarget } from './panel-activation.js';
 import type { SidebarHostContext } from './sidebar/host-context.js';
 
-/** A panel reveal alone is insufficient: verify the real active custom tab and URI. */
-export async function activateHistoryTarget(
-  document: vscode.TextDocument,
-  panel: vscode.WebviewPanel,
-  viewType = 'rdlcCode.designer',
-): Promise<boolean> {
-  if (
-    !panel.active ||
-    !panel.visible ||
-    panel.viewColumn === undefined ||
-    document.isClosed
-  )
-    return false;
-  panel.reveal(panel.viewColumn, false);
-  await vscode.commands.executeCommand(
-    'workbench.action.focusActiveEditorGroup',
-  );
-  const group = vscode.window.tabGroups.activeTabGroup;
-  const tab = group.activeTab;
-  return (
-    panel.active &&
-    panel.visible &&
-    group.viewColumn === panel.viewColumn &&
-    tab?.input instanceof vscode.TabInputCustom &&
-    tab.input.viewType === viewType &&
-    tab.input.uri.toString() === document.uri.toString()
-  );
-}
+export { activateHistoryTarget };
 
 /** Custom editor host: source-preserving sessions over the packaged Angular surface. */
 export class RdlcEditorProvider implements vscode.CustomTextEditorProvider {

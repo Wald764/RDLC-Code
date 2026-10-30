@@ -10,6 +10,7 @@ import {
   type ReportEvaluation,
 } from '../report-evaluation.js';
 import type { DocumentSession } from '../document-session.js';
+import { activateHistoryTarget } from '../panel-activation.js';
 import { WindowContextRegistry, type CapturedAction } from './context.js';
 
 type Intent<T> = T extends NativeActionMessage
@@ -32,6 +33,8 @@ export type NativeIntent = Intent<NativeActionMessage>;
 /** Connect actual host document/panel/tab events to the window's routing registry. */
 export class SidebarHostContext implements vscode.Disposable {
   private disposed = false;
+  /** Bumped by every native dispatch so a late outcome can tell the user moved on. */
+  private dispatchSequence = 0;
   private readonly panels = new Set<vscode.Disposable>();
   readonly registry = new WindowContextRegistry();
   private previousContext = JSON.stringify(this.registry.context());
@@ -121,7 +124,21 @@ export class SidebarHostContext implements vscode.Disposable {
       this.accept(document, accepted);
       this.publishContext();
     });
-    const state = panel.onDidChangeViewState(() => this.refreshFocus());
+    const state = panel.onDidChangeViewState(() => {
+      // The tab group is the source of truth: a panel's `active` flag can lag a
+      // group change (VS Code returns focus to the previous group right after a
+      // split), so a stale active=true must never outvote the active tab. It only
+      // short-circuits when it agrees with that tab, or when no tab is reported.
+      if (
+        panel.active &&
+        panel.visible &&
+        !document.isClosed &&
+        this.agreesWithActiveTab(panel, document)
+      ) {
+        this.registry.focusView(id);
+        this.publishContext();
+      } else this.refreshFocus();
+    });
     const selection = session.onSelection(() => this.changed.fire());
     this.refreshFocus();
     const registration = new vscode.Disposable(() => {
@@ -178,6 +195,7 @@ export class SidebarHostContext implements vscode.Disposable {
     if (!captured.ok)
       throw new Error(`Report action is unavailable: ${captured.reason}.`);
     let capture = captured.capture;
+    const sequence = ++this.dispatchSequence;
     this.actions.set(capture.requestId, {
       targets: capture.targetIds,
       ...(intent.action === 'create' ? { create: intent.create } : {}),
@@ -263,7 +281,15 @@ export class SidebarHostContext implements vscode.Disposable {
         async (message) => boundView.panel.webview.postMessage(message),
       );
       if (!delivered.delivered) throw new Error(delivered.reason);
-      return await result;
+      const outcome = await result;
+      // A native insert hands keyboard focus to the panel that accepted it so the
+      // designer can focus the new element's first inspector field (FR-017). The
+      // webview never gets OS focus while the native tree keeps it. Selection,
+      // clipboard and other actions leave focus where the user put it. The
+      // handoff never delays the outcome: settlement and announcement come first.
+      if (intent.action === 'create' && outcome.status === 'accepted')
+        this.focusDesigner(boundView, capture, sequence);
+      return outcome;
     } catch (error) {
       session?.cancelNativeAction(
         capture.requestId,
@@ -279,6 +305,34 @@ export class SidebarHostContext implements vscode.Disposable {
       this.registry.settle(capture);
       this.actions.delete(capture.requestId);
       if (!this.disposed) this.changed.fire();
+    }
+  }
+
+  /**
+   * Best effort and fire-and-forget: the accepted mutation stands even if the
+   * focus handoff fails. The outcome can arrive long after the dispatch, so focus
+   * moves only while the user is still on the captured view and document, no
+   * later native action was dispatched, and the window itself has focus.
+   */
+  private focusDesigner(
+    view: { document: vscode.TextDocument; panel: vscode.WebviewPanel },
+    capture: CapturedAction,
+    sequence: number,
+  ): void {
+    if (this.disposed || sequence !== this.dispatchSequence) return;
+    const context = this.registry.context();
+    if (
+      context.viewId !== capture.viewId ||
+      context.documentId !== capture.documentId ||
+      !vscode.window.state.focused
+    )
+      return;
+    try {
+      activateHistoryTarget(view.document, view.panel).catch(() => {
+        // Focus is a convenience; never report an applied creation as failed.
+      });
+    } catch {
+      // Same: a synchronous failure must not fail the accepted creation.
     }
   }
 
@@ -328,6 +382,22 @@ export class SidebarHostContext implements vscode.Disposable {
       );
   }
 
+  /** True when the active tab group shows this panel's document, or shows no tab. */
+  private agreesWithActiveTab(
+    panel: vscode.WebviewPanel,
+    document: vscode.TextDocument,
+  ): boolean {
+    const group = vscode.window.tabGroups.activeTabGroup;
+    const input = group.activeTab?.input;
+    if (!group.activeTab) return true;
+    return (
+      input instanceof vscode.TabInputCustom &&
+      input.viewType === 'rdlcCode.designer' &&
+      group.viewColumn === panel.viewColumn &&
+      input.uri.toString() === document.uri.toString()
+    );
+  }
+
   /** Resolve the active tab, including custom tabs with no active TextEditor. */
   refreshFocus(): void {
     if (this.disposed) return;
@@ -342,15 +412,17 @@ export class SidebarHostContext implements vscode.Disposable {
       input instanceof vscode.TabInputCustom &&
       input.viewType === 'rdlcCode.designer'
     ) {
-      const view = [...this.views.entries()].find(
+      // Tab events can precede the panel's own `active` flag, so the active tab's
+      // input and group identify the view; panel.active only breaks ties.
+      const column = vscode.window.tabGroups.activeTabGroup.viewColumn;
+      const candidates = [...this.views.entries()].filter(
         ([, entry]) =>
-          entry.panel.active &&
-          entry.panel.visible &&
           !entry.document.isClosed &&
-          entry.panel.viewColumn ===
-            vscode.window.tabGroups.activeTabGroup.viewColumn &&
+          entry.panel.viewColumn === column &&
           entry.document.uri.toString() === input.uri.toString(),
       );
+      const view =
+        candidates.find(([, entry]) => entry.panel.active) ?? candidates[0];
       if (view) this.registry.focusView(view[0]);
       else {
         // The public openWith tab may activate before its provider registers the panel.
