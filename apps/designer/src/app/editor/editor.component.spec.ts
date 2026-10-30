@@ -2617,7 +2617,7 @@ describe('focusProperties retries', () => {
     expect(focus.mock.calls.length).toBe(before);
   });
 
-  it('stops retrying when the window loses focus to the host', async () => {
+  it('stops retrying while the window is blurred', async () => {
     const m = await mountedWithLateField();
     const late = m.field('a', true);
     const focus = vi.spyOn(late, 'focus');
@@ -2627,9 +2627,436 @@ describe('focusProperties retries', () => {
     const before = focus.mock.calls.length;
     window.dispatchEvent(new Event('blur'));
     late.disabled = false;
-    vi.advanceTimersByTime(2_000);
+    vi.advanceTimersByTime(1_900);
     expect(focus.mock.calls.length).toBe(before);
     expect(document.activeElement).not.toBe(late);
+  });
+
+  it('suspends on window blur and resumes on window focus within the handoff window', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    window.dispatchEvent(new Event('blur'));
+    late.disabled = false;
+    m.hasFocus.mockReturnValue(false);
+    vi.advanceTimersByTime(400);
+    expect(document.activeElement).not.toBe(late);
+    m.hasFocus.mockReturnValue(true);
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).toBe(late);
+  });
+
+  it('refocuses the target when the host blur and refocus dropped it after success', async () => {
+    const m = await mountedWithLateField();
+    const field = m.field('a', false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    expect(document.activeElement).toBe(field);
+    // The host handoff blurs the webview and its inner element, then refocuses.
+    window.dispatchEvent(new Event('blur'));
+    field.blur();
+    vi.advanceTimersByTime(100);
+    expect(document.activeElement).not.toBe(field);
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('does not resume once the whole handoff window has elapsed', async () => {
+    const m = await mountedWithLateField();
+    const field = m.field('a', false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    window.dispatchEvent(new Event('blur'));
+    field.blur();
+    vi.advanceTimersByTime(2_500);
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  /** Settle a request on `a`, then run the host blur at `blurAfter` and focus at `focusAfter` ms. */
+  async function handoff(blurAfter: number, focusAfter: number) {
+    const m = await mountedWithLateField();
+    const field = m.field('a', false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    expect(document.activeElement).toBe(field);
+    vi.advanceTimersByTime(blurAfter);
+    window.dispatchEvent(new Event('blur'));
+    field.blur();
+    vi.advanceTimersByTime(focusAfter);
+    window.dispatchEvent(new Event('focus'));
+    return { m, field };
+  }
+
+  it('refocuses on the measured handoff trace (finish, blur +1 ms, focus +40 ms)', async () => {
+    const { field } = await handoff(1, 40);
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('does not refocus when the window returns more than 500 ms after the blur', async () => {
+    const { field } = await handoff(1, 501);
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  it('refocuses when the window returns exactly 500 ms after the blur', async () => {
+    const { field } = await handoff(1, 500);
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('does not refocus when the blur comes more than 300 ms after the request settled', async () => {
+    const { field } = await handoff(301, 40);
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  it('honours a second blur and focus pair in the same burst, close to the last settle', async () => {
+    const { field } = await handoff(1, 40);
+    expect(document.activeElement).toBe(field);
+    vi.advanceTimersByTime(10);
+    window.dispatchEvent(new Event('blur'));
+    field.blur();
+    vi.advanceTimersByTime(40);
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('does not refocus on a second blur and focus cycle more than 300 ms after the last settle', async () => {
+    const { field } = await handoff(1, 40);
+    expect(document.activeElement).toBe(field);
+    vi.advanceTimersByTime(301);
+    window.dispatchEvent(new Event('blur'));
+    field.blur();
+    vi.advanceTimersByTime(40);
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  it('refocuses on the measured Linux trace (unfocused arm, first window focus, then blur +8 ms and focus +20 ms)', async () => {
+    const m = await mountedWithLateField();
+    const field = m.field('a', false);
+    const focus = vi.spyOn(field, 'focus');
+    // The first attempt runs while the document is unfocused and does not take.
+    focus.mockImplementationOnce(() => undefined);
+    m.hasFocus.mockReturnValue(false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    vi.advanceTimersByTime(17);
+    m.fixture.detectChanges();
+    expect(document.activeElement).not.toBe(field);
+    // Host reveal: the document gains focus and the field settles.
+    m.hasFocus.mockReturnValue(true);
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).toBe(field);
+    // focusActiveEditorGroup: blur right after the settle, refocus ~20 ms later.
+    vi.advanceTimersByTime(8);
+    m.hasFocus.mockReturnValue(false);
+    window.dispatchEvent(new Event('blur'));
+    field.blur();
+    vi.advanceTimersByTime(20);
+    m.hasFocus.mockReturnValue(true);
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('does not refocus on a second window focus without a new blur', async () => {
+    const { field } = await handoff(1, 40);
+    field.blur();
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  it('does not resume when a second blur arrives before the focus', async () => {
+    const m = await mountedWithLateField();
+    const field = m.field('a', false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    window.dispatchEvent(new Event('blur'));
+    field.blur();
+    vi.advanceTimersByTime(10);
+    window.dispatchEvent(new Event('blur'));
+    vi.advanceTimersByTime(10);
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  it('ignores a window focus with no prior blur', async () => {
+    const m = await mountedWithLateField();
+    const field = m.field('a', false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    field.blur();
+    vi.advanceTimersByTime(10);
+    const focus = vi.spyOn(field, 'focus');
+    window.dispatchEvent(new Event('focus'));
+    expect(focus).not.toHaveBeenCalled();
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  it('never calls focus() on a window focus with no prior blur while the document never had focus', async () => {
+    const m = await mountedWithLateField();
+    const field = m.field('a', true);
+    const focus = vi.spyOn(field, 'focus');
+    m.hasFocus.mockReturnValue(false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    field.disabled = false;
+    const before = focus.mock.calls.length;
+    window.dispatchEvent(new Event('focus'));
+    expect(focus.mock.calls.length).toBe(before);
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  /** A never-focused document whose retry budget ran out before the host focused it. */
+  async function lateHostFocus() {
+    const m = await mountedWithLateField();
+    const field = m.field('a', true);
+    m.hasFocus.mockReturnValue(false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(1_500);
+    field.disabled = false;
+    m.hasFocus.mockReturnValue(true);
+    return { field };
+  }
+
+  it('focuses the target on the first window focus after the budget ran out on a never-focused document', async () => {
+    const { field } = await lateHostFocus();
+    expect(document.activeElement).not.toBe(field);
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('does not focus a never-focused document whose window focus comes after the deadline', async () => {
+    const { field } = await lateHostFocus();
+    vi.advanceTimersByTime(600);
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  it('does not focus a never-focused document after a user pointerdown', async () => {
+    const { field } = await lateHostFocus();
+    document.dispatchEvent(new Event('pointerdown'));
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  it('survives a blur and focus before the first render and then focuses', async () => {
+    const m = await mountedWithLateField();
+    const field = m.field('a', false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    window.dispatchEvent(new Event('blur'));
+    vi.advanceTimersByTime(40);
+    window.dispatchEvent(new Event('focus'));
+    m.fixture.detectChanges();
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('does not focus while a blur before the first render is still pending', async () => {
+    const m = await mountedWithLateField();
+    const field = m.field('a', false);
+    const focus = vi.spyOn(field, 'focus');
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    window.dispatchEvent(new Event('blur'));
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(300);
+    expect(focus).not.toHaveBeenCalled();
+  });
+
+  it('does not resume after a user keydown', async () => {
+    const m = await mountedWithLateField();
+    const field = m.field('a', false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    expect(document.activeElement).toBe(field);
+    window.dispatchEvent(new Event('blur'));
+    field.blur();
+    document.dispatchEvent(new Event('keydown'));
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  it('does not resume after a user pointerdown', async () => {
+    const m = await mountedWithLateField();
+    const field = m.field('a', false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    expect(document.activeElement).toBe(field);
+    window.dispatchEvent(new Event('blur'));
+    field.blur();
+    document.dispatchEvent(new Event('pointerdown'));
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  it('cancels in the capture phase even when a bubbling handler stops propagation', async () => {
+    const m = await mountedWithLateField();
+    for (const type of ['keydown', 'pointerdown']) {
+      const field = m.field(type, false);
+      const trap = document.createElement('div');
+      trap.addEventListener(type, (event) => event.stopPropagation());
+      m.element.appendChild(trap);
+      m.component.focusProperties(`.inspector input[data-late="${type}"]`);
+      m.fixture.detectChanges();
+      expect(document.activeElement).toBe(field);
+      window.dispatchEvent(new Event('blur'));
+      field.blur();
+      trap.dispatchEvent(new Event(type, { bubbles: true }));
+      window.dispatchEvent(new Event('focus'));
+      expect(document.activeElement).not.toBe(field);
+    }
+  });
+
+  it('does not steal focus the user moved elsewhere during the retries', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    const outside = document.createElement('button');
+    m.element.appendChild(outside);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    outside.focus();
+    late.disabled = false;
+    vi.advanceTimersByTime(500);
+    expect(document.activeElement).toBe(outside);
+  });
+
+  it('does not steal focus the user moved to another inspector field', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    const other = m.field('b', false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    other.focus();
+    late.disabled = false;
+    vi.advanceTimersByTime(500);
+    expect(document.activeElement).toBe(other);
+  });
+
+  it('takes the button or summary fallback on the first attempt when no input is enabled', async () => {
+    const m = await mountedWithLateField();
+    // Disable every input in the inspector so only the lower parts can match.
+    const inspector = m.element.querySelector('.inspector')!;
+    for (const input of inspector.querySelectorAll('input'))
+      input.disabled = true;
+    const button = inspector.querySelector<HTMLElement>('button')!;
+    m.component.focusProperties();
+    m.fixture.detectChanges();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('stops retrying when the component is destroyed', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    const focus = vi.spyOn(late, 'focus');
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    const before = focus.mock.calls.length;
+    m.fixture.destroy();
+    late.disabled = false;
+    vi.advanceTimersByTime(2_000);
+    expect(focus.mock.calls.length).toBe(before);
+  });
+
+  it('stops retrying while the window is blurred', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    const focus = vi.spyOn(late, 'focus');
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    const before = focus.mock.calls.length;
+    window.dispatchEvent(new Event('blur'));
+    late.disabled = false;
+    vi.advanceTimersByTime(1_900);
+    expect(focus.mock.calls.length).toBe(before);
+    expect(document.activeElement).not.toBe(late);
+  });
+
+  it('suspends on window blur and resumes on window focus within the handoff window', async () => {
+    const m = await mountedWithLateField();
+    const late = m.field('a', true);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    window.dispatchEvent(new Event('blur'));
+    late.disabled = false;
+    m.hasFocus.mockReturnValue(false);
+    vi.advanceTimersByTime(400);
+    expect(document.activeElement).not.toBe(late);
+    m.hasFocus.mockReturnValue(true);
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).toBe(late);
+  });
+
+  it('refocuses the target when the host blur and refocus dropped it after success', async () => {
+    const m = await mountedWithLateField();
+    const field = m.field('a', false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    expect(document.activeElement).toBe(field);
+    // The host handoff blurs the webview and its inner element, then refocuses.
+    window.dispatchEvent(new Event('blur'));
+    field.blur();
+    vi.advanceTimersByTime(100);
+    expect(document.activeElement).not.toBe(field);
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('does not resume after the handoff window has elapsed', async () => {
+    const m = await mountedWithLateField();
+    const field = m.field('a', false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    window.dispatchEvent(new Event('blur'));
+    field.blur();
+    vi.advanceTimersByTime(2_500);
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  it('does not resume after a user keydown or pointerdown', async () => {
+    const m = await mountedWithLateField();
+    for (const type of ['keydown', 'pointerdown']) {
+      const field = m.field(type, false);
+      m.component.focusProperties(`.inspector input[data-late="${type}"]`);
+      m.fixture.detectChanges();
+      expect(document.activeElement).toBe(field);
+      window.dispatchEvent(new Event('blur'));
+      field.blur();
+      document.dispatchEvent(new Event(type));
+      window.dispatchEvent(new Event('focus'));
+      expect(document.activeElement).not.toBe(field);
+    }
+  });
+
+  it('does not steal focus the user moved elsewhere when the window refocuses', async () => {
+    const m = await mountedWithLateField();
+    const field = m.field('a', false);
+    const outside = document.createElement('button');
+    m.element.appendChild(outside);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    window.dispatchEvent(new Event('blur'));
+    outside.focus();
+    window.dispatchEvent(new Event('focus'));
+    expect(document.activeElement).toBe(outside);
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  it('never calls focus() on window focus while the document lacks focus', async () => {
+    const m = await mountedWithLateField();
+    const field = m.field('a', false);
+    m.component.focusProperties('.inspector input[data-late="a"]');
+    m.fixture.detectChanges();
+    const focus = vi.spyOn(field, 'focus');
+    window.dispatchEvent(new Event('blur'));
+    field.blur();
+    m.hasFocus.mockReturnValue(false);
+    window.dispatchEvent(new Event('focus'));
+    expect(focus).not.toHaveBeenCalled();
   });
 
   it('does not call focus() once the document has lost focus', async () => {
@@ -2738,6 +3165,8 @@ describe('focusProperties retries', () => {
     vi.advanceTimersByTime(2_000);
     expect(count(add, 'blur')).toBe(1);
     expect(count(remove, 'blur')).toBe(1);
+    expect(count(add, 'focus')).toBe(1);
+    expect(count(remove, 'focus')).toBe(1);
     expect(count(docRemove, 'keydown')).toBe(1);
     expect(count(docRemove, 'pointerdown')).toBe(1);
     // Cancel by a newer call, then destroy: every registration is balanced.
@@ -2748,9 +3177,11 @@ describe('focusProperties retries', () => {
     m.fixture.destroy();
     const handlers = (spy: typeof add, type: string) =>
       spy.mock.calls.filter(([t]) => t === type).map(([, h, o]) => [h, o]);
-    expect(handlers(remove, 'blur')).toEqual(
-      expect.arrayContaining(handlers(add, 'blur')),
-    );
+    for (const type of ['blur', 'focus']) {
+      expect(handlers(remove, type)).toEqual(
+        expect.arrayContaining(handlers(add, type)),
+      );
+    }
     for (const type of ['keydown', 'pointerdown']) {
       expect(handlers(docAdd, type).length).toBe(3);
       expect(handlers(docRemove, type)).toEqual(handlers(docAdd, type));

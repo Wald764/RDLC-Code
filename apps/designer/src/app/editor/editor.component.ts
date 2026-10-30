@@ -76,6 +76,13 @@ import {
 
 type DraftControl = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 type Origins = readonly { id: string; bounds: Bounds }[];
+/** How long a requested field focus stays pending (and resumable after a host blur). */
+const FOCUS_HANDOFF_MS = 2_000;
+/** A host handoff blurs the webview right after the field focus settles (measured: ~1-30 ms). */
+const FOCUS_HANDOFF_BLUR_MS = 300;
+/** ...and hands focus back shortly after that blur (measured: ~40 ms); later is the user. */
+const FOCUS_HANDOFF_RETURN_MS = 500;
+
 const arrows: Readonly<Record<string, readonly [number, number]>> = {
   ArrowLeft: [-1, 0],
   ArrowRight: [1, 0],
@@ -1374,6 +1381,17 @@ export class EditorComponent {
   /**
    * Focus the first usable match of the selector list, in priority order (the
    * creation selector prefers the Name field over any other input).
+   *
+   * The request stays pending for `FOCUS_HANDOFF_MS`. It recognises host
+   * handoffs (measured: the first window focus, then a blur ~10-30 ms after the
+   * field settles and a refocus ~20-60 ms later): a window blur within
+   * `FOCUS_HANDOFF_BLUR_MS` of the request arming or settling suspends it, and
+   * the first window focus within `FOCUS_HANDOFF_RETURN_MS` of that blur
+   * resumes it, re-applying the field focus the handoff dropped. Every resume
+   * settles again, so a burst of blur/focus pairs each close to the last
+   * settle is honoured. A blur or focus outside those windows, a user keydown
+   * or pointerdown, a newer call, the deadline or destroy ends it; focus() is
+   * never called while the document lacks focus after it had it.
    */
   focusProperties(
     selector = '.inspector input, .inspector button, .inspector summary',
@@ -1382,18 +1400,14 @@ export class EditorComponent {
     this.revealPanel('right');
     const run = {};
     this.focusRun = run;
-    // The webview losing focus to the workbench (e.g. the command palette) or
-    // any user input ends the loop; none of our own focus() calls emit these.
+    const deadline = Date.now() + FOCUS_HANDOFF_MS;
+    let started = false;
+    let suspended = false;
+    const live = () => this.focusRun === run;
+    // Any user input ends the request; none of our own focus() calls emit these.
     const stop = (event: Event): void => {
       if ((event as KeyboardEvent).repeat) return;
-      if (this.focusRun === run) this.cancelFocusProperties();
-    };
-    const events = ['keydown', 'pointerdown'] as const;
-    window.addEventListener('blur', stop);
-    for (const type of events) document.addEventListener(type, stop, true);
-    this.focusUnlisten = () => {
-      window.removeEventListener('blur', stop);
-      for (const type of events) document.removeEventListener(type, stop, true);
+      if (live()) this.cancelFocusProperties();
     };
     const root = this.element.nativeElement;
     const parts = selector.split(',').map((part) => part.trim());
@@ -1401,6 +1415,14 @@ export class EditorComponent {
     let hadFocus = document.hasFocus();
     // What our own focus() calls last left active; anything else is the user.
     let owned = origin;
+    // Arm time, moved to the settle time once the request rests.
+    let anchor = Date.now();
+    // When the pending handoff blur arrived; undefined while none is pending.
+    let blurredAt: number | undefined;
+    // The late first focus of a never-focused document has been used up; it is
+    // independent of the handoff blur, which can follow it within milliseconds.
+    let firstSpent = false;
+    let remaining = 20;
     const usable = (element: HTMLElement) => !element.matches(':disabled');
     // The first attempt always focuses the best match available (falling back
     // to any input or match) so a late-arriving preferred field cannot leave
@@ -1425,48 +1447,108 @@ export class EditorComponent {
           all.find((element) => element.matches('input:not(:disabled)')) ??
           all[0];
       }
-      target?.focus();
-      owned = document.activeElement;
+      if (target) {
+        target.focus();
+        if (document.activeElement === target) owned = target;
+      }
       const now = document.activeElement;
       return !!now && !!groups[0]?.some((e) => e === now && usable(e));
     };
-    const finish = (): void => {
-      if (this.focusRun === run) this.cancelFocusProperties();
+    // The target holds focus (or the budget is spent): stop polling but stay
+    // armed, because the host can still blur and refocus the webview.
+    const rest = (): void => {
+      if (!live()) return;
+      anchor = Date.now();
+      clearTimeout(this.focusTimer);
+      this.focusTimer = undefined;
+    };
+    // The inspector can still be rebuilding for the new selection or be
+    // disabled by the edit that is settling, and a disabled or detached
+    // field ignores focus(): retry on the next frames until it sticks.
+    const retry = (): void => {
+      if (!live() || suspended) return;
+      // Focus left the webview for the host: do not pull it back until it
+      // returns. If it never had focus (late iframe focus), wait for it within
+      // the budget, but never focus() while the document is unfocused.
+      const focused = document.hasFocus();
+      if (focused) hadFocus = true;
+      else if (hadFocus) return rest();
+      const active = document.activeElement;
+      // Focus moved elsewhere on purpose: never steal it back.
+      if (
+        active &&
+        active !== document.body &&
+        active !== origin &&
+        active !== owned
+      )
+        return this.cancelFocusProperties();
+      const last = --remaining <= 0;
+      if (!focused) {
+        if (last) return rest();
+        this.focusTimer = setTimeout(retry, 50);
+        return;
+      }
+      if (attempt(false) || last) return rest();
+      this.focusTimer = setTimeout(retry, 50);
+    };
+    // Only the first blur close to the request is a host handoff; anything
+    // else (a second blur, a late one) is the user and ends the request.
+    const suspend = (): void => {
+      if (!live()) return;
+      const now = Date.now();
+      if (blurredAt !== undefined || now - anchor > FOCUS_HANDOFF_BLUR_MS)
+        return this.cancelFocusProperties();
+      blurredAt = now;
+      suspended = true;
+      clearTimeout(this.focusTimer);
+      this.focusTimer = undefined;
+    };
+    const resume = (): void => {
+      if (!live()) return;
+      if (blurredAt === undefined) {
+        // No handoff blur. Only the first focus of a document that never had it
+        // during this request counts (the host's reveal landed after the retry
+        // budget ran out, e.g. on a slow machine); anything else is the user.
+        if (hadFocus || firstSpent || !started || Date.now() >= deadline)
+          return;
+        firstSpent = true;
+        hadFocus = true;
+        remaining = 20;
+        clearTimeout(this.focusTimer);
+        this.focusTimer = undefined;
+        return retry();
+      }
+      const late = Date.now() - blurredAt > FOCUS_HANDOFF_RETURN_MS;
+      blurredAt = undefined;
+      if (late) return this.cancelFocusProperties();
+      suspended = false;
+      // Before the first attempt the render callback still owns the start.
+      if (!started || Date.now() >= deadline) return;
+      hadFocus = true;
+      remaining = 20;
+      clearTimeout(this.focusTimer);
+      this.focusTimer = undefined;
+      retry();
+    };
+    const events = ['keydown', 'pointerdown'] as const;
+    window.addEventListener('blur', suspend);
+    window.addEventListener('focus', resume);
+    for (const type of events) document.addEventListener(type, stop, true);
+    const deadlineTimer = setTimeout(() => {
+      if (live()) this.cancelFocusProperties();
+    }, FOCUS_HANDOFF_MS);
+    this.focusUnlisten = () => {
+      clearTimeout(deadlineTimer);
+      window.removeEventListener('blur', suspend);
+      window.removeEventListener('focus', resume);
+      for (const type of events) document.removeEventListener(type, stop, true);
     };
     afterNextRender(
       () => {
-        if (this.focusRun !== run) return;
-        if (attempt(true)) return finish();
-        // The inspector can still be rebuilding for the new selection or be
-        // disabled by the edit that is settling, and a disabled or detached
-        // field ignores focus(): retry on the next frames until it sticks.
-        let remaining = 20;
-        const retry = (): void => {
-          if (this.focusRun !== run) return;
-          // Focus left the webview for the host: do not pull it back. If it
-          // never had focus (late iframe focus), wait for it within the
-          // budget, but never focus() while the document is unfocused.
-          const focused = document.hasFocus();
-          if (focused) hadFocus = true;
-          else if (hadFocus) return finish();
-          const active = document.activeElement;
-          // Focus moved elsewhere on purpose: never steal it back.
-          if (
-            active &&
-            active !== document.body &&
-            active !== origin &&
-            active !== owned
-          )
-            return finish();
-          const last = --remaining <= 0;
-          if (!focused) {
-            if (last) return finish();
-            this.focusTimer = setTimeout(retry, 50);
-            return;
-          }
-          if (attempt(false) || last) return finish();
-          this.focusTimer = setTimeout(retry, 50);
-        };
+        if (!live()) return;
+        started = true;
+        if (suspended) return;
+        if (attempt(true)) return rest();
         this.focusTimer = setTimeout(retry, 50);
       },
       { injector: this.injector },
