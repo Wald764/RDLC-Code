@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import type { BrowserContext, Request } from 'playwright';
+import { tmpdir } from 'node:os';
 import {
   assertCompleteObservation,
   createSecurityObserver,
@@ -1715,6 +1716,75 @@ test('user-level agent folders are probed by metadata only and argv.json is read
   ];
   for (const [text, expected] of cases)
     assert.equal(classify(text), expected, text);
+});
+
+test('extension-tip probes are metadata-only directly inside an observed PATH entry', () => {
+  const withPath = { ...ALLOWED, path: '/usr/bin::relative/bin:/opt/tools/' };
+  const cases: [string, boolean][] = [
+    [
+      'statx(AT_FDCWD</>, "/usr/bin/docker", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)',
+      false,
+    ],
+    ['stat("/usr/bin/subl", 0x7ffd) = -1 ENOENT (x)', false],
+    ['lstat("/usr/bin/mvn", 0x7ffd) = -1 ENOENT (x)', false],
+    [
+      'newfstatat(AT_FDCWD</>, "/usr/bin/gradle", 0x7ffd, 0) = -1 ENOENT (x)',
+      false,
+    ],
+    ['access("/usr/bin/eclipse", X_OK) = -1 ENOENT (x)', false],
+    ['faccessat(AT_FDCWD</>, "/usr/bin/docker", X_OK) = -1 ENOENT (x)', false],
+    ['stat("/opt/tools/docker", 0x7ffd) = -1 ENOENT (x)', false],
+    // Anything beyond a metadata call stays unexpected.
+    ['openat(AT_FDCWD</>, "/usr/bin/docker", O_RDONLY) = 3', true],
+    ['execve("/usr/bin/docker", ["docker"], 0x7ffd) = 0', true],
+    ['readlink("/usr/bin/docker", 0x7ffd, 64) = -1 ENOENT (x)', true],
+    // Only the direct children of a PATH entry.
+    [
+      'statx(AT_FDCWD</>, "/usr/bin/sub/x", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)',
+      true,
+    ],
+    ['statx(AT_FDCWD</>, "/usr/bin", 0, STATX_ALL, 0x7ffd) = 0', true],
+    [
+      'statx(AT_FDCWD</>, "/usr/local/bin/docker", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)',
+      true,
+    ],
+    [
+      'statx(AT_FDCWD</>, "/srv/relative/bin/docker", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)',
+      true,
+    ],
+    [
+      'statx(AT_FDCWD</>, "/docker", 0, STATX_ALL, 0x7ffd) = -1 ENOENT (x)',
+      true,
+    ],
+  ];
+  for (const [text, expected] of cases)
+    assert.equal(classify(text, withPath), expected, text);
+  // Without a PATH there is no allowance at all.
+  assert.equal(
+    classify('stat("/usr/bin/docker", 0x7ffd) = -1 ENOENT (x)'),
+    true,
+  );
+});
+
+test('PATH entries that could hold user data never enable the extension-tip allowance', () => {
+  const entries = [
+    '/',
+    HOME,
+    tmpdir(),
+    '/work/fixture',
+    '/work/profile/bin',
+    '/opt/vscode/bin',
+    '/work',
+    '/usr/bin',
+  ];
+  const withPath = { ...ALLOWED, path: entries.join(':') };
+  const probe = (path: string) =>
+    classify(`stat("${path}", 0x7ffd) = -1 ENOENT (x)`, withPath);
+  assert.equal(probe('/docker'), true, 'the root directory');
+  assert.equal(probe(`${HOME}/docker`), true, 'the home directory');
+  assert.equal(probe(`${tmpdir()}/docker`), true, 'the OS tmp directory');
+  assert.equal(probe('/work/docker'), true, 'an ancestor of a root');
+  assert.equal(probe('/usr/bin/docker'), false, 'a plain system entry');
 });
 
 test('dynamic-loader, VS Code CLI and home chdir probes are narrow and read-only', () => {

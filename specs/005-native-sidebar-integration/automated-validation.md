@@ -112,6 +112,14 @@ The host observer (strace process-tree capture plus iptables owner-uid blocking)
 
 On Linux they remain mandatory: an unsupported or incomplete capture is a failure. `tests/desktop/run-tests.ts` accepts these skips only off Linux and only for these titles; any other skip still invalidates the run. In `--probe` mode the `securityObserver` capability is recorded as `unsupported` (never `passed`) off Linux and only that capability may be unsupported. AT-09 (offline, trust, host-observed network attempts) is therefore not validated on Windows or macOS.
 
+### Metadata-only host observer allowances
+
+The Linux host observer (`tests/desktop/security-observer.ts`) classifies every file syscall of the VS Code process tree against an allowlist. Besides the writable and read-only roots, a few benign host probes are allowed by metadata calls only; opening, reading, writing, watching or executing the same paths stays unexpected, and the credential denylist is applied first.
+
+| Probe | Allowed |
+| --- | --- |
+| Executable-based extension tips (shared process `ExtensionTipsService` looking for `docker`, `mvn`, `gradle`, `subl`, `eclipse`...) | `stat`, `lstat`, `newfstatat`, `statx`, `access`, `faccessat`, `faccessat2` on a path whose parent directory is exactly one of the absolute entries of the `PATH` the observed VS Code was launched with (`AllowedAccess.path`). Empty and relative entries are ignored, and files in subdirectories of an entry do not match. Entries that could stand for user data are also dropped: `/`, the home directory, the OS temporary directory, and any entry equal to, an ancestor of, or inside an allowed root (profile, workspace, fixtures, extensions). `extensions.ignoreRecommendations` does not stop these probes. |
+
 ### Other disabled or changed cases
 
 | Case | Platform | Decision |

@@ -71,6 +71,12 @@ export interface AllowedAccess {
   readonly exec: readonly string[];
   /** Home directory used by the secret-path denylist; defaults to the runner's. */
   readonly home?: string;
+  /**
+   * The PATH the observed VS Code process was launched with. Metadata-only
+   * probes of a file directly inside one of its absolute entries are allowed
+   * (the executable-based extension tips look for docker, mvn, subl...).
+   */
+  readonly path?: string;
 }
 
 export interface NativeCaptureControls {
@@ -1133,6 +1139,48 @@ const HOME_CUSTOMIZATION_DIRS = [
   '.vscode-cli',
   '.vscode/cli',
 ];
+/**
+ * The metadata calls the executable-based extension tips (shared process
+ * ExtensionTipsService) make to look for tools on PATH. Narrower than
+ * METADATA_CALLS: no readlink, statfs or open, and never an exec.
+ */
+const PATH_PROBE_CALLS = new Set([
+  'stat',
+  'lstat',
+  'newfstatat',
+  'statx',
+  'access',
+  'faccessat',
+  'faccessat2',
+]);
+/**
+ * True when `path` sits directly inside one of the usable entries of the PATH
+ * the observed process was launched with. Only absolute, normalized entries
+ * count, a file in a subdirectory of an entry does not match, and an entry
+ * that could stand for the user's own data is dropped: `/`, the home
+ * directory, the OS temporary directory, and any entry equal to, an ancestor
+ * of or inside an allowed root (profile, workspace, fixtures, extensions...).
+ */
+function isDirectlyOnSearchPath(path: string, context: ClassifyContext) {
+  const search = context.allowed.path;
+  if (!search) return false;
+  const { open, readOnly = [], home: configuredHome } = context.allowed;
+  const roots = [...open, ...readOnly];
+  const home = normalPath((configuredHome ?? homedir()).replace(/\\/g, '/'));
+  const excluded = [home, normalPath(tmpdir().replace(/\\/g, '/'))];
+  const parent = posix.dirname(normalPath(path));
+  return search.split(':').some((raw) => {
+    if (!posix.isAbsolute(raw)) return false;
+    const entry = normalPath(raw);
+    return (
+      entry === parent &&
+      entry !== '/' &&
+      !excluded.includes(entry) &&
+      !underRoot(entry, roots) &&
+      !isAncestorOf(entry, roots)
+    );
+  });
+}
 const CUSTOMIZATION_SECRET_NAME = /cred|secret|token|password|\.key$|\.pem$/i;
 /** Home files VS Code reads for its runtime arguments (read-only, no secrets). */
 const HOME_RUNTIME_FILES = ['.vscode/argv.json'];
@@ -1161,6 +1209,11 @@ function isAllowedProbe(
   if (operation === 'chdir' && path === home) return true;
   const metadata = METADATA_CALLS.has(operation);
   if (metadata) {
+    if (
+      PATH_PROBE_CALLS.has(operation) &&
+      isDirectlyOnSearchPath(path, context)
+    )
+      return true;
     if (
       HOME_CUSTOMIZATION_DIRS.some(
         (dir) =>
