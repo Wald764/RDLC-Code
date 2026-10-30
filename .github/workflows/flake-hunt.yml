@@ -1,13 +1,17 @@
 name: Desktop flake hunt
 
-# Manual measurement of per-test instability across the Desktop matrix of ci.yml.
+# Measurement of per-test instability across the Desktop matrix of ci.yml.
 # Every suite is repeated `repeat` times with retries disabled; failures are
 # recorded, never retried or hidden, and the final report gives each test's
 # failure rate per environment. One matrix job runs one Playwright invocation
 # (probe, functional or installed journeys), so its 290 minute global timeout
-# always leaves the job time to upload. Test failures never fail a job; harness
+# always leaves the job time to upload.
+# Manual runs (workflow_dispatch): test failures never fail a job; harness
 # errors, truncated runs and missing results fail the job or the aggregate.
-# ci.yml is untouched.
+# Called by ci.yml (workflow_call) with `strict: true` as the stability gate for
+# changed desktop specs: `specs` restricts the matrix to the changed spec files
+# and any test failure, skip outside the documented platform skips, or missing
+# or incomplete measurement fails the job and the aggregate.
 # See docs/validation/github-actions.md.
 on:
   workflow_dispatch:
@@ -24,68 +28,81 @@ on:
         description: Comma-separated runners to use (ubuntu-24.04, windows-2022, macos-14); empty runs all
         type: string
         default: ''
+      specs:
+        description: Comma-separated spec file names to restrict the run to (for example data.spec.ts); empty runs every spec
+        type: string
+        default: ''
+  workflow_call:
+    inputs:
+      repeat:
+        description: Repeats of every test (integer from 1 to 10)
+        type: number
+        default: 5
+      groups:
+        description: Comma-separated groups to run (core, authoring, context); empty runs all
+        type: string
+        default: ''
+      os:
+        description: Comma-separated runners to use (ubuntu-24.04, windows-2022, macos-14); empty runs all
+        type: string
+        default: ''
+      specs:
+        description: Comma-separated spec file names to restrict the run to; empty runs every spec
+        type: string
+        default: ''
+      strict:
+        description: Fail on any test failure and on any missing or incomplete measurement
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: flake-hunt-${{ github.ref }}
+  group: flake-hunt-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
   plan:
     name: Validate inputs and select the matrix
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       repeat: ${{ steps.plan.outputs.repeat }}
+      count: ${{ steps.plan.outputs.count }}
     steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@9fd676a19091d4595eefd76e4bd31c97133911f1 # v4.2.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            .node-version
+            package.json
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/compile.ts
+      # The axes (OS, VS Code version, group, mode) and the spec to group mapping
+      # come from scripts/desktop-matrix.ts and tests/desktop/run-tests.ts.
       - id: plan
         env:
           REPEAT: ${{ inputs.repeat }}
           GROUPS_FILTER: ${{ inputs.groups }}
           OS_FILTER: ${{ inputs.os }}
-        run: |
-          node - <<'EOF'
-          const fs = require('node:fs');
-          const repeat = Number(process.env.REPEAT);
-          if (!Number.isInteger(repeat) || repeat < 1 || repeat > 10) {
-            console.error(`repeat must be an integer from 1 to 10, got "${process.env.REPEAT}"`);
-            process.exit(1);
-          }
-          const pick = (name, raw, allowed) => {
-            const wanted = raw.split(',').map((item) => item.trim()).filter(Boolean);
-            const unknown = wanted.filter((item) => !allowed.includes(item));
-            if (unknown.length) {
-              console.error(`Unknown ${name}: ${unknown.join(', ')} (expected ${allowed.join(', ')})`);
-              process.exit(1);
-            }
-            return wanted.length ? allowed.filter((item) => wanted.includes(item)) : allowed;
-          };
-          // Same axes as the `desktop` job of ci.yml, split one job per run mode.
-          // The capability probe runs once per OS/version, in core.
-          const modes = [
-            { mode: 'probe-packaged', args: '--probe --packaged' },
-            { mode: 'functional', args: '' },
-            { mode: 'packaged', args: '--packaged' },
-          ];
-          const oses = pick('os', process.env.OS_FILTER, ['ubuntu-24.04', 'windows-2022', 'macos-14']);
-          const groups = pick('groups', process.env.GROUPS_FILTER, ['core', 'authoring', 'context']);
-          const include = [];
-          for (const os of oses)
-            for (const vscode of ['1.142.0', 'stable'])
-              for (const group of groups)
-                for (const { mode, args } of modes)
-                  if (mode !== 'probe-packaged' || group === 'core')
-                    include.push({ os, vscode, group, mode, args });
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `repeat=${repeat}\nmatrix=${JSON.stringify({ include })}\n`);
-          console.log(`repeat=${repeat}, ${include.length} matrix entries`);
-          EOF
+          SPECS: ${{ inputs.specs }}
+          # The gate calls with the changed specs; none means nothing to run.
+          SPECS_REQUIRED: ${{ inputs.strict && 'true' || 'false' }}
+        run: node dist/scripts/desktop-matrix.js plan
 
   desktop:
     name: Measure ${{ matrix.os }} / ${{ matrix.vscode }} / ${{ matrix.group }} / ${{ matrix.mode }}
     needs: plan
+    # No entry (no changed spec, or only visual.spec.ts) skips the matrix.
+    if: ${{ needs.plan.outputs.count != '0' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
@@ -99,8 +116,14 @@ jobs:
       RDLC_DESKTOP_GROUP: ${{ matrix.group }}
       REPEAT: ${{ needs.plan.outputs.repeat }}
       MODE_ARGS: ${{ matrix.args }}
-    # Test failures exit 0 in --measure mode; the run step only fails on a
-    # harness error. Every job and the aggregate run regardless (fail-fast: false).
+      # Empty runs the whole group; otherwise only these spec files.
+      RDLC_DESKTOP_SPECS: ${{ matrix.specs }}
+      # --strict (stability gate) makes the run step fail on any test failure or
+      # incomplete measurement. Retries stay 0 either way.
+      STRICT_ARGS: ${{ inputs.strict && '--strict' || '' }}
+    # Without strict, test failures exit 0 in --measure mode; the run step only
+    # fails on a harness error. Every job and the aggregate run regardless
+    # (fail-fast: false).
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -181,12 +204,12 @@ jobs:
             pkill -P "$logger" > /dev/null 2>&1 || true
           }
           trap stop_logger EXIT
-          xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e $MODE_ARGS --measure --repeat-each="$REPEAT"
+          xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e $MODE_ARGS $STRICT_ARGS --measure --repeat-each="$REPEAT"
       - name: Measure Desktop ${{ matrix.mode }} on Windows and macOS
         if: runner.os != 'Linux'
         timeout-minutes: 300
         shell: bash
-        run: pnpm test:e2e $MODE_ARGS --measure --repeat-each="$REPEAT"
+        run: pnpm test:e2e $MODE_ARGS $STRICT_ARGS --measure --repeat-each="$REPEAT"
       # Only the JSON results, the runner status and the Linux resource log are kept: traces and
       # screenshots of repeated failures would run to gigabytes.
       - name: Upload Playwright JSON results
@@ -203,12 +226,16 @@ jobs:
 
   aggregate:
     name: Aggregate failure rates
-    # Runs after every matrix job, whatever their outcome.
-    if: ${{ always() }}
+    # Runs after every matrix job, whatever their outcome, unless no entry was planned.
+    if: ${{ always() && needs.plan.outputs.count != '0' }}
     needs: [plan, desktop]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      - name: Require the plan
+        env:
+          PLAN: ${{ needs.plan.result }}
+        run: test "$PLAN" = success
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
@@ -229,20 +256,28 @@ jobs:
         with:
           pattern: flake-results-*
           path: flake-results
-      # Test failures are data and do not fail this step. An incomplete
-      # environment (interrupted or never-run tests) or a missing report does.
+      # Test failures are data and do not fail this step, unless strict. An
+      # incomplete environment (interrupted or never-run tests) or a missing
+      # report always does.
       # The summary is truncated (1 MiB limit); the artifact has everything.
       - name: Write the flake report
         env:
           MATRIX: ${{ needs.plan.outputs.matrix }}
+          STRICT_ARGS: ${{ inputs.strict && '--strict' || '' }}
         run: |
           printf '%s' "$MATRIX" > flake-matrix.json
           rc=0
-          node dist/scripts/flake-report.js flake-results flake-report --expected flake-matrix.json || rc=$?
+          node dist/scripts/flake-report.js flake-results flake-report --expected flake-matrix.json $STRICT_ARGS || rc=$?
           if [ -f flake-report/flake-summary.md ]; then
             cat flake-report/flake-summary.md >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$rc"
+      # Strict (stability gate): every measurement job must have succeeded.
+      - name: Require every measurement job in strict mode
+        if: ${{ always() && inputs.strict }}
+        env:
+          DESKTOP: ${{ needs.desktop.result }}
+        run: test "$DESKTOP" = success
       - name: Upload the flake report
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

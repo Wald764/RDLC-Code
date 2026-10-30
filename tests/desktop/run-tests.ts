@@ -26,6 +26,10 @@ export interface DesktopMode {
   group: DesktopGroup | null;
   measure?: true;
   repeatEach?: number;
+  /** Measurement only: fail the run on any test failure or incomplete measurement. */
+  strict?: true;
+  /** Measurement only: restricts the run to these spec files of the mode's suites. */
+  specs?: string[];
 }
 
 export function desktopArguments(
@@ -58,6 +62,7 @@ export function desktopArguments(
         '--visual',
         '--update-baselines',
         '--measure',
+        '--strict',
       ].includes(arg)
     ) {
       throw new Error(`Unknown Desktop argument: ${arg}`);
@@ -76,6 +81,8 @@ export function desktopArguments(
     throw new Error(
       '--update-baselines cannot be combined with --measure or --repeat-each',
     );
+  if (flags.has('--strict') && !flags.has('--measure'))
+    throw new Error('--strict requires --measure');
   if (flags.has('--update-baselines')) {
     if (flags.size > 1)
       throw new Error('--update-baselines cannot be combined with other modes');
@@ -106,7 +113,7 @@ export function desktopArguments(
     throw new Error(
       `Unknown RDLC_DESKTOP_GROUP: ${group} (expected ${Object.keys(DESKTOP_GROUPS).join(', ')})`,
     );
-  return {
+  const mode: DesktopMode = {
     probe: flags.has('--probe'),
     packaged: flags.has('--packaged'),
     visual: flags.has('--visual'),
@@ -116,9 +123,38 @@ export function desktopArguments(
       ? {
           measure: true as const,
           ...(repeatEach !== null ? { repeatEach } : {}),
+          ...(flags.has('--strict') ? { strict: true as const } : {}),
         }
       : {}),
   };
+  const specs = parseSpecList(env['RDLC_DESKTOP_SPECS']);
+  if (specs.length > 0) {
+    // A partial run is never acceptance evidence, and a spec outside the mode must not run nothing silently.
+    if (mode.measure !== true)
+      throw new Error('RDLC_DESKTOP_SPECS requires --measure');
+    const suites = requiredDesktopSuites(mode);
+    const outside = specs.filter((file) => !suites.includes(file));
+    if (outside.length > 0)
+      throw new Error(
+        `RDLC_DESKTOP_SPECS lists specs outside this mode: ${outside.join(', ')} (expected a subset of ${suites.join(', ')})`,
+      );
+    mode.specs = specs;
+  }
+  return mode;
+}
+
+/** Comma-separated spec file names (no paths); empty or unset means no restriction. */
+export function parseSpecList(value: string | undefined): string[] {
+  const specs = (value ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  for (const file of specs)
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.spec\.ts$/.test(file))
+      throw new Error(
+        `RDLC_DESKTOP_SPECS entries must be spec file names without a path, got "${file}"`,
+      );
+  return [...new Set(specs)];
 }
 
 export const MIN_REPEAT_EACH = 1;
@@ -157,6 +193,28 @@ export function measurementHarnessErrors(
   else if (stats === null)
     errors.push(
       `no readable Playwright JSON report (runner exit code ${exitCode})`,
+    );
+  return errors;
+}
+
+/**
+ * Strict measurement (the stability gate for changed specs) turns what a plain
+ * measurement only records into errors: any failing test, any report that is not
+ * a complete pass (only the documented platform skips are accepted) and any
+ * incomplete measurement.
+ */
+export function strictMeasurementErrors(
+  exitCode: number,
+  reportComplete: boolean,
+  completeness: { incomplete: boolean } | null,
+): string[] {
+  const errors: string[] = [];
+  if (exitCode !== 0) errors.push(`Playwright exited with code ${exitCode}`);
+  if (completeness === null || completeness.incomplete)
+    errors.push('the measurement is incomplete');
+  if (!reportComplete)
+    errors.push(
+      'the report is not a complete pass (failed, flaky or non-allowed skipped tests)',
     );
   return errors;
 }
@@ -294,7 +352,15 @@ export function desktopPlaywrightArguments(
   ];
 }
 
-export function requiredDesktopSuites(mode: DesktopMode) {
+export function requiredDesktopSuites(mode: DesktopMode): string[] {
+  const suites = modeDesktopSuites(mode);
+  return mode.specs
+    ? suites.filter((file) => mode.specs?.includes(file))
+    : suites;
+}
+
+/** The suites of a mode before any `specs` restriction. */
+export function modeDesktopSuites(mode: DesktopMode): string[] {
   if (mode.updateBaselines) return ['bootstrap.spec.ts'];
   if (mode.probe)
     return [
@@ -722,6 +788,10 @@ export async function runDesktop(
           measuredStats,
         )
       : [];
+  const strictErrors =
+    mode.strict === true
+      ? strictMeasurementErrors(exitCode, reportComplete, completeness)
+      : [];
   const status = {
     schemaVersion: 1,
     artifactDir,
@@ -763,6 +833,7 @@ export async function runDesktop(
               measuredStats !== null &&
               harnessErrors.length === 0,
             harnessErrors,
+            ...(mode.strict === true ? { strictErrors } : {}),
           },
         }
       : {}),
@@ -789,7 +860,9 @@ export async function runDesktop(
   if (mode.measure === true) {
     for (const error of harnessErrors)
       console.error(`Measurement harness error: ${error}`);
-    return harnessErrors.length === 0 ? 0 : 1;
+    for (const error of strictErrors)
+      console.error(`Strict measurement error: ${error}`);
+    return harnessErrors.length === 0 && strictErrors.length === 0 ? 0 : 1;
   }
   if (mode.updateBaselines)
     return exitCode === 0 && missing.length === 0 && reportComplete ? 0 : 1;

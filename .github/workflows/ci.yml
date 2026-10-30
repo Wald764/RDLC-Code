@@ -170,6 +170,49 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # Stability gate: added or modified tests/desktop/*.spec.ts files are repeated
+  # 5 times, with retries disabled, on the whole Desktop matrix of their groups.
+  changed-specs:
+    name: Detect changed Desktop specs
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      specs: ${{ steps.changed.outputs.specs }}
+    steps:
+      # The three-dot diff needs the merge base: full history.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@9fd676a19091d4595eefd76e4bd31c97133911f1 # v4.2.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            .node-version
+            package.json
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/compile.ts
+      # Empty outside pull requests (push to main, release calls): nothing to gate.
+      - id: changed
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && github.base_ref || '' }}
+        run: node dist/scripts/desktop-matrix.js changed
+
+  stability:
+    name: Stability gate for changed Desktop specs
+    needs: changed-specs
+    # Always runs, so the required check always has a status. With no changed spec
+    # the called workflow plans an empty matrix and skips every measurement job.
+    uses: ./.github/workflows/flake-hunt.yml
+    with:
+      repeat: 5
+      specs: ${{ needs.changed-specs.outputs.specs }}
+      strict: true
+
   visual:
     name: Pinned visual references
     needs: quality
@@ -224,12 +267,19 @@ jobs:
   required:
     name: Required checks
     if: always()
-    needs: [quality, desktop, visual]
+    needs: [quality, desktop, visual, changed-specs, stability]
     runs-on: ubuntu-24.04
     steps:
-      - name: Require successful quality, every desktop matrix entry and pinned visual
+      - name: Require successful quality, every desktop matrix entry, pinned visual and the stability gate
         env:
           QUALITY: ${{ needs.quality.result }}
           DESKTOP: ${{ needs.desktop.result }}
           VISUAL: ${{ needs.visual.result }}
-        run: test "$QUALITY" = success && test "$DESKTOP" = success && test "$VISUAL" = success
+          CHANGED: ${{ needs.changed-specs.result }}
+          STABILITY: ${{ needs.stability.result }}
+        run: |
+          test "$QUALITY" = success
+          test "$DESKTOP" = success
+          test "$VISUAL" = success
+          test "$CHANGED" = success
+          test "$STABILITY" = success

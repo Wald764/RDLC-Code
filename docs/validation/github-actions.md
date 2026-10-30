@@ -101,10 +101,11 @@ match the reference environment, and the fonts must match the recorded list.
 ## Measuring Desktop flakiness
 
 The manual **Desktop flake hunt** workflow (`.github/workflows/flake-hunt.yml`,
-`workflow_dispatch` only, `contents: read`) measures how unstable each Desktop test
+`workflow_dispatch` and `workflow_call`, `contents: read`) measures how unstable each Desktop test
 is. It repeats every test and reports failure rates; it never retries, never hides a
-failure and never gates a merge. `ci.yml` is unchanged: retries stay 0, a flaky or
-failed test still fails normal runs and the Linux skip rules are the same.
+failure and never gates a merge when run manually (`ci.yml` only calls it in strict
+mode, see the stability gate below). Retries stay 0, a flaky or failed test still fails
+normal runs and the Linux skip rules are the same.
 
 ```sh
 gh workflow run flake-hunt.yml -f repeat=5
@@ -116,6 +117,7 @@ gh workflow run flake-hunt.yml -f repeat=10 -f groups=core,context -f os=ubuntu-
 | `repeat` | Repeats of every test, an integer from 1 to 10 (default 5).               |
 | `groups` | Comma-separated `core`, `authoring`, `context`; empty runs all three.     |
 | `os`     | Comma-separated `ubuntu-24.04`, `windows-2022`, `macos-14`; empty is all. |
+| `specs`  | Comma-separated spec file names to restrict the run to; empty is all.     |
 
 The matrix is the `desktop` job of `ci.yml` (OS x VS Code `1.142.0` and `stable` x
 group) with the same pinned actions, provisioning and environment, plus a `mode`
@@ -169,6 +171,61 @@ Reading the report:
   report).
 - Rows only measure the repeats of one run; compare several runs before trusting a
   low rate, since `repeat` repeats within one job on one runner.
+
+## Stability gate for changed desktop specs
+
+Every pull request runs the **Stability gate** of `ci.yml`: each `tests/desktop/*.spec.ts`
+file that the pull request adds or modifies is repeated 5 times, with retries disabled,
+on the whole Desktop matrix. A single failure in any repeat blocks the pull request.
+
+- `changed-specs` lists the files on a full-depth checkout
+  (`scripts/desktop-matrix.ts changed`; it fetches the base if it is missing) with
+  `git diff --name-only --diff-filter=ACMR origin/<base>...HEAD -- 'tests/desktop/*.spec.ts'`.
+  It is empty outside pull requests.
+- `stability` calls `flake-hunt.yml` as a reusable workflow (`workflow_call`) with
+  `repeat: 5`, `specs: <changed files>` and `strict: true`. The matrix is the flake
+  hunt's: Linux, Windows and macOS x VS Code `1.142.0` and `stable` x the group of the
+  spec and the modes that include it (`functional` and `packaged`, plus `probe-packaged`
+  for the specs of the capability probe). The spec to group assignment is
+  `DESKTOP_GROUPS` and `requiredDesktopSuites` in `tests/desktop/run-tests.ts`, read by
+  `scripts/desktop-matrix.ts`; nothing is duplicated. Each job gets
+  `RDLC_DESKTOP_SPECS=<its specs>`, which restricts the run to those files (it requires
+  `--measure`, and a spec outside the job's mode is refused). Linux provisioning
+  (`strace`, `iptables`, `xvfb`, locale) is the flake hunt's, shared by both uses.
+- Strict mode (`--strict`, with `--measure`) fails a job on any failing or flaky test,
+  any skip other than the platform skips documented in
+  `tests/desktop/host-observer-scope.ts`, any interrupted or never-started test, an
+  absent spec file or a report-level error. The aggregate additionally fails on a
+  missing report, and requires every measurement job to have succeeded
+  (`flake-report --strict` exits 4 on a failing row). The manual flake hunt is unchanged:
+  without `strict`, test failures stay data.
+- When no spec changed, `changed-specs` still runs (about a minute), `stability` still
+  runs and plans an empty matrix (every measurement job is skipped, within a couple of
+  minutes), and succeeds, so it always reports a status. A changed spec in no
+  `DESKTOP_GROUPS` entry fails planning, since CI would never run it. `visual.spec.ts`
+  is the exception: it only runs in the pinned `visual` job (reference environment),
+  which every pull request already runs once, so it is not repeated.
+- Required check: `required` ("Required checks") now needs `changed-specs` and
+  `stability` and fails unless both succeeded. Branch protection already requires
+  "Required checks"; no new status check has to be added.
+- The flake hunt also accepts `specs` when run manually, for example
+  `gh workflow run flake-hunt.yml -f specs=data.spec.ts`.
+
+Cost: a changed spec runs 5 times in up to 18 jobs for the `core` group (3 OS x 2
+versions x 3 modes) and 12 for the others, each limited like the flake hunt jobs.
+
+Limits:
+
+- Capacity: each job keeps the flake hunt's Playwright global timeout of 2 hours per
+  repeat, capped at 290 minutes. The unit is the whole spec file, so a changed
+  `context.spec.ts` (or any large spec) repeats the entire file 5 times per environment
+  and can reach the cap, in which case unfinished tests are interrupted and the gate
+  fails as incomplete. Split a very long spec rather than raising the cap.
+- Pushes to `main` and release calls of `ci.yml` are not gated: the gate needs a pull
+  request base, so `changed-specs` is empty there and `stability` succeeds with nothing
+  to measure. Only pull requests are protected.
+- Strict reports also fail when a test ran fewer times than the declared repeats or was
+  skipped for a reason other than the documented `UNVALIDATED` platform skips.
 
 ## Optional follow-ups accepted as unrun
 

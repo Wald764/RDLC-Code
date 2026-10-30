@@ -9,6 +9,7 @@ import { DESKTOP_GROUPS } from '../desktop/run-tests.js';
 
 const CI = readFileSync('.github/workflows/ci.yml', 'utf8');
 const RELEASE = readFileSync('.github/workflows/release.yml', 'utf8');
+const FLAKE = readFileSync('.github/workflows/flake-hunt.yml', 'utf8');
 const XVFB = 'xvfb-run -a -s "-screen 0 1440x1000x24"';
 const KEY = '^ {6}(?:- | {2})';
 const RUN = (pattern: string) => new RegExp(`${KEY}run:.*${pattern}`, 'm');
@@ -88,17 +89,23 @@ function ordered(
   }
 }
 
-test('the required aggregate depends on quality, the desktop matrix and the visual job', () => {
+test('the required aggregate depends on quality, the desktop matrix, the visual job and the stability gate', () => {
   const blocks = jobs(CI);
   const required = job(blocks, 'required');
-  assert.deepEqual(needs(required), ['quality', 'desktop', 'visual']);
+  assert.deepEqual(needs(required), [
+    'quality',
+    'desktop',
+    'visual',
+    'changed-specs',
+    'stability',
+  ]);
   assert.equal(field(required, 'if'), 'always()');
   const gate = steps(required);
   assert.equal(gate.length, 1, 'one explicit aggregate gate');
-  for (const name of ['QUALITY', 'DESKTOP', 'VISUAL']) {
+  for (const name of ['QUALITY', 'DESKTOP', 'VISUAL', 'CHANGED', 'STABILITY']) {
     assert.equal(
       nested(gate[0]!, name),
-      `\${{ needs.${name.toLowerCase()}.result }}`,
+      `\${{ needs.${name === 'CHANGED' ? 'changed-specs' : name.toLowerCase()}.result }}`,
       `${name} reads a real result`,
     );
     assert.ok(gate[0]!.includes(`test "$${name}" = success`), name);
@@ -364,4 +371,115 @@ test('both workflows install frozen and never weaken a required gate', () => {
         null,
         'release checks cannot be conditional',
       );
+});
+
+/** Every `run:` script of a workflow: inline values and block scalars. */
+function runScripts(source: string): string[] {
+  const lines = source.split('\n');
+  const scripts: string[] = [];
+  for (let index = 0; index < lines.length; index++) {
+    const found = /^(\s*)(- )?run:[ \t]*(.*)$/.exec(lines[index]!);
+    if (!found) continue;
+    const keyIndent = found[1]!.length + (found[2] ? 2 : 0);
+    if (!/^[|>][+-]?$/.test(found[3]!)) {
+      scripts.push(found[3]!);
+      continue;
+    }
+    let script = '';
+    while (index + 1 < lines.length) {
+      const next = lines[index + 1]!;
+      if (next.trim() !== '' && /^\s*/.exec(next)![0].length <= keyIndent)
+        break;
+      script += `${next}\n`;
+      index++;
+    }
+    scripts.push(script);
+  }
+  return scripts;
+}
+
+test('no run script of ci.yml or flake-hunt.yml interpolates an expression', () => {
+  for (const [path, source] of [
+    ['ci.yml', CI],
+    ['flake-hunt.yml', FLAKE],
+  ] as const) {
+    const scripts = runScripts(source);
+    assert.ok(scripts.length > 5, `${path}: run scripts were found`);
+    for (const script of scripts)
+      assert.ok(
+        !script.includes('${{'),
+        `${path}: expression inside a run script: ${script.slice(0, 80)}`,
+      );
+  }
+});
+
+test('the stability gate of ci.yml calls the flake hunt strictly, five times, for the changed specs', () => {
+  const blocks = jobs(CI);
+  const changed = job(blocks, 'changed-specs');
+  assert.deepEqual(needs(changed), ['quality']);
+  assert.match(changed, /fetch-depth: 0/);
+  assert.match(changed, /node dist\/scripts\/desktop-matrix\.js changed/);
+  assert.match(
+    changed,
+    /BASE_REF: \$\{\{ github\.event_name == 'pull_request' && github\.base_ref \|\| '' \}\}/,
+  );
+  const stability = job(blocks, 'stability');
+  assert.deepEqual(needs(stability), ['changed-specs']);
+  assert.equal(field(stability, 'uses'), './.github/workflows/flake-hunt.yml');
+  assert.equal(field(stability, 'if'), null, 'always reports a status');
+  assert.equal(
+    nested(stability, 'strict') ?? read(stability, 6, 'strict'),
+    'true',
+  );
+  assert.equal(read(stability, 6, 'repeat'), '5');
+  assert.equal(
+    read(stability, 6, 'specs'),
+    '${{ needs.changed-specs.outputs.specs }}',
+  );
+  assert.ok(!/--retries|^\s*retries:/m.test(CI + FLAKE), 'no retries');
+});
+
+test('the flake hunt strict path guards the matrix, propagates the flags and fails on any failure', () => {
+  assert.match(FLAKE, /^ {2}workflow_call:/m);
+  const blocks = jobs(FLAKE);
+  const plan = job(blocks, 'plan');
+  assert.equal(
+    read(plan.slice(plan.indexOf('- id: plan')), 10, 'SPECS_REQUIRED'),
+    "${{ inputs.strict && 'true' || 'false' }}",
+  );
+  assert.match(plan, /node dist\/scripts\/desktop-matrix\.js plan/);
+  const desktop = job(blocks, 'desktop');
+  assert.equal(field(desktop, 'if'), "${{ needs.plan.outputs.count != '0' }}");
+  assert.equal(
+    env(desktop, 'STRICT_ARGS'),
+    "${{ inputs.strict && '--strict' || '' }}",
+  );
+  assert.equal(env(desktop, 'RDLC_DESKTOP_SPECS'), '${{ matrix.specs }}');
+  const measures = steps(desktop).filter((step) =>
+    /\bpnpm test:e2e\b/.test(step),
+  );
+  assert.equal(measures.length, 2, 'Linux and other platforms');
+  for (const step of measures)
+    assert.match(
+      step,
+      /pnpm test:e2e \$MODE_ARGS \$STRICT_ARGS --measure --repeat-each="\$REPEAT"/,
+    );
+  const aggregate = job(blocks, 'aggregate');
+  assert.equal(
+    field(aggregate, 'if'),
+    "${{ always() && needs.plan.outputs.count != '0' }}",
+  );
+  assert.deepEqual(needs(aggregate), ['plan', 'desktop']);
+  assert.match(
+    aggregate,
+    /flake-report\.js flake-results flake-report --expected flake-matrix\.json \$STRICT_ARGS/,
+  );
+  const strict = steps(aggregate).find((step) =>
+    step.includes('Require every measurement job in strict mode'),
+  );
+  assert.ok(strict, 'strict aggregate step');
+  assert.equal(stepField(strict, 'if'), '${{ always() && inputs.strict }}');
+  assert.match(strict, /DESKTOP: \$\{\{ needs\.desktop\.result \}\}/);
+  assert.match(strict, /run: test "\$DESKTOP" = success/);
+  assert.match(steps(aggregate)[0]!, /test "\$PLAN" = success/);
 });

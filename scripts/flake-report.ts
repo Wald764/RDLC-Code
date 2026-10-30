@@ -35,6 +35,10 @@ export interface FlakeRow {
   skipped: number;
   /** Tests with no recorded result at all (never started). */
   notRun: number;
+  /** Every recorded execution of the test, whatever its outcome. */
+  executions: number;
+  /** Repeats the runner status declares for this environment, when known. */
+  repeatEach: number | null;
   failureRate: number | null;
   firstError: string | null;
   skipReasons: string[];
@@ -238,6 +242,10 @@ export function analyze(
     const measurement = object(object(status)['measurement']);
     if (typeof measurement['repeatEach'] === 'number')
       repeatEach = Math.max(repeatEach ?? 0, measurement['repeatEach']);
+    const environmentRepeat =
+      typeof measurement['repeatEach'] === 'number'
+        ? measurement['repeatEach']
+        : null;
     const errors = measurement['harnessErrors'];
     if (Array.isArray(errors) && errors.length)
       harnessErrors.push({
@@ -278,6 +286,8 @@ export function analyze(
           interrupted: 0,
           skipped: 0,
           notRun: 0,
+          executions: 0,
+          repeatEach: environmentRepeat,
           failureRate: null,
           firstError: null,
           skipReasons: [],
@@ -292,6 +302,7 @@ export function analyze(
       for (const test of spec.tests ?? []) {
         const results = test.results ?? [];
         const result = results.find((item) => item.retry === 0) ?? results[0];
+        row.executions++;
         switch (result?.status) {
           case 'passed':
             row.runs++;
@@ -361,6 +372,45 @@ export function analyze(
     rows: all.filter((row) => row.runs > 0).sort(compare),
     neverRan: all.filter((row) => row.runs === 0).sort(compare),
   };
+}
+
+/**
+ * Rows with at least one failed or timed out execution. A plain flake hunt records
+ * them; the stability gate (`--strict`) fails on any.
+ */
+export function failingRows(report: FlakeReport): FlakeRow[] {
+  return report.rows.filter((row) => row.failures > 0);
+}
+
+/** The skip reasons that the UNVALIDATED platform skips of host-observer-scope.ts record. */
+const ALLOWED_SKIP_REASON = /^UNVALIDATED\b/;
+
+/**
+ * Why a strict gate must not accept the report, beyond failing tests: tests that
+ * ran fewer (or not a whole number of) times than the declared repeats, and skips
+ * whose recorded reason is not one of the documented UNVALIDATED platform skips.
+ */
+export function strictProblems(report: FlakeReport): string[] {
+  const problems: string[] = [];
+  for (const row of [...report.rows, ...report.neverRan]) {
+    const where = `${row.title} (${label(row.environment)})`;
+    const repeat = row.repeatEach;
+    if (
+      repeat !== null &&
+      (row.executions < repeat || row.executions % repeat !== 0)
+    )
+      problems.push(
+        `${where}: ${row.executions} execution(s) for ${repeat} repeat(s)`,
+      );
+    const rogue = row.skipReasons.filter(
+      (reason) => !ALLOWED_SKIP_REASON.test(reason),
+    );
+    if (rogue.length > 0)
+      problems.push(
+        `${where}: skipped outside the documented skips: ${rogue.join('; ')}`,
+      );
+  }
+  return problems;
 }
 
 const cell = (value: string) =>
@@ -540,13 +590,16 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const args = process.argv.slice(2);
+  const strictFlag = args.indexOf('--strict');
+  const strict = strictFlag >= 0;
+  if (strict) args.splice(strictFlag, 1);
   const flag = args.indexOf('--expected');
   const expectedFile = flag >= 0 ? args[flag + 1] : undefined;
   if (flag >= 0) args.splice(flag, 2);
   const [input, output] = args;
   if (!input || !output || (flag >= 0 && !expectedFile)) {
     console.error(
-      'Usage: flake-report <reports-directory> <output-directory> [--expected <matrix.json>]',
+      'Usage: flake-report <reports-directory> <output-directory> [--expected <matrix.json>] [--strict]',
     );
     process.exitCode = 2;
   } else {
@@ -564,6 +617,17 @@ if (
         );
         // Test failures are data; an incomplete or missing measurement is not.
         if (!report.complete) process.exitCode = 3;
+        // The stability gate also fails on any test failure.
+        else if (strict) {
+          const problems = strictProblems(report);
+          const failed = failingRows(report).length;
+          if (failed > 0)
+            console.error(
+              `Strict: ${failed} test row(s) failed at least once.`,
+            );
+          for (const problem of problems) console.error(`Strict: ${problem}`);
+          if (failed > 0 || problems.length > 0) process.exitCode = 4;
+        }
       },
       (error: unknown) => {
         console.error(error);

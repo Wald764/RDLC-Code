@@ -13,6 +13,8 @@ import {
   measurementGlobalTimeout,
   MEASURE_GLOBAL_TIMEOUT_CAP_MS,
   measurementHarnessErrors,
+  parseSpecList,
+  strictMeasurementErrors,
   playwrightStats,
   FUNCTIONAL_CAPABILITIES as FUNCTIONAL,
   mergeProbeCapabilities,
@@ -835,4 +837,78 @@ test('measurement completeness flags interrupted, never-started and absent suite
     incomplete: true,
   });
   assert.equal(measurementCompleteness(null, ['a.spec.ts']).incomplete, true);
+});
+
+test('RDLC_DESKTOP_SPECS restricts a measurement run to specs of its mode and nothing else', () => {
+  const env = { RDLC_DESKTOP_SPECS: 'data.spec.ts, workspace.spec.ts' };
+  const mode = desktopArguments(['--measure', '--repeat-each=5'], {
+    ...env,
+    RDLC_DESKTOP_GROUP: 'core',
+  });
+  assert.deepEqual(mode.specs, ['data.spec.ts', 'workspace.spec.ts']);
+  assert.deepEqual(requiredDesktopSuites(mode), [
+    'workspace.spec.ts',
+    'data.spec.ts',
+  ]);
+  // Unset or empty keeps the whole group and the mode schema.
+  for (const value of [undefined, '', ' , ']) {
+    const whole = desktopArguments(['--measure'], {
+      RDLC_DESKTOP_GROUP: 'core',
+      ...(value === undefined ? {} : { RDLC_DESKTOP_SPECS: value }),
+    });
+    assert.ok(!('specs' in whole));
+    assert.deepEqual(requiredDesktopSuites(whole), [...DESKTOP_GROUPS.core]);
+  }
+  // Only the files that exist in the mode: the probe takes security-observer.
+  assert.deepEqual(
+    requiredDesktopSuites(
+      desktopArguments(['--probe', '--packaged', '--measure'], {
+        RDLC_DESKTOP_SPECS: 'security-observer.spec.ts',
+      }),
+    ),
+    ['security-observer.spec.ts'],
+  );
+  assert.throws(
+    () =>
+      desktopArguments(['--measure'], {
+        RDLC_DESKTOP_GROUP: 'core',
+        RDLC_DESKTOP_SPECS: 'context.spec.ts',
+      }),
+    /outside this mode: context\.spec\.ts/,
+  );
+  assert.throws(
+    () => desktopArguments(['--measure'], { RDLC_DESKTOP_SPECS: 'x.spec.ts' }),
+    /outside this mode/,
+  );
+  assert.throws(
+    () => desktopArguments([], { RDLC_DESKTOP_SPECS: 'data.spec.ts' }),
+    /requires --measure/,
+  );
+  for (const bad of ['../data.spec.ts', 'tests/desktop/data.spec.ts', 'a.ts'])
+    assert.throws(() => parseSpecList(bad), /spec file names/, bad);
+  assert.deepEqual(parseSpecList('a.spec.ts,a.spec.ts'), ['a.spec.ts']);
+  // Retries are never configured by the runner.
+  const args = desktopPlaywrightArguments(
+    mode,
+    '/c.ts',
+    requiredDesktopSuites(mode),
+  );
+  assert.ok(!args.some((arg) => arg.startsWith('--retries')));
+  assert.deepEqual(args.slice(-2), ['workspace.spec.ts', 'data.spec.ts']);
+});
+
+test('--strict requires --measure and fails on failures, incomplete or non-passing reports', () => {
+  assert.throws(() => desktopArguments(['--strict'], {}), /requires --measure/);
+  assert.equal(
+    desktopArguments(['--measure', '--strict', '--repeat-each=5'], {}).strict,
+    true,
+  );
+  assert.ok(!('strict' in desktopArguments(['--measure'], {})));
+  const incomplete = { incomplete: true };
+  const complete = { incomplete: false };
+  assert.deepEqual(strictMeasurementErrors(0, true, complete), []);
+  assert.equal(strictMeasurementErrors(1, false, complete).length, 2);
+  assert.equal(strictMeasurementErrors(0, true, incomplete).length, 1);
+  assert.equal(strictMeasurementErrors(0, true, null).length, 1);
+  assert.equal(strictMeasurementErrors(0, false, complete).length, 1);
 });

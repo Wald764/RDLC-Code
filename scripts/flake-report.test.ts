@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   analyze,
+  failingRows,
+  strictProblems,
   firstErrorLine,
   loadReports,
   parseExpected,
@@ -337,4 +339,104 @@ test('the step summary is truncated to the top unstable tests and points to the 
   assert.ok(Buffer.byteLength(text) < 1024 * 1024);
   assert.throws(() => parseExpected({}), /include/);
   assert.throws(() => parseExpected({ include: [{ os: 'x' }] }), /without/);
+});
+
+test('the strict gate counts every row with a failure and ignores passing rows', () => {
+  const failing = analyze([
+    {
+      path: 'flake-results-ubuntu-24.04-1.142.0-core-functional/playwright-report.json',
+      report: {
+        suites: [
+          {
+            specs: [
+              {
+                title: 'ok',
+                file: 'a.spec.ts',
+                tests: [{ results: [result('passed')] }],
+              },
+              {
+                title: 'bad',
+                file: 'a.spec.ts',
+                tests: [
+                  { results: [result('passed')] },
+                  { results: [result('timedOut')] },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      status: null,
+    },
+  ]);
+  assert.deepEqual(
+    failingRows(failing).map((row) => row.title),
+    ['bad'],
+  );
+  assert.deepEqual(failingRows(analyze([])), []);
+});
+
+test('the strict gate reports missing repetitions and skips outside the documented ones', () => {
+  const entry = (tests: unknown[], repeatEach: number) =>
+    analyze([
+      {
+        path: 'flake-results-ubuntu-24.04-1.142.0-core-functional/playwright-report.json',
+        report: {
+          suites: [{ specs: [{ title: 't', file: 'a.spec.ts', tests }] }],
+        },
+        status: { measurement: { repeatEach } },
+      },
+    ]);
+  const pass = { results: [result('passed')] };
+  const allowed = {
+    results: [
+      result('skipped', {
+        annotations: [
+          { type: 'skip', description: 'UNVALIDATED on darwin: x' },
+        ],
+      }),
+    ],
+  };
+  assert.deepEqual(strictProblems(entry([pass, pass, pass], 3)), []);
+  // Allowed skips count as repetitions.
+  assert.deepEqual(strictProblems(entry([allowed, allowed, allowed], 3)), []);
+  assert.match(
+    strictProblems(entry([pass, pass], 3)).join(';'),
+    /2 execution\(s\) for 3/,
+  );
+  assert.equal(strictProblems(entry([pass, pass, pass, pass], 3)).length, 1);
+  const rogue = strictProblems(
+    entry(
+      [
+        pass,
+        pass,
+        {
+          results: [
+            result('skipped', {
+              annotations: [{ type: 'skip', description: 'flaky, skip it' }],
+            }),
+          ],
+        },
+      ],
+      3,
+    ),
+  );
+  assert.match(rogue.join(';'), /outside the documented skips: flaky/);
+  // Without declared repeats only the skip reasons can be judged.
+  assert.deepEqual(
+    strictProblems(
+      analyze([
+        {
+          path: 'x/playwright-report.json',
+          report: {
+            suites: [
+              { specs: [{ title: 't', file: 'a.spec.ts', tests: [pass] }] },
+            ],
+          },
+          status: null,
+        },
+      ]),
+    ),
+    [],
+  );
 });
