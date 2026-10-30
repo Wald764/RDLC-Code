@@ -1401,19 +1401,34 @@ export class EditorComponent {
     let hadFocus = document.hasFocus();
     // What our own focus() calls last left active; anything else is the user.
     let owned = origin;
-    const attempt = (last: boolean): boolean => {
-      const usable = (element: HTMLElement) => !element.matches(':disabled');
+    const usable = (element: HTMLElement) => !element.matches(':disabled');
+    // The first attempt always focuses the best match available (falling back
+    // to any input or match) so a late-arriving preferred field cannot leave
+    // focus unset; later attempts only upgrade to a higher-priority group.
+    // Done once a usable match of the highest-priority group holds focus.
+    const attempt = (first: boolean): boolean => {
       const groups = parts.map((part) => [
         ...root.querySelectorAll<HTMLElement>(part),
       ]);
-      // A lower-priority match is only taken once the retries are exhausted.
-      const all = groups.flat();
-      const target =
-        groups[0]?.find(usable) ??
-        (last ? (all.find(usable) ?? all[0]) : undefined);
+      const best = groups.findIndex((group) => group.some(usable));
+      const active = document.activeElement;
+      const held = groups.findIndex((group) =>
+        group.some((element) => element === active && usable(element)),
+      );
+      let target: HTMLElement | undefined;
+      if (best >= 0) {
+        if (first || held < 0 || best < held)
+          target = groups[best]?.find(usable);
+      } else if (first) {
+        const all = groups.flat();
+        target =
+          all.find((element) => element.matches('input:not(:disabled)')) ??
+          all[0];
+      }
       target?.focus();
       owned = document.activeElement;
-      return !!target && document.activeElement === target;
+      const now = document.activeElement;
+      return !!now && !!groups[0]?.some((e) => e === now && usable(e));
     };
     const finish = (): void => {
       if (this.focusRun === run) this.cancelFocusProperties();
@@ -1421,7 +1436,7 @@ export class EditorComponent {
     afterNextRender(
       () => {
         if (this.focusRun !== run) return;
-        if (attempt(false)) return finish();
+        if (attempt(true)) return finish();
         // The inspector can still be rebuilding for the new selection or be
         // disabled by the edit that is settling, and a disabled or detached
         // field ignores focus(): retry on the next frames until it sticks.
@@ -1449,7 +1464,7 @@ export class EditorComponent {
             this.focusTimer = setTimeout(retry, 50);
             return;
           }
-          if (attempt(last) || last) return finish();
+          if (attempt(false) || last) return finish();
           this.focusTimer = setTimeout(retry, 50);
         };
         this.focusTimer = setTimeout(retry, 50);

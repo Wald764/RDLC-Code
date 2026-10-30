@@ -2497,30 +2497,71 @@ describe('focusProperties retries', () => {
       '.inspector input[data-late="a"], .inspector input',
     );
     m.fixture.detectChanges();
-    // Other enabled inputs exist, but they are lower priority until exhaustion.
+    // The first attempt already took a lower-priority enabled input.
+    const fallback = document.activeElement;
+    expect(fallback).not.toBe(late);
+    expect(m.element.contains(fallback)).toBe(true);
     vi.advanceTimersByTime(300);
-    expect(document.activeElement).not.toBe(late);
-    expect(m.element.contains(document.activeElement)).toBe(false);
+    expect(document.activeElement).toBe(fallback);
     late.disabled = false;
     vi.advanceTimersByTime(50);
     expect(document.activeElement).toBe(late);
   });
 
-  it('falls back to a lower-priority match only once the retries are exhausted', async () => {
+  it('falls back to a lower-priority match on the first attempt', async () => {
     const m = await mountedWithLateField();
     m.field('a', true);
     m.component.focusProperties(
       '.inspector input[data-late="a"], .inspector [data-property="name"]',
     );
     m.fixture.detectChanges();
-    vi.advanceTimersByTime(900);
-    expect(document.activeElement).not.toBe(
-      m.element.querySelector('[data-property="name"]'),
-    );
-    vi.advanceTimersByTime(200);
     expect(document.activeElement).toBe(
       m.element.querySelector('[data-property="name"]'),
     );
+  });
+
+  it('focuses a third-part match on the first attempt even when the document is unfocused', async () => {
+    const m = await mountedWithLateField();
+    const name = m.field('x', false);
+    m.hasFocus.mockReturnValue(false);
+    m.component.focusProperties(
+      '.inspector input[data-late="p1"], .inspector input[name="p2"], .inspector input[data-late="x"]',
+    );
+    m.fixture.detectChanges();
+    expect(document.activeElement).toBe(name);
+  });
+
+  it('upgrades a fallback focus to the preferred field once it appears', async () => {
+    const m = await mountedWithLateField();
+    const low = m.field('low', false);
+    m.component.focusProperties(
+      '.inspector input[data-late="name"], .inspector input[data-late="low"]',
+    );
+    m.fixture.detectChanges();
+    expect(document.activeElement).toBe(low);
+    vi.advanceTimersByTime(200);
+    const preferred = m.field('name', false);
+    vi.advanceTimersByTime(50);
+    expect(document.activeElement).toBe(preferred);
+    // Never downgraded back, and the loop is done.
+    preferred.disabled = true;
+    vi.advanceTimersByTime(500);
+    expect(document.activeElement).not.toBe(low);
+  });
+
+  it('calls focus() exactly once on the fallback target while the document is unfocused', async () => {
+    const m = await mountedWithLateField();
+    m.field('a', true);
+    const fallback = m.field('b', false);
+    const focus = vi.spyOn(fallback, 'focus').mockImplementation(() => {});
+    m.hasFocus.mockReturnValue(false);
+    m.component.focusProperties(
+      '.inspector input[data-late="a"], .inspector input[data-late="b"]',
+    );
+    m.fixture.detectChanges();
+    expect(focus).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(2_000);
+    expect(focus).toHaveBeenCalledTimes(1);
   });
 
   it('does not steal focus the user moved elsewhere during the retries', async () => {
@@ -2550,7 +2591,7 @@ describe('focusProperties retries', () => {
     expect(document.activeElement).toBe(other);
   });
 
-  it('takes the button or summary fallback only after the budget when no input is enabled', async () => {
+  it('takes the button or summary fallback on the first attempt when no input is enabled', async () => {
     const m = await mountedWithLateField();
     // Disable every input in the inspector so only the lower parts can match.
     const inspector = m.element.querySelector('.inspector')!;
@@ -2559,9 +2600,6 @@ describe('focusProperties retries', () => {
     const button = inspector.querySelector<HTMLElement>('button')!;
     m.component.focusProperties();
     m.fixture.detectChanges();
-    vi.advanceTimersByTime(900);
-    expect(document.activeElement).not.toBe(button);
-    vi.advanceTimersByTime(200);
     expect(document.activeElement).toBe(button);
   });
 
