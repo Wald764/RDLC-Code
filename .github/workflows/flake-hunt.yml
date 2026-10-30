@@ -146,13 +146,39 @@ jobs:
           TZ: UTC
           LANG: en_US.UTF-8
           LC_ALL: en_US.UTF-8
-        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e $MODE_ARGS --measure --repeat-each="$REPEAT"
+          # Plain "[n/m] test" lines (no cursor rewrites) keep the running test
+          # readable in the log tail when the runner dies.
+          PW_TEST_DEBUG_REPORTERS: '1'
+        run: |
+          # Diagnostic for "runner lost communication": every 60 s, memory and
+          # the largest processes go to a file (uploaded below) and one summary
+          # line goes to the log. The logger stops with this step.
+          resource_log=.vscode-test/desktop-artifacts/resources.log
+          mkdir -p "$(dirname "$resource_log")"
+          (
+            while true; do
+              {
+                date -u +%FT%TZ
+                free -m
+                ps -eo pid,rss,comm --sort=-rss | head -8
+              } >> "$resource_log" 2>&1 || true
+              summary=$({ free -m | awk '/^Mem:/ {print "used=" $3 "MB available=" $7 "MB"}'; } 2>&1 || true)
+              top=$({ ps -eo rss=,comm= --sort=-rss | head -1 | awk '{print $2 " " int($1 / 1024) "MB"}'; } 2>&1 || true)
+              echo "resources $(date -u +%T): $summary, top: $top"
+              # Background sleep plus wait: killing the subshell leaves no sleep holding stdout.
+              sleep 60 > /dev/null 2>&1 &
+              wait $! || true
+            done
+          ) &
+          logger=$!
+          trap 'kill "$logger" 2>/dev/null; pkill -P "$logger" 2>/dev/null; true' EXIT
+          xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e $MODE_ARGS --measure --repeat-each="$REPEAT"
       - name: Measure Desktop ${{ matrix.mode }} on Windows and macOS
         if: runner.os != 'Linux'
         timeout-minutes: 300
         shell: bash
         run: pnpm test:e2e $MODE_ARGS --measure --repeat-each="$REPEAT"
-      # Only the JSON results and the runner status are kept: traces and
+      # Only the JSON results, the runner status and the Linux resource log are kept: traces and
       # screenshots of repeated failures would run to gigabytes.
       - name: Upload Playwright JSON results
         if: ${{ always() }}
@@ -162,6 +188,7 @@ jobs:
           path: |
             .vscode-test/desktop-artifacts/run-*/playwright-report.json
             .vscode-test/desktop-artifacts/run-*/runner-status.json
+            .vscode-test/desktop-artifacts/resources.log
           if-no-files-found: warn
           retention-days: 14
 
