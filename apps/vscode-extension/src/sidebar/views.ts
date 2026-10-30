@@ -87,6 +87,13 @@ export class SidebarViews implements vscode.Disposable {
   private lastTreeSelection = '';
   private readonly selecting = new Set<string>();
   /**
+   * Tail of the native selection dispatches. The designer settles one native
+   * action at a time and refuses a second as already pending, so a click that
+   * follows another before it settled (a Ctrl-click right after a click) queues
+   * behind it instead of being refused.
+   */
+  private selectionTail: Promise<void> = Promise.resolve();
+  /**
    * One native selection this view itself dispatched, held until the host
    * accepts it: the tree the user just clicked already shows that row with its
    * ancestors open, so revealing it would only reset their scroll. The authority
@@ -280,13 +287,22 @@ export class SidebarViews implements vscode.Disposable {
       const signature = JSON.stringify([row.authority, targetIds, row.node.id]);
       if (this.selecting.has(signature)) return;
       this.selecting.add(signature);
-      if (provider)
-        this.ownReveal = {
-          authority: row.authority,
-          provider,
-          selection: JSON.stringify([targetIds, row.node.id]),
-        };
+      const previous = this.selectionTail;
+      let release!: () => void;
+      this.selectionTail = new Promise<void>((resolve) => (release = resolve));
       try {
+        await previous;
+        // The queue can outlive the context the rows were captured for: a
+        // selection for a previous projection is dropped, as its event route
+        // already does, rather than warned about.
+        if (rows.some((candidate) => candidate.authority !== this.authority()))
+          return;
+        if (provider)
+          this.ownReveal = {
+            authority: row.authority,
+            provider,
+            selection: JSON.stringify([targetIds, row.node.id]),
+          };
         const outcome = await this.host.dispatch(
           { action: 'select', primaryId: row.node.id, additive: false },
           targetIds,
@@ -298,6 +314,7 @@ export class SidebarViews implements vscode.Disposable {
         this.ownReveal = null;
         throw error;
       } finally {
+        release();
         this.selecting.delete(signature);
       }
     }

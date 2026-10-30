@@ -479,6 +479,12 @@ async function nativeRowRefreshContract(): Promise<void> {
     const session = new DocumentSession(report);
     let sequence = 0;
     let outcomeFirst = false;
+    // The real designer settles one native action at a time and refuses another
+    // as already pending: the double records overlaps and can hold a settlement.
+    let inflight = 0;
+    let overlaps = 0;
+    const posted: string[][] = [];
+    let hold: Promise<void> | null = null;
     const panel = {
       active: false,
       visible: false,
@@ -495,6 +501,11 @@ async function nativeRowRefreshContract(): Promise<void> {
             primaryId: string;
           };
           if (action.kind !== 'nativeAction') return true;
+          if (inflight > 0) overlaps += 1;
+          inflight += 1;
+          posted.push([...action.targetIds]);
+          if (hold) await hold;
+          inflight -= 1;
           sequence += 1;
           const accepted = {
             protocol: 2,
@@ -622,6 +633,42 @@ async function nativeRowRefreshContract(): Promise<void> {
         revealed,
         'an own native click never reveals the row the user just clicked',
       );
+      // A selection that follows another before it settled queues behind it:
+      // the designer refuses a second native action while one is pending.
+      let settle!: () => void;
+      hold = new Promise<void>((resolve) => (settle = resolve));
+      const [first, second] = bodyRows;
+      const before = posted.length;
+      const warnings = await quietly(async () => {
+        structure.selection.fire({ selection: [first!] });
+        await until(
+          () => posted.length === before + 1,
+          'queued selection: the first reaches the designer',
+        );
+        structure.selection.fire({ selection: [first!, second!] });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        assert.equal(
+          posted.length,
+          before + 1,
+          'the second selection waits for the first to settle',
+        );
+        settle();
+        hold = null;
+        await until(
+          () =>
+            posted.length === before + 2 &&
+            acceptedPrimary() === second!.node!.id,
+          'queued selection: the second is delivered after the first',
+        );
+      });
+      assert.deepEqual(warnings, [], 'a queued selection never warns');
+      assert.equal(overlaps, 0, 'native selections never overlap');
+      assert.deepEqual(
+        posted.slice(before),
+        [[first!.node!.id], [first!.node!.id, second!.node!.id]],
+        'both selections reach the designer in order',
+      );
+
       // The next refresh (the user scrolled on) keeps that promise.
       await call('rdlcCode.sidebar.clearFilter');
       assert.equal(
