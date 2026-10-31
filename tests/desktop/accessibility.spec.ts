@@ -624,7 +624,11 @@ test('US6.1-keyboard-journey', async () => {
     await expect(
       page.locator('.context-view').getByRole('menuitem').first(),
     ).toBeHidden();
-    expect(await activeTreeRow(page)).toBe(menuAnchor);
+    // Focus returns to the same row; its state part may be transiently
+    // "Pending · " again while the host re-publishes, which is not focus.
+    const withoutPending = (label: string | null) =>
+      label?.replace('Pending · ', '') ?? null;
+    expect(withoutPending(await activeTreeRow(page))).toBe(menuAnchor);
 
     // 6. Shift+F10 -> Properties reaches the inspector with the keyboard.
     // menuTo returns once the menu is visible and Properties is the focused item.
