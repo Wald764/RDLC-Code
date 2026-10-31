@@ -11,8 +11,12 @@ import type { ActivationReport } from '../../apps/vscode-extension/src/panel-act
 export function webviewNeverOwnedFocus(report?: ActivationReport): boolean {
   return (
     report?.phase === 'probe' &&
-    report.probes.length > 0 &&
-    report.probes.every((answer) => answer === 'unfocused')
+    // The webview answered (so the probe channel works) and never owned focus;
+    // the probe cut short by the deadline is reported as unanswered.
+    report.probes.includes('unfocused') &&
+    report.probes.every(
+      (answer) => answer === 'unfocused' || answer === 'unanswered',
+    )
   );
 }
 
