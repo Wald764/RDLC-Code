@@ -9,8 +9,12 @@ import { until } from './session-checks.js';
 import {
   focusProbeHtml,
   focusProbeWebviewOptions,
+  webviewNeverOwnedFocus,
 } from './focus-probe-webview.js';
-import { activateHistoryTarget } from '../../apps/vscode-extension/src/panel-activation.js';
+import {
+  activateHistoryTarget,
+  type ActivationReport,
+} from '../../apps/vscode-extension/src/panel-activation.js';
 
 const type = 'rdlcTests.panelActivation';
 
@@ -160,19 +164,46 @@ async function panelBecomingActiveIsAwaited(
   } as unknown as vscode.WebviewPanel;
   let wanted = 0;
   let settled: boolean | undefined;
-  const pending = activateHistoryTarget(document, gated, type, () => {
-    wanted++;
-    return true;
-  }).then((value) => (settled = value));
+  let report: ActivationReport | undefined;
+  const pending = activateHistoryTarget(
+    document,
+    gated,
+    type,
+    () => {
+      wanted++;
+      return true;
+    },
+    { report: (stopped) => (report = stopped) },
+  ).then((value) => (settled = value));
   await pause(150);
   assert.equal(settled, undefined, 'activation waits for the panel');
   assert.equal(reveals.length, 0, 'nothing is revealed while waiting');
   released = true;
   await pending;
-  assert.equal(settled, true, 'activation resolves once the panel is active');
   assert.equal(wanted, 1, 'the request is checked once');
+  if (webviewNeverOwnedFocus(report)) {
+    // This environment cannot give the scripted webview DOM focus (no OS
+    // window focus, and a test cannot produce a trusted gesture): the safety
+    // outcome is the refusal. The host may still have revealed this panel
+    // (focus only ever moves toward it), but the history command never runs.
+    assert.equal(
+      settled,
+      false,
+      `unattested focus is refused: ${describe(report)}`,
+    );
+    assert.ok(reveals.length <= 1, 'a refused activation reveals at most once');
+    return;
+  }
+  assert.equal(
+    settled,
+    true,
+    `activation resolves once the panel is active: ${describe(report)}`,
+  );
   assert.equal(reveals.length, 1, 'the active panel is revealed once');
 }
+
+const describe = (report: ActivationReport | undefined): string =>
+  JSON.stringify(report);
 
 /**
  * A real, active, revealed designer tab whose webview is replaced by a scripted
@@ -184,6 +215,7 @@ async function withFocusAnswers(
   answer: (probeIndex: number) => boolean | undefined,
   /** Also deliver an attestation for another probe ID before each answer. */
   stale = false,
+  attested = false,
 ): Promise<{ result: boolean; probes: number; elapsed: number }> {
   const actual = real[0]!;
   await until(
@@ -237,7 +269,9 @@ async function withFocusAnswers(
       (actual.reveal as (...a: unknown[]) => void)(...args),
   } as unknown as vscode.WebviewPanel;
   const started = Date.now();
-  const result = await activateHistoryTarget(document, panel, type);
+  const result = await activateHistoryTarget(document, panel, type, undefined, {
+    attested,
+  });
   answers.dispose();
   return { result, probes, elapsed: Date.now() - started };
 }
@@ -267,16 +301,37 @@ async function historyNeedsTheWebviewToOwnDomFocus(
   const late = await withFocusAnswers(document, real, (i) => i >= 2);
   assert.equal(late.result, true, 'focus arriving later is accepted');
   assert.equal(late.probes, 3, 'the webview is read until it owns focus');
+  // A request that says the designer owned DOM focus is not probed at all.
+  const attestedProbes = await withFocusAnswers(
+    document,
+    real,
+    () => false,
+    false,
+    true,
+  );
+  assert.equal(attestedProbes.result, true, 'an attested request is accepted');
+  assert.equal(attestedProbes.probes, 0, 'an attested request is not probed');
   const owned = await withFocusAnswers(document, real, () => true);
   assert.equal(owned.result, true, 'a webview owning DOM focus is accepted');
   assert.equal(owned.probes, 1);
   // The real scripted webview answers from its own frame.
   const actual = real[0]!;
-  assert.equal(
-    await activateHistoryTarget(document, actual, type),
-    true,
-    'the real webview owns DOM focus after activation',
+  let report: ActivationReport | undefined;
+  const attested = await activateHistoryTarget(
+    document,
+    actual,
+    type,
+    undefined,
+    { report: (stopped) => (report = stopped) },
   );
+  if (webviewNeverOwnedFocus(report))
+    assert.equal(attested, false, 'unattested DOM focus is refused');
+  else
+    assert.equal(
+      attested,
+      true,
+      `the real webview owns DOM focus after activation: ${describe(report)}`,
+    );
   // And it tells the truth once a code editor takes DOM focus: the same
   // panel stays visible in its group, yet is no longer the focus owner.
   const other = join(dirname(document.uri.fsPath), 'other.rdlc');

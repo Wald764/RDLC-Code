@@ -19,6 +19,9 @@ import type { DesignScene } from '@rdlc/report-model/scene';
 import type { Selection } from './selection';
 import { restoreViewState, type ViewState } from './viewport';
 
+/** How long a trusted gesture keeps vouching for DOM focus when no blur follows. */
+export const GESTURE_FOCUS_WINDOW_MS = 2_000;
+
 export interface EditorSnapshot {
   readonly version: number;
   readonly status: 'editable' | 'source-only' | 'invalid-source';
@@ -117,6 +120,8 @@ export class HostAdapter {
   private selectionSequence = 0;
   private lastSelection: NavigationSelection | null = null;
   private blocked = false;
+  /** When a trusted pointer or key gesture last reached this frame; null after a blur. */
+  private lastGestureAt: number | null = null;
   private readonly api: VsCodeApi | null;
   get connected(): boolean {
     return this.api !== null;
@@ -133,9 +138,22 @@ export class HostAdapter {
     );
     const listener = (event: MessageEvent) => this.ingest(event.data);
     globalThis.addEventListener('message', listener);
-    inject(DestroyRef).onDestroy(() =>
-      globalThis.removeEventListener('message', listener),
-    );
+    // Workbench DOM focus ownership (see `domFocusEvidence`): a trusted gesture in
+    // this frame moves it here whether or not the OS window is focused; leaving
+    // the frame fires `blur` here.
+    const gesture = (event: Event) => {
+      if (event.isTrusted) this.lastGestureAt = Date.now();
+    };
+    const blur = () => (this.lastGestureAt = null);
+    globalThis.addEventListener('pointerdown', gesture, true);
+    globalThis.addEventListener('keydown', gesture, true);
+    globalThis.addEventListener('blur', blur);
+    inject(DestroyRef).onDestroy(() => {
+      globalThis.removeEventListener('message', listener);
+      globalThis.removeEventListener('pointerdown', gesture, true);
+      globalThis.removeEventListener('keydown', gesture, true);
+      globalThis.removeEventListener('blur', blur);
+    });
     if (this.api) this.post({ protocol: 2, kind: 'ready' });
   }
 
@@ -166,7 +184,7 @@ export class HostAdapter {
         protocol: 2,
         kind: 'focusProbeResult',
         probeId: message.probeId,
-        focused: globalThis.document?.hasFocus() ?? false,
+        focused: this.domFocusEvidence(),
       });
       return;
     }
@@ -360,7 +378,12 @@ export class HostAdapter {
     return true;
   }
 
-  sendHistory(requestId: string, action: 'undo' | 'redo'): boolean {
+  sendHistory(
+    requestId: string,
+    action: 'undo' | 'redo',
+    /** Evidence taken at the user's gesture; a replayed request carries the original. */
+    focused = this.domFocusEvidence(),
+  ): boolean {
     const snapshot = this.snapshot();
     if (!snapshot || this.blocked || this.pending()) return false;
     this.pending.set({ requestId, baseVersion: snapshot.version });
@@ -371,8 +394,39 @@ export class HostAdapter {
       requestId,
       baseVersion: snapshot.version,
       action,
+      // Evidence taken at the user's gesture: VS Code also blurs this frame for
+      // its own focus handoffs, which must not disown focus the user had.
+      focused,
     });
     return true;
+  }
+
+  /**
+   * Whether workbench DOM focus is inside this frame, as attested to the host
+   * before it runs native undo/redo (which the workbench routes by DOM focus).
+   * `document.hasFocus()` is also false whenever the OS window is not focused
+   * (CI, automation), although DOM focus is in the frame. A trusted pointer or
+   * key gesture in the frame moves workbench DOM focus here regardless of OS
+   * window focus, and `blur` fires when it leaves (another workbench element or
+   * another app). The evidence is therefore a trusted gesture that is recent
+   * (`GESTURE_FOCUS_WINDOW_MS`) and not followed by a blur: without the window
+   * a gesture could vouch for focus long after the user moved on silently.
+   * Untrusted (scripted) events never count.
+   *
+   * Native history requests carry this answer (`HistoryRequestMessage.focused`),
+   * taken when the user issued them: VS Code also blurs this frame for its own
+   * focus handoffs (e.g. a late one from an earlier native insert, measured at
+   * ~20 ms after the click), so reading it later could disown focus the user
+   * demonstrably had, and a host round trip would add click-to-undo latency.
+   * A request held behind a draft decision and replayed later carries the
+   * evidence of the original gesture (`EditorComponent.history`).
+   */
+  domFocusEvidence(): boolean {
+    return (
+      (globalThis.document?.hasFocus() ?? false) ||
+      (this.lastGestureAt !== null &&
+        Date.now() - this.lastGestureAt <= GESTURE_FOCUS_WINDOW_MS)
+    );
   }
 
   /** Clipboard actions share the edit guards; the host owns capture and native I/O. */

@@ -760,6 +760,48 @@ async function guardedHistoryTargets(eol: '\n' | '\r\n'): Promise<void> {
     });
     assert.equal(messages.length, count);
   }
+  // The designer's evidence that it owned DOM focus reaches the activation, and
+  // only an explicit `true` counts.
+  const attestations: boolean[] = [];
+  const messages: HostMessage[] = [];
+  const session = new DocumentSession(
+    document,
+    undefined,
+    undefined,
+    async (attested) => {
+      attestations.push(attested);
+      return false;
+    },
+  );
+  session.onMessage((message) => messages.push(message));
+  try {
+    session.receive({ protocol: 2, kind: 'ready' });
+    await until(
+      () => messages.some((m) => m.kind === 'snapshot'),
+      'Attestation session ready',
+    );
+    for (const [i, focused] of [undefined, false, true].entries()) {
+      session.receive({
+        protocol: 2,
+        kind: 'history',
+        requestId: `attested-${i}`,
+        baseVersion: document.version,
+        action: 'undo',
+        ...(focused === undefined ? {} : { focused }),
+      });
+      await until(
+        () =>
+          messages.some(
+            (m) =>
+              m.kind === 'historyResult' && m.requestId === `attested-${i}`,
+          ),
+        `Attestation ${i} settles`,
+      );
+    }
+    assert.deepEqual(attestations, [false, false, true]);
+  } finally {
+    session.dispose();
+  }
 }
 
 /** Held-repeat nudges arrive as one accumulated move; navigation never reaches the host. */

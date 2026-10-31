@@ -105,7 +105,10 @@ export class DocumentSession {
     private readonly document: vscode.TextDocument,
     private readonly applyWorkspaceEdit = vscode.workspace.applyEdit,
     private readonly clipboard = windowClipboard,
-    private readonly activateHistoryTarget?: () => Promise<boolean>,
+    /** `attested`: the request says the designer owned DOM focus. */
+    private readonly activateHistoryTarget?: (
+      attested: boolean,
+    ) => Promise<boolean>,
     private readonly revealSource = (uri: vscode.Uri): Thenable<unknown> =>
       vscode.commands.executeCommand('vscode.openWith', uri, 'default'),
   ) {
@@ -560,7 +563,7 @@ export class DocumentSession {
           'Native history is unavailable in this read-only or restricted document.';
       else if (
         !this.activateHistoryTarget ||
-        !(await this.activateHistoryTarget())
+        !(await this.activateHistoryTarget(message.focused === true))
       )
         reason =
           'Cannot verify the originating designer. Focus this report and try again.';

@@ -116,6 +116,9 @@ test('history has fixed closed actions, correlated results and replay protection
     { targetId: '2:1' },
   ])
     assert.equal(validateMessage({ ...history, ...extra }), null);
+  assert.ok(validateMessage({ ...history, focused: true }));
+  assert.ok(validateMessage({ ...history, focused: false }));
+  assert.equal(validateMessage({ ...history, focused: 'yes' }), null);
   const result = {
     ...history,
     kind: 'historyResult',
@@ -126,6 +129,11 @@ test('history has fixed closed actions, correlated results and replay protection
   };
   assert.ok(validateMessage(result));
   assert.equal(validateMessage({ ...result, resultVersion: 2 }), null);
+  assert.equal(
+    validateMessage({ ...result, focused: true }),
+    null,
+    'a result never carries the focus evidence',
+  );
   const binding = new DocumentBinding('fixture:a', 2, [], []);
   assert.equal(binding.receive(history).ok, false);
   binding.receive({ protocol: 2, kind: 'ready' });

@@ -45,8 +45,14 @@ export class RdlcEditorProvider implements vscode.CustomTextEditorProvider {
       nonce,
       cspSource: panel.webview.cspSource,
     });
-    const session = new DocumentSession(document, undefined, undefined, () =>
-      activateHistoryTarget(document, panel),
+    const session = new DocumentSession(
+      document,
+      undefined,
+      undefined,
+      (attested) =>
+        activateHistoryTarget(document, panel, undefined, undefined, {
+          attested,
+        }),
     );
     const sidebar = this.sidebar.register(document, panel, session);
     const subscription = session.onMessage((message) => {

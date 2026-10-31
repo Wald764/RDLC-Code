@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HostAdapter } from './host-adapter';
+import { GESTURE_FOCUS_WINDOW_MS, HostAdapter } from './host-adapter';
 import { emptySelection, selectItem } from './selection';
 import type { ActionOutcomeMessage } from '@rdlc/report-model/protocol';
 import type { DesignSceneItem } from '@rdlc/report-model/scene';
@@ -661,6 +661,129 @@ describe('focus probe', () => {
       ]);
       expect(host.sent(), 'not a document message').toHaveLength(sent);
     }
+  });
+
+  describe('without OS window focus', () => {
+    // `isTrusted` cannot be forged on a real event: capture the frame's own
+    // listeners and invoke them with event-shaped objects.
+    const answers = (): {
+      ask: () => boolean;
+      fire: (type: string, trusted: boolean) => void;
+      host: HostAdapter;
+      posted: unknown[];
+    } => {
+      const posted: unknown[] = [];
+      (globalThis as { acquireVsCodeApi?: unknown }).acquireVsCodeApi = () => ({
+        postMessage: (message: unknown) => posted.push(message),
+      });
+      vi.restoreAllMocks();
+      vi.spyOn(globalThis.document, 'hasFocus').mockReturnValue(false);
+      const listeners = new Map<string, (event: unknown) => void>();
+      const add = globalThis.addEventListener.bind(globalThis);
+      vi.spyOn(globalThis, 'addEventListener').mockImplementation(((
+        type: string,
+        listener: (event: unknown) => void,
+        options?: unknown,
+      ) => {
+        listeners.set(type, listener);
+        add(type, listener as EventListener, options as boolean);
+      }) as typeof globalThis.addEventListener);
+      TestBed.resetTestingModule();
+      const host = TestBed.inject(HostAdapter);
+      return {
+        host,
+        posted,
+        ask: () => {
+          posted.length = 0;
+          host.ingest({ protocol: 2, kind: 'focusProbe', probeId: 'probe-1' });
+          return (posted[0] as { focused: boolean }).focused;
+        },
+        fire: (type, trusted) =>
+          listeners.get(type)!({ type, isTrusted: trusted }),
+      };
+    };
+
+    it('is not focused before any gesture', () => {
+      expect(answers().ask()).toBe(false);
+    });
+
+    it('counts a trusted pointer or key gesture until the frame blurs', () => {
+      for (const gesture of ['pointerdown', 'keydown']) {
+        const { ask, fire } = answers();
+        expect(ask()).toBe(false);
+        fire(gesture, true);
+        expect(ask(), `${gesture} moves workbench focus here`).toBe(true);
+        fire('blur', true);
+        expect(ask(), 'focus left the frame').toBe(false);
+        fire(gesture, true);
+        expect(ask(), 'a new gesture returns it').toBe(true);
+      }
+    });
+
+    it('attests a history request at the moment of the gesture, whatever follows', () => {
+      const { ask, fire, host, posted } = answers();
+      host.ingest(snapshot(2));
+      fire('pointerdown', true);
+      expect(host.sendHistory('history-1', 'undo')).toBe(true);
+      expect(posted.at(-1)).toMatchObject({ kind: 'history', focused: true });
+      // VS Code's own focus handoff blurs the frame after the click: the
+      // request keeps what it said, a later read does not.
+      fire('blur', true);
+      expect(ask()).toBe(false);
+    });
+
+    it('does not attest a history request issued without focus', () => {
+      const { host, posted } = answers();
+      host.ingest(snapshot(2));
+      expect(host.sendHistory('history-2', 'undo')).toBe(true);
+      expect(posted.at(-1)).toMatchObject({ kind: 'history', focused: false });
+    });
+
+    it('lets a gesture vouch for focus only while it is recent', () => {
+      let now = 1_000_000;
+      const { ask, fire, host, posted } = answers();
+      vi.spyOn(Date, 'now').mockImplementation(() => now);
+      host.ingest(snapshot(2));
+      fire('pointerdown', true);
+      now += GESTURE_FOCUS_WINDOW_MS - 1;
+      expect(ask(), 'a recent gesture').toBe(true);
+      expect(host.domFocusEvidence()).toBe(true);
+      // A long idle with no blur: the user may have moved on silently.
+      now += 10_000;
+      expect(ask(), 'the probe follows the same rule').toBe(false);
+      expect(host.sendHistory('history-idle', 'undo')).toBe(true);
+      expect(posted.at(-1)).toMatchObject({ kind: 'history', focused: false });
+      fire('keydown', true);
+      expect(ask(), 'a new gesture renews it').toBe(true);
+    });
+
+    it('carries the original evidence when a request is replayed later', () => {
+      let now = 1_000_000;
+      const { fire, host, posted } = answers();
+      vi.spyOn(Date, 'now').mockImplementation(() => now);
+      host.ingest(snapshot(2));
+      fire('pointerdown', true);
+      const atGesture = host.domFocusEvidence();
+      now += 30_000;
+      expect(host.sendHistory('history-held', 'undo', atGesture)).toBe(true);
+      expect(posted.at(-1)).toMatchObject({ kind: 'history', focused: true });
+    });
+
+    it('never counts a scripted gesture', () => {
+      const { ask, fire } = answers();
+      fire('pointerdown', false);
+      fire('keydown', false);
+      expect(ask()).toBe(false);
+    });
+
+    it('removes its listeners when destroyed', () => {
+      answers();
+      const remove = vi.spyOn(globalThis, 'removeEventListener');
+      TestBed.resetTestingModule();
+      const types = remove.mock.calls.map(([type]) => type);
+      for (const type of ['pointerdown', 'keydown', 'blur'])
+        expect(types).toContain(type);
+    });
   });
 
   it('ignores a malformed probe', () => {

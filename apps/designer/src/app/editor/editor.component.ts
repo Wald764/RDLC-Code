@@ -2608,10 +2608,19 @@ export class EditorComponent {
     );
   }
 
-  history(action: 'undo' | 'redo'): void {
-    if (this.host.pending() || this.held(() => this.history(action))) return;
+  /**
+   * `focused` is the DOM focus evidence at the user's first gesture: a request
+   * held behind a draft decision can be replayed long after it, and the replay
+   * must carry what the user's click proved, not a fresh (expired) reading.
+   */
+  history(
+    action: 'undo' | 'redo',
+    focused = this.host.domFocusEvidence(),
+  ): void {
+    if (this.host.pending() || this.held(() => this.history(action, focused)))
+      return;
     this.cancelGesture();
-    this.host.sendHistory(crypto.randomUUID(), action);
+    this.host.sendHistory(crypto.randomUUID(), action, focused);
   }
 
   /** Why creation is unavailable right now, or '' when it can proceed. */

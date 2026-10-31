@@ -1,3 +1,21 @@
+import type { ActivationReport } from '../../apps/vscode-extension/src/panel-activation.js';
+
+/**
+ * Whether an activation was refused because the webview never owned DOM focus.
+ * The designer attests focus from a trusted user gesture (or OS window focus);
+ * an extension-host test can produce neither, and an environment without OS
+ * window focus (CI, some platforms) leaves the scripted webview unfocused. That
+ * is observed state, not a platform check: tests assert the safety outcome (the
+ * request is refused and nothing is touched) instead of the success path.
+ */
+export function webviewNeverOwnedFocus(report?: ActivationReport): boolean {
+  return (
+    report?.phase === 'probe' &&
+    report.probes.length > 0 &&
+    report.probes.every((answer) => answer === 'unfocused')
+  );
+}
+
 /**
  * A minimal scripted webview that answers the host's DOM focus probe the way
  * the designer does (`document.hasFocus()` of its frame). It holds a focusable

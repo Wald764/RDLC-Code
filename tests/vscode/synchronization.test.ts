@@ -18,6 +18,7 @@ import type { ActivationReport } from '../../apps/vscode-extension/src/panel-act
 import {
   focusProbeHtml,
   focusProbeWebviewOptions,
+  webviewNeverOwnedFocus,
 } from './focus-probe-webview.js';
 import { SidebarHostContext } from '../../apps/vscode-extension/src/sidebar/host-context.js';
 import type { NativeIntent } from '../../apps/vscode-extension/src/sidebar/host-context.js';
@@ -552,14 +553,11 @@ async function nativeDesignerHistory(): Promise<void> {
           document,
           undefined,
           undefined,
-          () =>
-            activateHistoryTarget(
-              document,
-              panel,
-              type,
-              undefined,
-              (report) => (lastActivation = report),
-            ),
+          (attested) =>
+            activateHistoryTarget(document, panel, type, undefined, {
+              attested,
+              report: (report) => (lastActivation = report),
+            }),
         );
         const messages: HostMessage[] = [];
         session.onMessage((message) => messages.push(message));
@@ -702,6 +700,26 @@ async function nativeDesignerHistory(): Promise<void> {
         const result = first.messages.find(
           (m) => m.kind === 'historyResult' && m.requestId === requestId,
         );
+        if (
+          action === 'undo' &&
+          i === 0 &&
+          result?.kind === 'historyResult' &&
+          !result.accepted &&
+          webviewNeverOwnedFocus(lastActivation)
+        ) {
+          // This environment cannot give the scripted webview DOM focus (no OS
+          // window focus, and a test cannot produce a trusted gesture), so the
+          // designer rightly never attested it. Observed state, not a platform
+          // check: assert the safety outcome instead of the success path.
+          assert.equal(result.changed, false);
+          assert.match(result.reason ?? '', /Cannot verify the originating/);
+          assert.equal(a.getText(), texts.at(-1), 'A is untouched');
+          assert.equal(b.getText(), exactB, 'B is untouched');
+          // B owns DOM focus again, as in the misroute scenario.
+          await vscode.window.showTextDocument(b, vscode.ViewColumn.Three);
+          await misroutedHistoryIsReported(a, b, exactB);
+          return;
+        }
         assert.ok(
           result?.kind === 'historyResult' && result.accepted && result.changed,
           // If this ever fails again, say where the native command landed.
@@ -835,7 +853,7 @@ async function nativeDesignerHistory(): Promise<void> {
         first.panel,
         type,
         undefined,
-        (report) => (lastActivation = report),
+        { report: (report) => (lastActivation = report) },
       );
       void replaceSource(c, source + '\n<!-- Unrelated C -->');
       return verified;
@@ -923,57 +941,63 @@ async function nativeDesignerHistory(): Promise<void> {
         !refused.accepted &&
         !refused.changed,
     );
-    // Even if activation wrongly vouched for the designer, a command the
-    // workbench routes to the focused source editor of B is reported as such.
-    const misrouting = new DocumentSession(
-      a,
-      undefined,
-      undefined,
-      async () => {
-        return true;
-      },
-    );
-    const misrouted: HostMessage[] = [];
-    misrouting.onMessage((message) => misrouted.push(message));
-    try {
-      misrouting.receive({ protocol: 2, kind: 'ready' });
-      await until(
-        () => misrouted.some((m) => m.kind === 'snapshot'),
-        'Misrouting session ready',
-      );
-      misrouting.receive({
-        protocol: 2,
-        kind: 'history',
-        requestId: 'misrouted-history',
-        baseVersion: a.version,
-        action: 'undo',
-      });
-      await until(
-        () => misrouted.some((m) => m.kind === 'historyResult'),
-        'Misrouted history settles',
-      );
-      const outcome = misrouted.find((m) => m.kind === 'historyResult');
-      assert.notEqual(
-        b.getText(),
-        exactB,
-        'the focused source editor B was undone',
-      );
-      assert.ok(
-        outcome?.kind === 'historyResult' &&
-          !outcome.accepted &&
-          !outcome.changed &&
-          /another document/.test(outcome.reason ?? ''),
-        JSON.stringify(outcome),
-      );
-    } finally {
-      misrouting.dispose();
-    }
+    await misroutedHistoryIsReported(a, b, exactB);
   } finally {
     for (const v of views) {
       v.session.dispose();
       v.panel.dispose();
     }
     registration.dispose();
+  }
+}
+
+/**
+ * Even if activation wrongly vouched for the designer, a command the workbench
+ * routes to the focused source editor of B is reported as such. B must be the
+ * active, focused text editor.
+ */
+async function misroutedHistoryIsReported(
+  a: vscode.TextDocument,
+  b: vscode.TextDocument,
+  exactB: string,
+): Promise<void> {
+  const misrouting = new DocumentSession(a, undefined, undefined, async () => {
+    return true;
+  });
+  const misrouted: HostMessage[] = [];
+  misrouting.onMessage((message) => misrouted.push(message));
+  try {
+    misrouting.receive({ protocol: 2, kind: 'ready' });
+    await until(
+      () => misrouted.some((m) => m.kind === 'snapshot'),
+      'Misrouting session ready',
+    );
+    misrouting.receive({
+      protocol: 2,
+      kind: 'history',
+      requestId: 'misrouted-history',
+      baseVersion: a.version,
+      action: 'undo',
+    });
+    await until(
+      () => misrouted.some((m) => m.kind === 'historyResult'),
+      'Misrouted history settles',
+    );
+    const outcome = misrouted.find((m) => m.kind === 'historyResult');
+    assert.notEqual(
+      b.getText(),
+      exactB,
+      'the focused source editor B was undone',
+    );
+    assert.ok(
+      outcome?.kind === 'historyResult' &&
+        !outcome.accepted &&
+        !outcome.changed &&
+        /another document/.test(outcome.reason ?? ''),
+      JSON.stringify(outcome),
+    );
+  } finally {
+    misrouting.dispose();
   }
 }
 

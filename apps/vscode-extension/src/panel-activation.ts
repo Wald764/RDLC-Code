@@ -6,23 +6,32 @@ import { validateMessage } from '@rdlc/report-model/protocol';
 const SETTLE_TIMEOUT_MS = 2_000;
 const SETTLE_POLL_MS = 25;
 /**
- * The DOM focus attestation has its own budget, started once the tab settled:
- * the settle phase may spend its whole deadline, and the probe must still get
- * a real chance. The overall bound of a history activation is therefore
- * `SETTLE_TIMEOUT_MS + FOCUS_PROBE_TIMEOUT_MS` (plus the final tab re-check).
+ * The DOM focus attestation has its own budget for the reads that follow the
+ * settle phase, which keeps its whole shared deadline. The overall bound of a
+ * history activation is therefore `SETTLE_TIMEOUT_MS + FOCUS_PROBE_TIMEOUT_MS`.
  */
 const FOCUS_PROBE_TIMEOUT_MS = 1_000;
 
 /** Where an activation stopped, for diagnostics only. */
 export interface ActivationReport {
-  /** `active`: panel never active; `wanted`: request lapsed; `settle`: tab never settled;
-   *  `probe`: DOM focus not attested; `recheck`: tab changed after the attestation;
+  /** `active`: panel never active; `wanted`: request lapsed; `probe`: DOM focus
+   *  not attested; `settle`: tab never settled after the focus handoff;
    *  `done`: accepted. */
-  readonly phase: 'active' | 'wanted' | 'settle' | 'probe' | 'recheck' | 'done';
+  readonly phase: 'active' | 'wanted' | 'probe' | 'settle' | 'done';
   /** Answers read from the webview, in order. */
   readonly probes: readonly ProbeAnswer[];
 }
 export type ProbeAnswer = 'focused' | 'unfocused' | 'unanswered';
+
+export interface HistoryActivationOptions {
+  /**
+   * The request itself says the designer owned DOM focus when the user issued
+   * it (see `HistoryRequestMessage.focused`): no probe round trip is needed.
+   */
+  readonly attested?: boolean;
+  /** Told where the activation stopped and what the webview answered; for diagnostics only. */
+  readonly report?: (report: ActivationReport) => void;
+}
 
 /**
  * Asks the webview whether its designer frame owns DOM focus. Undo and redo are
@@ -78,7 +87,7 @@ export function activateDesignerPanel(
   viewType = 'rdlcCode.designer',
   stillWanted?: () => boolean,
 ): Promise<boolean> {
-  return activate(document, panel, viewType, stillWanted, false);
+  return activate(document, panel, viewType, stillWanted, 'none');
 }
 
 /**
@@ -103,19 +112,30 @@ export function activateDesignerPanel(
  * `undo`: DOM focus does, and it can stay in another document's code editor
  * (observed on macOS) while the panel reports active. A history target is
  * therefore accepted only once the webview itself attests that it owns DOM
- * focus (see `probeFocus`); otherwise the request is refused, never run.
+ * focus (see `probeFocus`); otherwise the request is refused, never run. The
+ * attestation is read once the tab settled, after the host's own reveal and
+ * focus command.
  *
- * `report`, when given, is told where the activation stopped and what the
- * webview answered; it is for diagnostics and carries nothing user-facing.
+ * A history request issued by a trusted gesture in the designer already says
+ * so (`options.attested`): the designer is the only party that can observe it,
+ * and the click-to-undo latency matters, so no probe is made. `options.report`
+ * receives where the activation stopped; it is diagnostics only.
  */
 export function activateHistoryTarget(
   document: vscode.TextDocument,
   panel: vscode.WebviewPanel,
   viewType = 'rdlcCode.designer',
   stillWanted?: () => boolean,
-  report?: (report: ActivationReport) => void,
+  options: HistoryActivationOptions = {},
 ): Promise<boolean> {
-  return activate(document, panel, viewType, stillWanted, true, report);
+  return activate(
+    document,
+    panel,
+    viewType,
+    stillWanted,
+    options.attested === true ? 'attested' : 'probe',
+    options.report,
+  );
 }
 
 async function activate(
@@ -123,7 +143,7 @@ async function activate(
   panel: vscode.WebviewPanel,
   viewType: string,
   stillWanted: (() => boolean) | undefined,
-  requireDomFocus: boolean,
+  domFocus: 'none' | 'attested' | 'probe',
   report?: (report: ActivationReport) => void,
 ): Promise<boolean> {
   const probes: ProbeAnswer[] = [];
@@ -165,17 +185,20 @@ async function activate(
     if (Date.now() >= deadline) return stop('settle');
     await sleep();
   }
-  if (!requireDomFocus) return stop('done');
+  if (domFocus !== 'probe') return stop('done');
   // DOM focus moves asynchronously after the focus command: read it (a probe
-  // changes nothing) until the webview owns it or its own budget passes.
+  // changes nothing) until the webview owns it or the probe budget, started
+  // once the tab settled, passes. A webview that never answers is not asked
+  // again: it has no listener.
   const probeDeadline = Date.now() + FOCUS_PROBE_TIMEOUT_MS;
   for (;;) {
     const answer = await probeFocus(panel, probeDeadline - Date.now());
     probes.push(answer);
     if (answer === 'focused') break;
-    if (Date.now() >= probeDeadline) return stop('probe');
+    if (answer === 'unanswered' || Date.now() >= probeDeadline)
+      return stop('probe');
     await sleep();
   }
   // The workbench may have moved on while the webview answered.
-  return stop(settled() ? 'done' : 'recheck');
+  return stop(settled() ? 'done' : 'settle');
 }

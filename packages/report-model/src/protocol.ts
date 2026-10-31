@@ -82,9 +82,16 @@ export interface HistoryRequestMessage {
   readonly requestId: string;
   readonly baseVersion: number;
   readonly action: 'undo' | 'redo';
+  /**
+   * The designer owned workbench DOM focus when the user issued the request
+   * (`document.hasFocus()` or a recent trusted pointer/key gesture with no
+   * blur since). The host routes native undo by DOM focus, which only the designer
+   * can observe; when absent or false the host probes it before running history.
+   */
+  readonly focused?: boolean;
 }
 export interface HistoryResultMessage
-  extends Omit<HistoryRequestMessage, 'kind'> {
+  extends Omit<HistoryRequestMessage, 'kind' | 'focused'> {
   readonly kind: 'historyResult';
   readonly resultVersion: number;
   readonly accepted: boolean;
@@ -107,7 +114,7 @@ export interface FocusProbeResultMessage {
   readonly protocol: 2;
   readonly kind: 'focusProbeResult';
   readonly probeId: string;
-  /** `document.hasFocus()` of the designer frame at answer time. */
+  /** The designer's DOM focus evidence at answer time (`document.hasFocus()` or a recent trusted gesture with no blur since). */
   readonly focused: boolean;
 }
 
@@ -650,8 +657,13 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
           'requestId',
           'baseVersion',
           'action',
-          ...(result ? ['resultVersion', 'accepted', 'changed', 'reason'] : []),
+          ...(result
+            ? ['resultVersion', 'accepted', 'changed', 'reason']
+            : ['focused']),
         ]) &&
+        (result ||
+          value.focused === undefined ||
+          typeof value.focused === 'boolean') &&
         id(value.requestId) &&
         version(value.baseVersion) &&
         ['undo', 'redo'].includes(String(value.action)) &&
