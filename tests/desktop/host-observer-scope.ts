@@ -1,5 +1,5 @@
 /**
- * Mandatory native host observation (strace plus iptables owner-uid blocking)
+ * Mandatory native host observation (strace plus iptables cgroup-scoped blocking)
  * exists on Linux only. Windows (ETW/WFP) needs elevation that CI runners do
  * not give, and macOS has no unprivileged observer. The journeys below depend
  * on that observation, so they are skipped explicitly on the other platforms

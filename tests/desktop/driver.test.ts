@@ -105,6 +105,7 @@ function palettePage(escapeHangs: boolean) {
     bringToFront: async () => {},
     evaluate: async () => {},
     locator: (selector: string) => ({
+      count: async () => 1,
       fill: async () => {},
       waitFor: async (options: { state?: string }) => {
         // Only "the palette is still open after its budget" fails here.
@@ -192,6 +193,105 @@ test('a failed palette keeps its original error once the Escape recovery answers
     return true;
   });
   assert.equal(pressed.at(-1), 'Escape');
+});
+
+/**
+ * A palette whose row fails its actionability check for the first `failures`
+ * attempts (the quick input hid itself) and, when `pressThrows` is set, runs
+ * the command on the real press and then throws. `open` is what the quick
+ * input reports after a failure.
+ */
+function closingPalettePage(options: {
+  failures: number;
+  pressThrows?: boolean;
+  open?: boolean;
+}) {
+  const pressed: string[] = [];
+  const trials: number[] = [];
+  const presses: number[] = [];
+  const ran: number[] = [];
+  const row = {
+    click: async (clickOptions?: { trial?: boolean }) => {
+      if (clickOptions?.trial) {
+        trials.push(trials.length + 1);
+        if (trials.length <= options.failures)
+          throw new Error('locator.click: Timeout 10000ms exceeded.');
+        return;
+      }
+      presses.push(presses.length + 1);
+      ran.push(ran.length + 1);
+      if (options.pressThrows) throw new Error('locator.click: target closed');
+    },
+    waitFor: async () => {},
+  };
+  const rows = { count: async () => 1, first: () => row };
+  const page = {
+    bringToFront: async () => {},
+    evaluate: async () => {},
+    locator: () => ({
+      count: async () => (options.open === false ? 0 : 1),
+      fill: async () => {},
+      waitFor: async () => {},
+      filter: () => ({ ...rows, filter: () => rows }),
+    }),
+    keyboard: {
+      press: async (key: string) => {
+        pressed.push(key);
+      },
+    },
+  };
+  return { page: page as unknown as Page, pressed, trials, presses, ran };
+}
+
+test('a palette that closed before the row click is reopened and the command runs once', async () => {
+  const { page, pressed, trials, ran } = closingPalettePage({ failures: 1 });
+  await workbenchCommand(page, 'RDLC Test: Open Requested File');
+  // Two palette openings, one dismissal between them, one command run.
+  assert.equal(trials.length, 2);
+  assert.equal(ran.length, 1);
+  assert.equal(pressed.filter((key) => key === 'Escape').length, 1);
+  assert.equal(pressed.length, 3);
+});
+
+test('a palette that is already gone is not dismissed with Escape', async () => {
+  const { page, pressed, ran } = closingPalettePage({
+    failures: 1,
+    open: false,
+  });
+  await workbenchCommand(page, 'RDLC Test: Open Requested File');
+  assert.equal(ran.length, 1);
+  assert.equal(pressed.includes('Escape'), false);
+});
+
+test('a palette that never passes the click checks fails after the bounded attempts with every cause', async () => {
+  const { page, presses } = closingPalettePage({ failures: Infinity });
+  const id = 'RDLC Test: Open Requested File';
+  await assert.rejects(workbenchCommand(page, id), (error: unknown) => {
+    assert.ok(error instanceof AggregateError, String(error));
+    assert.match(
+      error.message,
+      new RegExp(`^Command palette did not run ${id} after 3 attempts: `),
+    );
+    assert.equal(error.errors.length, 3);
+    return true;
+  });
+  assert.equal(presses.length, 0);
+});
+
+test('a click that landed and then threw never runs the command a second time', async () => {
+  const { page, presses, ran } = closingPalettePage({
+    failures: 0,
+    pressThrows: true,
+  });
+  const id = 'RDLC Test: Open Requested File';
+  await assert.rejects(workbenchCommand(page, id), (error: unknown) => {
+    assert.ok(error instanceof AggregateError, String(error));
+    assert.match(error.message, /failed after it was dispatched/);
+    assert.match(error.message, /target closed/);
+    return true;
+  });
+  assert.equal(presses.length, 1);
+  assert.equal(ran.length, 1);
 });
 
 test(
@@ -386,6 +486,37 @@ test('an extension inspector port is validated and passed before the folder', ()
     for (const port of [0, 80, 70000, 1.5])
       assert.throws(() =>
         validateDesktopOptions({ ...base, inspectExtensions: port }),
+      );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a host cgroup is validated as a single path segment and never changes the launch arguments', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rdlc-desktop-'));
+  try {
+    const base = {
+      root,
+      version: '1.142.0',
+      packaged: false,
+      artifactDir: join(root, 'artifacts'),
+    };
+    const plain = validateDesktopOptions(base);
+    assert.equal('hostCgroup' in plain, false);
+    const scoped = validateDesktopOptions({
+      ...base,
+      hostCgroup: 'rdlc-desktop',
+    });
+    assert.equal(scoped.hostCgroup, 'rdlc-desktop');
+    assert.deepEqual(
+      desktopLaunchArgs(scoped, desktopPaths(scoped, 'a')),
+      desktopLaunchArgs(plain, desktopPaths(plain, 'a')),
+    );
+    for (const hostCgroup of ['', 'a/b', '../x', '/rdlc', 'a b'])
+      assert.throws(
+        () => validateDesktopOptions({ ...base, hostCgroup }),
+        /Invalid cgroup name/,
+        hostCgroup,
       );
   } finally {
     rmSync(root, { recursive: true, force: true });

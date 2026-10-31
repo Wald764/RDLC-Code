@@ -2,21 +2,31 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import type { BrowserContext, Request } from 'playwright';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import {
   assertCompleteObservation,
+  attachLineNames,
+  type AttachHistory,
   createSecurityObserver,
   detectNativeCapability,
   detectSecurityCapability,
   enableHostBlocking,
   FILE_PATH_SLOTS,
+  hostBlockingProbeRule,
   hostBlockingRules,
   newCanaryName,
+  parseAttachProgress,
   parseStraceLog,
+  probeRuleHits,
+  type ProcessState,
   ruleHits,
   sanitizeTarget,
+  resolveAttach,
   sanitizeUrl,
   SecurityObserverUnsupportedError,
+  startAttachedObservation,
   startTracedCommand,
   STRACE_ARGS,
   sweepHostBlockingRules,
@@ -214,7 +224,12 @@ test('Windows host blocking fails closed with the WFP rule and positive control 
   assert.match(WINDOWS_BLOCKING_REQUIREMENT, /administrator/);
   assert.match(WINDOWS_BLOCKING_REQUIREMENT, /positive control/);
   await assert.rejects(
-    enableHostBlocking({ platform: 'win32', uid: 0, hasIpv6: false }),
+    enableHostBlocking({
+      desktopPid: 4242,
+      platform: 'win32',
+      uid: 0,
+      hasIpv6: false,
+    }),
     (error: unknown) =>
       error instanceof SecurityObserverUnsupportedError &&
       error.message === WINDOWS_BLOCKING_REQUIREMENT,
@@ -313,6 +328,213 @@ test(
     const unclassified = await run();
     assert.ok(unclassified.length > 0);
     assert.ok(unclassified.every((event) => event.unexpected === undefined));
+  },
+);
+
+test('strace attach announcements name the pid whatever the locale', () => {
+  const progress = parseAttachProgress(
+    [
+      'strace: Process 100 attached with 31 threads',
+      'strace: Process 101 attached',
+      'strace: attach: ptrace(PTRACE_SEIZE, 102): Aucun processus ayant ce numéro',
+      'strace: Could not attach to process 103: Operation not permitted',
+    ].join('\n'),
+  );
+  assert.deepEqual([...progress.attached], [100, 101]);
+  assert.deepEqual(
+    [...progress.errors],
+    [
+      [103, 'Operation not permitted'],
+      [102, 'Aucun processus ayant ce numéro'],
+    ],
+  );
+});
+
+const live = (tracerPid: number): ProcessState => ({ kind: 'live', tracerPid });
+const gone: ProcessState = { kind: 'gone' };
+
+test('attach resolution: a process gone before its attach is not a gap, a refused live one is', () => {
+  const states = new Map<number, ProcessState>([
+    [100, live(500)],
+    [101, gone],
+    [102, live(0)],
+    [103, live(0)],
+    [104, live(500)],
+  ]);
+  const resolution = resolveAttach({
+    pids: [100, 101, 102, 103, 104],
+    rootPid: 100,
+    tracerPid: 500,
+    progress: {
+      attached: new Set([100]),
+      errors: new Map([
+        [101, 'No such process'],
+        [102, 'Operation not permitted'],
+      ]),
+    },
+    state: (pid) => states.get(pid) ?? gone,
+  });
+  // 100 announced; 104 traced by strace though not announced yet.
+  assert.deepEqual([...resolution.attached], [100, 104]);
+  assert.deepEqual(resolution.exited, [101]);
+  assert.deepEqual(
+    [...resolution.failures],
+    [[102, 'Operation not permitted']],
+  );
+  // 103 is live, untraced and unannounced: still being attached, never guessed.
+  assert.deepEqual(resolution.pending, [103]);
+});
+
+test('attach resolution: a vanished root is a failure, and a tracer that died traces nothing', () => {
+  const vanished = resolveAttach({
+    pids: [100, 101],
+    rootPid: 100,
+    tracerPid: 500,
+    progress: { attached: new Set(), errors: new Map() },
+    state: (pid) => (pid === 100 ? gone : live(0)),
+  });
+  assert.deepEqual(
+    [...vanished.failures],
+    [[100, 'process exited before attach']],
+  );
+  assert.deepEqual(vanished.exited, []);
+  assert.deepEqual(vanished.pending, [101]);
+  const unknownTracer = resolveAttach({
+    pids: [100],
+    rootPid: 100,
+    tracerPid: undefined,
+    progress: { attached: new Set(), errors: new Map() },
+    state: () => live(0),
+  });
+  assert.deepEqual(unknownTracer.pending, [100]);
+});
+
+test('attach resolution: a refusal seen while the process was alive stays a gap after it vanishes', () => {
+  const history = new Map<number, AttachHistory>();
+  const base = {
+    pids: [100, 101],
+    rootPid: 100,
+    tracerPid: 500,
+    history,
+  };
+  const poll = (
+    states: Record<number, ProcessState>,
+    errors: [number, string][],
+  ) =>
+    resolveAttach({
+      ...base,
+      progress: { attached: new Set([100]), errors: new Map(errors) },
+      state: (pid) => states[pid] ?? gone,
+    });
+  const first = poll({ 100: live(500), 101: live(0) }, [
+    [101, 'Operation not permitted'],
+  ]);
+  assert.deepEqual([...first.failures], [[101, 'Operation not permitted']]);
+  // Later the pid is gone and strace says nothing new: still a gap, not "exited".
+  const later = poll({ 100: live(500), 101: gone }, []);
+  assert.deepEqual([...later.failures], [[101, 'Operation not permitted']]);
+  assert.deepEqual(later.exited, []);
+});
+
+test('attach resolution: a pid seen alive that vanishes unreported stays pending until strace accounts for it', () => {
+  const history = new Map<number, AttachHistory>();
+  const poll = (state: ProcessState, errors: [number, string][]) =>
+    resolveAttach({
+      pids: [100, 101],
+      rootPid: 100,
+      tracerPid: 500,
+      history,
+      progress: { attached: new Set([100]), errors: new Map(errors) },
+      state: (pid) => (pid === 100 ? live(500) : state),
+    });
+  assert.deepEqual(poll(live(0), []).pending, [101]);
+  // Gone, and strace has not reported it yet: neither exited nor failed.
+  const unreported = poll(gone, []);
+  assert.deepEqual(unreported.pending, [101]);
+  assert.deepEqual(unreported.exited, []);
+  assert.equal(unreported.failures.size, 0);
+  // strace reports the vanished pid and /proc agrees: it exited before the attach.
+  const reported = poll(gone, [[101, 'No such process']]);
+  assert.deepEqual(reported.exited, [101]);
+  assert.deepEqual(reported.pending, []);
+  // A pid that was gone at its very first check is exited without any report.
+  const fresh = resolveAttach({
+    pids: [100, 102],
+    rootPid: 100,
+    tracerPid: 500,
+    progress: { attached: new Set([100]), errors: new Map() },
+    state: (pid) => (pid === 100 ? live(500) : gone),
+  });
+  assert.deepEqual(fresh.exited, [102]);
+});
+
+test('strace attach notices for processes that exited before the attach are not capture faults', () => {
+  const vanished = new Set([69278]);
+  assert.equal(
+    attachLineNames(
+      'strace: attach: ptrace(PTRACE_SEIZE, 69278): Aucun processus ayant ce numéro',
+      vanished,
+    ),
+    true,
+  );
+  assert.equal(
+    attachLineNames(
+      'strace: Could not attach to process 69278: No such process',
+      vanished,
+    ),
+    true,
+  );
+  assert.equal(
+    attachLineNames(
+      'strace: attach: ptrace(PTRACE_SEIZE, 69279): Operation not permitted',
+      vanished,
+    ),
+    false,
+  );
+  assert.equal(
+    attachLineNames('strace: something else 69278', vanished),
+    false,
+  );
+});
+
+test(
+  'a tree member that exited before strace reached it leaves the attach complete',
+  { timeout: 60_000 },
+  async (t) => {
+    const capability = detectNativeCapability();
+    if (!capability.attach.supported) {
+      assert.ok(capability.attach.reason);
+      t.diagnostic(`attach capture unsupported: ${capability.attach.reason}`);
+      return;
+    }
+    const idle = spawn(
+      process.execPath,
+      ['-e', 'setInterval(() => {}, 1000)'],
+      {
+        stdio: 'ignore',
+      },
+    );
+    const short = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+    try {
+      await once(idle, 'spawn');
+      await once(short, 'exit');
+      const rootPid = idle.pid;
+      const goneChild = short.pid;
+      assert.ok(rootPid && goneChild);
+      // The snapshot was taken while the second process was still alive.
+      const handle = await startAttachedObservation(
+        { rootPid, maxDurationMs: 30_000 },
+        capability,
+        () => [rootPid, goneChild],
+      );
+      const observation = await handle.stop();
+      assert.equal(observation.state, 'observed', observation.reason ?? '');
+      assert.deepEqual(observation.attachedPids, [rootPid]);
+      assert.deepEqual(observation.exitedBeforeAttachPids, [goneChild]);
+      assert.deepEqual(observation.attachFailures, []);
+    } finally {
+      idle.kill();
+    }
   },
 );
 
@@ -770,27 +992,48 @@ test('harness-only positive control: a canary outside the allowlist is detected,
   );
 });
 
-const LISTING = (hits: number, tagged = 1) =>
+const LISTING = (hits: number, tagged = 1, probeHits?: number) =>
   [
     'Chain OUTPUT (policy ACCEPT 0 packets, 0 bytes)',
     '    pkts      bytes target     prot opt in     out     source               destination',
     ...Array.from(
       { length: tagged },
       () =>
-        `${String(hits).padStart(8)}      180 REJECT     all  --  *      *       0.0.0.0/0           !127.0.0.0/8          OWNER UID match 1001 /* rdlc-desktop-security */ reject-with icmp-port-unreachable`,
+        `${String(hits).padStart(8)}      180 REJECT     all  --  *      *       0.0.0.0/0           !127.0.0.0/8          cgroup /rdlc-desktop /* rdlc-desktop-security */ reject-with icmp-port-unreachable`,
     ),
+    ...(probeHits === undefined
+      ? []
+      : [
+          `${String(probeHits).padStart(8)}      180            all  --  *      *       0.0.0.0/0            203.0.113.9          cgroup /rdlc-desktop /* rdlc-desktop-probe */`,
+        ]),
     '       9      540 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0  /* other */',
   ].join('\n');
 
-test('host blocking rules are owner scoped, tagged and removable', () => {
-  const rules = hostBlockingRules(1001);
+test('host blocking rules are cgroup scoped, never uid scoped, tagged and removable', () => {
+  const rules = hostBlockingRules('rdlc-desktop');
   assert.deepEqual(
     rules.map((rule) => rule.tool),
     ['iptables', 'ip6tables'],
   );
   const [v4, v6] = rules;
   assert.ok(v4 && v6);
-  assert.deepEqual(v4.add.slice(0, 5), ['-I', 'OUTPUT', '1', '-m', 'owner']);
+  assert.deepEqual(v4.add.slice(0, 7), [
+    '-I',
+    'OUTPUT',
+    '1',
+    '-m',
+    'cgroup',
+    '--path',
+    'rdlc-desktop',
+  ]);
+  for (const rule of rules) {
+    assert.ok(!rule.add.includes('owner'), 'no owner match');
+    assert.ok(!rule.add.some((arg) => /uid/i.test(arg)), 'no uid scope');
+  }
+  assert.ok(v4.add.includes('REJECT') && v4.add.includes('-j'));
+  assert.throws(() => hostBlockingRules('a/b'), /Invalid cgroup name/);
+  assert.throws(() => hostBlockingRules('../x'), /Invalid cgroup name/);
+  assert.throws(() => hostBlockingRules(''), /Invalid cgroup name/);
   assert.ok(v4.add.includes('!') && v4.add.includes('127.0.0.0/8'));
   assert.ok(v6.add.includes('::1/128'));
   assert.ok(v4.add.includes('rdlc-desktop-security'));
@@ -801,6 +1044,23 @@ test('host blocking rules are owner scoped, tagged and removable', () => {
   assert.deepEqual(ruleHits('Chain OUTPUT (policy ACCEPT)'), []);
 });
 
+const DESKTOP_PID = 4242;
+
+/** enableHostBlocking with a scoped, healthy Desktop tree unless a test overrides it. */
+function enableScoped(
+  options: Omit<Parameters<typeof enableHostBlocking>[0], 'desktopPid'> &
+    Partial<Pick<Parameters<typeof enableHostBlocking>[0], 'desktopPid'>>,
+): ReturnType<typeof enableHostBlocking> {
+  return enableHostBlocking({
+    desktopPid: DESKTOP_PID,
+    cgroupProblem: () => null,
+    listTree: (pid) => [pid, pid + 1, pid + 2],
+    readCgroup: () => '0::/rdlc-desktop\n',
+    probeOutside: async () => 'TIMEOUT',
+    ...options,
+  });
+}
+
 class FakeProcess extends EventEmitter {
   exitCode: number | null = null;
   exit(code: number): void {
@@ -810,7 +1070,8 @@ class FakeProcess extends EventEmitter {
 
 interface FakeHost {
   readonly calls: string[];
-  readonly hits: { v4: number; v6: number };
+  /** `probe`: the counting rule of the probe destination (IPv4 only). */
+  readonly hits: { v4: number; v6: number; probe: number };
   readonly run: (file: string, args: readonly string[]) => string;
 }
 
@@ -825,7 +1086,7 @@ function fakeHost(
   } = {},
 ): FakeHost {
   const calls: string[] = [];
-  const hits = { v4: 0, v6: 0 };
+  const hits = { v4: 0, v6: 0, probe: 0 };
   let removalFailures = options.failRemovals ?? 0;
   const run = (file: string, args: readonly string[]): string => {
     const line = [file, ...args].join(' ');
@@ -836,7 +1097,7 @@ function fakeHost(
     if (
       args.includes('-D') &&
       removalFailures > 0 &&
-      line.includes('--uid-owner 0 ')
+      line.includes('--path rdlc-desktop ')
     ) {
       removalFailures--;
       throw new Error('busy');
@@ -847,6 +1108,7 @@ function fakeHost(
       return LISTING(
         tool === 'ip6tables' ? hits.v6 : hits.v4,
         options.taggedLines ?? 1,
+        tool === 'ip6tables' ? undefined : hits.probe,
       );
     return '';
   };
@@ -857,6 +1119,7 @@ const probeFor =
   (host: FakeHost, code = 'ECONNREFUSED') =>
   async () => {
     host.hits.v4++;
+    host.hits.probe++;
     return code;
   };
 const probe6For =
@@ -868,7 +1131,7 @@ const probe6For =
 
 test('host blocking is proven by counter deltas around the probe, never by summing tagged lines', async () => {
   const host = fakeHost();
-  const blocking = await enableHostBlocking({
+  const blocking = await enableScoped({
     platform: 'linux',
     uid: 1001,
     hasIpv6: true,
@@ -882,19 +1145,20 @@ test('host blocking is proven by counter deltas around the probe, never by summi
   assert.equal(blocking.ipv6Hits, 1);
   assert.match(
     host.calls.find((c) => c.includes(' -I ')) ?? '',
-    /^sudo -n iptables -I OUTPUT 1 -m owner --uid-owner 1001 /,
+    /^sudo -n iptables -I OUTPUT 1 -m cgroup --path rdlc-desktop /,
   );
   assert.ok(host.calls.some((c) => c.startsWith('sudo -n ip6tables -I')));
   host.calls.length = 0;
   blocking.release();
   blocking.release();
-  assert.equal(host.calls.filter((c) => c.includes(' -D OUTPUT ')).length, 2);
+  // Both REJECT rules and the probe counting rule are removed.
+  assert.equal(host.calls.filter((c) => c.includes(' -D OUTPUT ')).length, 3);
 
   // A pre-existing hit count does not count: only the delta around the probe does.
   const stale = fakeHost();
   stale.hits.v4 = 50;
   await assert.rejects(
-    enableHostBlocking({
+    enableScoped({
       platform: 'linux',
       uid: 1001,
       hasIpv6: false,
@@ -909,7 +1173,7 @@ test('host blocking is proven by counter deltas around the probe, never by summi
   // Two tagged rules are ambiguous, so the counters prove nothing.
   const twice = fakeHost({ taggedLines: 2 });
   await assert.rejects(
-    enableHostBlocking({
+    enableScoped({
       platform: 'linux',
       uid: 1001,
       hasIpv6: false,
@@ -923,7 +1187,7 @@ test('host blocking is proven by counter deltas around the probe, never by summi
   // The blocked probe actually connected: not blocked, rule removed.
   const open = fakeHost();
   await assert.rejects(
-    enableHostBlocking({
+    enableScoped({
       platform: 'linux',
       uid: 1001,
       hasIpv6: false,
@@ -938,7 +1202,7 @@ test('host blocking is proven by counter deltas around the probe, never by summi
   // Mechanism unavailable: explicit reason and rollback of anything installed.
   const denied = fakeHost({ failOn: 'ip6tables -I' });
   await assert.rejects(
-    enableHostBlocking({
+    enableScoped({
       platform: 'linux',
       uid: 1001,
       hasIpv6: true,
@@ -955,7 +1219,7 @@ test('host blocking is proven by counter deltas around the probe, never by summi
 test('IPv6 blocking needs a real ip6tables counter delta; no IPv6 is recorded as unavailable', async () => {
   // No IPv6 stack at all.
   const none = fakeHost();
-  const absent = await enableHostBlocking({
+  const absent = await enableScoped({
     platform: 'linux',
     uid: 0,
     hasIpv6: false,
@@ -972,7 +1236,7 @@ test('IPv6 blocking needs a real ip6tables counter delta; no IPv6 is recorded as
 
   // IPv6 stack without a route: the connect fails before the OUTPUT chain.
   const routeless = fakeHost();
-  const unavailable = await enableHostBlocking({
+  const unavailable = await enableScoped({
     platform: 'linux',
     uid: 0,
     hasIpv6: true,
@@ -989,7 +1253,7 @@ test('IPv6 blocking needs a real ip6tables counter delta; no IPv6 is recorded as
   // Refused with no counter delta proves nothing.
   const unproven = fakeHost();
   await assert.rejects(
-    enableHostBlocking({
+    enableScoped({
       platform: 'linux',
       uid: 0,
       hasIpv6: true,
@@ -1003,7 +1267,7 @@ test('IPv6 blocking needs a real ip6tables counter delta; no IPv6 is recorded as
   // Connected over IPv6: not blocked.
   const leaking = fakeHost();
   await assert.rejects(
-    enableHostBlocking({
+    enableScoped({
       platform: 'linux',
       uid: 0,
       hasIpv6: true,
@@ -1020,7 +1284,7 @@ test('release is retryable, hooks cover exit and signals, and stale tagged rules
   // A failed removal leaves the rule installed and release retryable.
   const flaky = fakeHost({ failRemovals: 1 });
   const hooks = new FakeProcess();
-  const blocking = await enableHostBlocking({
+  const blocking = await enableScoped({
     platform: 'linux',
     uid: 0,
     hasIpv6: false,
@@ -1055,7 +1319,7 @@ test('release is retryable, hooks cover exit and signals, and stale tagged rules
   for (const event of ['exit', 'SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT']) {
     const host = fakeHost();
     const proc = new FakeProcess();
-    await enableHostBlocking({
+    await enableScoped({
       platform: 'linux',
       uid: 0,
       hasIpv6: false,
@@ -1067,7 +1331,7 @@ test('release is retryable, hooks cover exit and signals, and stale tagged rules
     proc.emit(event);
     assert.equal(
       host.calls.filter((c) => c.includes(' -D OUTPUT ')).length,
-      1,
+      2, // the REJECT rule and the probe counting rule
       event,
     );
     if (event !== 'exit')
@@ -1077,10 +1341,10 @@ test('release is retryable, hooks cover exit and signals, and stale tagged rules
   // Stale tagged rules from a killed run are removed before installing.
   const stale =
     '-P OUTPUT ACCEPT\n' +
-    '-A OUTPUT -m owner --uid-owner 1001 ! -d 127.0.0.0/8 -m comment --comment rdlc-desktop-security -j REJECT --reject-with icmp-port-unreachable\n' +
+    '-A OUTPUT -m cgroup --path rdlc-desktop ! -d 127.0.0.0/8 -m comment --comment rdlc-desktop-security -j REJECT --reject-with icmp-port-unreachable\n' +
     '-A OUTPUT -m comment --comment "other rule" -j ACCEPT\n';
   const host = fakeHost({ stale: { iptables: stale } });
-  const swept = await enableHostBlocking({
+  const swept = await enableScoped({
     platform: 'linux',
     uid: 0,
     hasIpv6: false,
@@ -1090,7 +1354,7 @@ test('release is retryable, hooks cover exit and signals, and stale tagged rules
   });
   const firstInsert = host.calls.findIndex((c) => c.includes(' -I OUTPUT '));
   const sweep = host.calls.findIndex((c) =>
-    c.includes(' -D OUTPUT -m owner --uid-owner 1001 ! -d 127.0.0.0/8 '),
+    c.includes(' -D OUTPUT -m cgroup --path rdlc-desktop ! -d 127.0.0.0/8 '),
   );
   assert.ok(sweep !== -1 && sweep < firstInsert, 'sweep precedes install');
   assert.ok(
@@ -1315,10 +1579,230 @@ test('the secret denylist covers credential stores of the home directory', () =>
   );
 });
 
+test('host blocking refuses to run when the cgroup is missing, the tree escaped it, or the rule leaks to the runner', async () => {
+  // No cgroup: a clear reason, nothing installed, and never a uid fallback.
+  const missing = fakeHost();
+  await assert.rejects(
+    enableScoped({
+      platform: 'linux',
+      uid: 1001,
+      hasIpv6: false,
+      run: missing.run,
+      cgroupProblem: () =>
+        'The cgroup /sys/fs/cgroup/rdlc-desktop does not exist. Create it once before the run with: sudo mkdir -p /sys/fs/cgroup/rdlc-desktop',
+      proc: new FakeProcess(),
+    }),
+    (error: unknown) =>
+      error instanceof SecurityObserverUnsupportedError &&
+      /unavailable: The cgroup .* does not exist\. Create it once/.test(
+        error.message,
+      ),
+  );
+  assert.deepEqual(missing.calls, [], 'no iptables call, no uid fallback');
+
+  // A Desktop that was not launched into the cgroup is refused before any rule.
+  const escaped = fakeHost();
+  await assert.rejects(
+    enableScoped({
+      platform: 'linux',
+      uid: 1001,
+      hasIpv6: false,
+      run: escaped.run,
+      readCgroup: (pid) =>
+        pid === DESKTOP_PID + 1
+          ? '0::/user.slice/user-1001.slice/session-1.scope\n'
+          : '0::/rdlc-desktop\n',
+      proc: new FakeProcess(),
+    }),
+    /not inside the cgroup \/rdlc-desktop: 4243 \(\/user\.slice\/user-1001\.slice\/session-1\.scope\)/,
+  );
+  assert.deepEqual(escaped.calls, []);
+
+  // A cgroup v1-only listing has no unified entry.
+  await assert.rejects(
+    enableScoped({
+      platform: 'linux',
+      uid: 0,
+      hasIpv6: false,
+      run: fakeHost().run,
+      readCgroup: () => '12:cpu:/\n',
+      proc: new FakeProcess(),
+    }),
+    /no cgroup v2 entry/,
+  );
+
+  // Descendant cgroups are inside (the match is recursive); look-alikes are not.
+  const nested = await enableScoped({
+    platform: 'linux',
+    uid: 0,
+    hasIpv6: false,
+    run: fakeHost().run,
+    probe: async () => 'ECONNREFUSED',
+    readCgroup: () => '0::/rdlc-desktop/child\n',
+    proc: new FakeProcess(),
+  }).catch((error: unknown) => error);
+  assert.ok(
+    nested instanceof SecurityObserverUnsupportedError,
+    'proof still needs a counter delta',
+  );
+  assert.doesNotMatch(String(nested), /not inside the cgroup/);
+  await assert.rejects(
+    enableScoped({
+      platform: 'linux',
+      uid: 0,
+      hasIpv6: false,
+      run: fakeHost().run,
+      readCgroup: () => '0::/rdlc-desktop-other\n',
+      proc: new FakeProcess(),
+    }),
+    /not inside the cgroup/,
+  );
+
+  // A gone helper is tolerated, a gone root is not.
+  const gone = fakeHost();
+  const tolerated = await enableScoped({
+    platform: 'linux',
+    uid: 0,
+    hasIpv6: false,
+    run: gone.run,
+    probe: probeFor(gone),
+    readCgroup: (pid) => (pid === DESKTOP_PID ? '0::/rdlc-desktop\n' : null),
+    proc: new FakeProcess(),
+  });
+  assert.deepEqual(tolerated.scopedPids, [DESKTOP_PID]);
+  tolerated.release();
+  await assert.rejects(
+    enableScoped({
+      platform: 'linux',
+      uid: 0,
+      hasIpv6: false,
+      run: fakeHost().run,
+      readCgroup: () => null,
+      proc: new FakeProcess(),
+    }),
+    /exited before blocking was enabled/,
+  );
+
+  // A rule that also hit the probe from outside the cgroup would block the
+  // runner agent: refused and rolled back.
+  const leaky = fakeHost();
+  await assert.rejects(
+    enableScoped({
+      platform: 'linux',
+      uid: 1001,
+      hasIpv6: false,
+      run: leaky.run,
+      probe: probeFor(leaky),
+      probeOutside: async () => {
+        leaky.hits.v4++;
+        leaky.hits.probe++;
+        return 'ECONNREFUSED';
+      },
+      proc: new FakeProcess(),
+    }),
+    /not scoped to the cgroup \/rdlc-desktop.*runner agent/,
+  );
+  assert.ok(leaky.calls.some((c) => c.includes(' -D OUTPUT ')));
+
+  // The normal case records the scope proof.
+  const fine = fakeHost();
+  const blocking = await enableScoped({
+    platform: 'linux',
+    uid: 1001,
+    hasIpv6: false,
+    run: fine.run,
+    probe: probeFor(fine),
+    proc: new FakeProcess(),
+  });
+  assert.equal(blocking.cgroup, 'rdlc-desktop');
+  assert.equal(blocking.outsideHits, 0);
+  assert.deepEqual(blocking.scopedPids, [4242, 4243, 4244]);
+  assert.match(blocking.mechanism, /cgroup-v2 \(\/rdlc-desktop\)/);
+  blocking.release();
+});
+
+test('the connectivity probe runs inside the cgroup, the outside probe in the runner process', async () => {
+  const order: string[] = [];
+  const host = fakeHost();
+  const blocking = await enableScoped({
+    platform: 'linux',
+    uid: 0,
+    hasIpv6: true,
+    run: host.run,
+    probe: async () => {
+      order.push('inside4');
+      host.hits.v4++;
+      host.hits.probe++;
+      return 'ECONNREFUSED';
+    },
+    probe6: async () => {
+      order.push('inside6');
+      host.hits.v6++;
+      return 'ECONNREFUSED';
+    },
+    probeOutside: async () => {
+      order.push('outside');
+      return 'TIMEOUT';
+    },
+    proc: new FakeProcess(),
+  });
+  assert.deepEqual(order, ['inside4', 'inside6', 'outside']);
+  blocking.release();
+});
+
+test('the Desktop own traffic during the outside probe is not a scope leak, a vacuous probe rule is not a proof', async () => {
+  // Desktop traffic moves the REJECT rule's counter while the outside probe
+  // runs; only the probe-destination counting rule decides.
+  const noisy = fakeHost();
+  const blocking = await enableScoped({
+    platform: 'linux',
+    uid: 1001,
+    hasIpv6: false,
+    run: noisy.run,
+    probe: probeFor(noisy),
+    probeOutside: async () => {
+      noisy.hits.v4 += 5;
+      return 'TIMEOUT';
+    },
+    proc: new FakeProcess(),
+  });
+  assert.equal(blocking.outsideHits, 0);
+  blocking.release();
+
+  // The counting rule never saw the inside probe: the outside check would be vacuous.
+  const vacuous = fakeHost();
+  await assert.rejects(
+    enableScoped({
+      platform: 'linux',
+      uid: 1001,
+      hasIpv6: false,
+      run: vacuous.run,
+      probe: async () => {
+        vacuous.hits.v4++;
+        return 'ECONNREFUSED';
+      },
+      proc: new FakeProcess(),
+    }),
+    /probe-destination counting rule did not match/,
+  );
+  assert.ok(vacuous.calls.some((c) => c.includes(' -D OUTPUT ')));
+
+  const probeRule = hostBlockingProbeRule('rdlc-desktop');
+  assert.ok(!probeRule.add.includes('-j'), 'counting only');
+  assert.ok(probeRule.add.includes('203.0.113.9'));
+  assert.deepEqual(probeRule.remove, [
+    '-D',
+    'OUTPUT',
+    ...probeRule.add.slice(3),
+  ]);
+  assert.deepEqual(probeRuleHits(LISTING(3, 1, 2)), [2]);
+  assert.deepEqual(ruleHits(LISTING(3, 1, 2)), [3]);
+});
+
 test('the runner sweep removes tagged rules of a killed run and nothing else', () => {
   const stale =
     '-P OUTPUT ACCEPT\n' +
-    '-A OUTPUT -m owner --uid-owner 1001 ! -d 127.0.0.0/8 -m comment --comment rdlc-desktop-security -j REJECT --reject-with icmp-port-unreachable\n' +
+    '-A OUTPUT -m cgroup --path rdlc-desktop ! -d 127.0.0.0/8 -m comment --comment rdlc-desktop-security -j REJECT --reject-with icmp-port-unreachable\n' +
     '-A OUTPUT -m comment --comment "other rule" -j ACCEPT\n';
   const host = fakeHost({ stale: { iptables: stale } });
   const sweep = sweepHostBlockingRules({

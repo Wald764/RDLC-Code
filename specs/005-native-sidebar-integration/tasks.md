@@ -84,7 +84,7 @@ T010–T012 remain open:
 - Pixel comparison is scoped to the pinned Ubuntu 1.142.0 reference and recorded
   `unrun` elsewhere. No reference PNG exists yet; it must be generated with
   `--update-baselines` on that environment.
-- The security observer is Linux-only (strace + iptables owner-uid blocking,
+- The security observer is Linux-only (strace + iptables cgroup-scoped blocking,
   allowlist/denylist, canary, both profiles) and is unexecuted. Windows/macOS fail
   closed, with no host observer implemented, which keeps those CI entries red by
   design.

@@ -5,7 +5,6 @@ import {
   type BrowserContext,
   type ElectronApplication,
   type Frame,
-  type Locator,
   type Page,
 } from 'playwright';
 import {
@@ -20,6 +19,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  mkdtempSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -28,6 +28,7 @@ import { rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { arch, platform, release, tmpdir } from 'node:os';
+import { assertCgroupName, prepareCgroupLauncher } from './host-cgroup.js';
 
 /** Frozen launch contract used by the Desktop runner and specs. */
 export interface DesktopLaunchOptions {
@@ -42,6 +43,12 @@ export interface DesktopLaunchOptions {
   readonly workspaceDir?: string;
   /** Node inspector port for the extension host (test delay hooks only). */
   readonly inspectExtensions?: number;
+  /**
+   * Start the Desktop inside this cgroup v2 (relative to the cgroup2 root) so
+   * Linux host blocking can be scoped to its process tree. The launch fails,
+   * without any other scope, when the cgroup cannot be entered.
+   */
+  readonly hostCgroup?: string;
 }
 
 export interface DesktopPaths {
@@ -157,6 +164,7 @@ export function validateDesktopOptions(
       ...workspaceDir,
       ...(options.testHarness ? { testHarness: true } : {}),
       ...inspector(options),
+      ...hostCgroup(options),
     };
   }
   if (options.vsixPath) {
@@ -170,7 +178,16 @@ export function validateDesktopOptions(
     ...workspaceDir,
     ...(options.testHarness ? { testHarness: true } : {}),
     ...inspector(options),
+    ...hostCgroup(options),
   };
+}
+
+function hostCgroup(
+  options: DesktopLaunchOptions,
+): Pick<DesktopLaunchOptions, 'hostCgroup'> {
+  return options.hostCgroup === undefined
+    ? {}
+    : { hostCgroup: assertCgroupName(options.hostCgroup) };
 }
 
 function inspector(
@@ -1039,12 +1056,36 @@ export async function workbenchCommand(page: Page, id: string): Promise<void> {
   const shortcut =
     process.platform === 'darwin' ? 'Meta+Shift+P' : 'Control+Shift+P';
   // A slow runner can lose the shortcut or the typed text to a webview that
-  // grabs focus late (the designer right after it opens), so opening the
-  // palette and finding the row is retried before the command is declared
-  // unavailable. The failures of every attempt are kept for the report.
+  // grabs focus late (the designer right after it opens), and the quick input
+  // hides itself whenever focus leaves it, even between listing the row and
+  // clicking it. Opening the palette, finding the row and clicking it is one
+  // attempt; an attempt that failed before the click was dispatched ran no
+  // command, so it is repeated before the command is declared unavailable. Once
+  // the click has been entered the command may have run, so a failure from then
+  // on is never repeated. The failures of every attempt are kept for the report.
   const attempts: unknown[] = [];
-  let target: Locator | undefined;
-  for (let attempt = 1; attempt <= PALETTE_ATTEMPTS && !target; attempt++) {
+  let clicked = false;
+  let clickStarted = false;
+  // Escape only closes the palette while it is open: with the palette already
+  // gone it would reach the editor behind it.
+  const dismissOpenPalette = async (): Promise<void> => {
+    const open = await withTimeout(
+      page.locator('.quick-input-widget:visible').count(),
+      COMMAND_TIMEOUT,
+      'Command palette visibility check',
+    ).catch((check) => {
+      attempts.push(check);
+      return 1;
+    });
+    if (open === 0) return;
+    // Leave a half-typed palette behind only if the dismissal itself fails.
+    await withTimeout(
+      page.keyboard.press('Escape'),
+      COMMAND_TIMEOUT,
+      'Command palette recovery',
+    ).catch((recovery) => attempts.push(recovery));
+  };
+  for (let attempt = 1; attempt <= PALETTE_ATTEMPTS && !clicked; attempt++) {
     try {
       // Ctrl+P has just closed; its hidden input must not swallow the shortcut.
       await page
@@ -1069,25 +1110,35 @@ export async function workbenchCommand(page: Page, id: string): Promise<void> {
           .locator('.label-name')
           .filter({ hasText: new RegExp(`^\\s*${escapeRegExp(id)}\\s*$`) }),
       });
-      target = (await exact.count()) > 0 ? exact.first() : listed;
+      const target = (await exact.count()) > 0 ? exact.first() : listed;
+      // Bounded by the step, not by the command: a palette that closed under
+      // the click leaves no row to wait for, and Playwright would otherwise
+      // spend the whole command budget on a widget that is gone.
+      // A trial click runs every actionability check (visible, stable, enabled,
+      // receives events) without pressing anything: a palette that hid itself
+      // fails here, before any command could run.
+      await target.click({ trial: true, timeout: PALETTE_STEP_TIMEOUT });
+      // From here the press may reach the workbench: never repeat it.
+      clickStarted = true;
+      await target.click({ timeout: PALETTE_STEP_TIMEOUT });
+      clicked = true;
     } catch (error) {
       attempts.push(error);
-      // Leave a half-typed palette behind only if the dismissal itself fails.
-      await withTimeout(
-        page.keyboard.press('Escape'),
-        COMMAND_TIMEOUT,
-        'Command palette recovery',
-      ).catch((recovery) => attempts.push(recovery));
+      await dismissOpenPalette();
+      if (clickStarted)
+        throw new AggregateError(
+          attempts,
+          `Command palette click on ${id} failed after it was dispatched, so the command is not run again: ${describeError(error)}`,
+        );
     }
   }
-  if (!target)
+  if (!clicked)
     throw new AggregateError(
       attempts,
-      `Command palette did not list ${id} after ${PALETTE_ATTEMPTS} attempts: ${attempts
+      `Command palette did not run ${id} after ${PALETTE_ATTEMPTS} attempts: ${attempts
         .map(describeError)
         .join(' | ')}`,
     );
-  await target.click({ timeout: COMMAND_TIMEOUT });
   try {
     await input.waitFor({ state: 'hidden', timeout: COMMAND_TIMEOUT });
   } catch (error) {
@@ -1128,6 +1179,31 @@ export async function launchDesktop(
   const executableSha256 = await sha256File(executablePath);
   const executableVersion = readExecutableVersion(executablePath);
   const launchArgs = desktopLaunchArgs(resolved, paths);
+  // The program that is spawned. Scoped launches start a generated launcher that
+  // enters the cgroup and then exec's executablePath (same pid, same arguments);
+  // everything else about the Desktop identity keeps naming the real executable.
+  // The launcher lives in its own temp directory, removed when the Desktop
+  // closes (or fails to launch), so no script outlives its session.
+  const launcherDir = resolved.hostCgroup
+    ? mkdtempSync(join(tmpdir(), 'rdlc-cgroup-launch-'))
+    : undefined;
+  const removeLauncher = (): void => {
+    if (launcherDir) rmSync(launcherDir, { recursive: true, force: true });
+  };
+  let spawnPath: string;
+  try {
+    spawnPath =
+      resolved.hostCgroup && launcherDir
+        ? prepareCgroupLauncher({
+            cgroup: resolved.hostCgroup,
+            target: executablePath,
+            directory: launcherDir,
+          })
+        : executablePath;
+  } catch (error) {
+    removeLauncher();
+    throw error;
+  }
 
   mkdirSync(paths.profileDir, { recursive: true });
   // Sticky-scroll ancestor rows overlay real tree rows and intercept their
@@ -1196,6 +1272,7 @@ export async function launchDesktop(
     }
   } catch (error) {
     await removeProfile(paths.profileDir);
+    removeLauncher();
     throw error;
   }
 
@@ -1212,7 +1289,7 @@ export async function launchDesktop(
     try {
       app = await withTimeout(
         electron.launch({
-          executablePath,
+          executablePath: spawnPath,
           args: launchArgs,
           cwd: resolved.root,
           env: stringEnv(process.env),
@@ -1248,7 +1325,7 @@ export async function launchDesktop(
     }
 
     if (!page || !context) {
-      const cdp = await launchCdp(executablePath, launchArgs, resolved.root);
+      const cdp = await launchCdp(spawnPath, launchArgs, resolved.root);
       browser = cdp.browser;
       context = cdp.context;
       page = cdp.page;
@@ -1398,6 +1475,9 @@ export async function launchDesktop(
       profileDir: paths.profileDir,
       workspace: paths.workspaceDir,
       launchArgs,
+      ...(resolved.hostCgroup
+        ? { hostCgroup: resolved.hostCgroup, hostCgroupLauncher: spawnPath }
+        : {}),
       packaged: resolved.packaged,
       trace: tracing ? 'started' : 'unavailable',
       ...(vsixSha256 ? { vsixSha256 } : {}),
@@ -1475,6 +1555,11 @@ export async function launchDesktop(
             );
             if (existsSync(paths.profileDir))
               throw new Error('Desktop profile was not removed');
+          } catch (error) {
+            errors.push(error);
+          }
+          try {
+            removeLauncher();
           } catch (error) {
             errors.push(error);
           }
@@ -1611,6 +1696,7 @@ export async function launchDesktop(
     }
     if (child?.pid) killProcessTree(child.pid, process.platform !== 'win32');
     await removeProfile(paths.profileDir);
+    removeLauncher();
     const electronDetail = electronError
       ? ` Electron transport failed: ${electronError}.`
       : '';

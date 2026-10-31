@@ -93,6 +93,7 @@ function observationOf(events: readonly SecurityEvent[]): SecurityObservation {
       requestedPids: [100],
       attachedPids: [100],
       attachFailures: [],
+      exitedBeforeAttachPids: [],
       truncated: false,
       timedOut: false,
       events,

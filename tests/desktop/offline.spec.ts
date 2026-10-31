@@ -13,7 +13,7 @@
  *
  * Playwright route aborts are supporting coverage only; this file never
  * reports them as host-level proof. Host evidence is strace capture of the
- * Desktop process tree plus the iptables owner-uid REJECT rule and its packet
+ * Desktop process tree plus the iptables cgroup-scoped REJECT rule and its packet
  * counter. Syscall capture cannot attribute query, entity, expression or
  * resource evaluation to a report (SEMANTIC_PROOF_LIMITATION), so recorded
  * claims stay at observable network/file/exec/process attempts, report-frame
@@ -79,6 +79,7 @@ import {
   readWorkspaceTrust,
   type DesktopDriver,
 } from './driver.js';
+import { hostBlockingLaunchOption } from './host-cgroup.js';
 import {
   hostObserverSkipReason,
   hostObserverUnsupported,
@@ -619,7 +620,10 @@ function blockingSummary(
     mechanism: blocking.mechanism,
     ipv6: blocking.ipv6,
     ipv6Reason: blocking.ipv6Reason,
+    cgroup: blocking.cgroup,
+    scopedPids: blocking.scopedPids.length,
     ruleHits: blocking.hits,
+    outsideHits: blocking.outsideHits,
     ipv6RuleHits: blocking.ipv6Hits,
   };
 }
@@ -651,7 +655,7 @@ function capabilitySummary(
 function scopeRecord(): Record<string, string> {
   return {
     browserBlockingScope:
-      'Playwright request routing aborts are supporting coverage only; host blocking is the iptables owner-uid REJECT rule verified by its packet counter.',
+      'Playwright request routing aborts are supporting coverage only; host blocking is the iptables cgroup-scoped REJECT rule verified by its packet counter.',
     loopbackScope: LOOPBACK_SCOPE,
     reportAttributionScope: REPORT_ATTRIBUTION_SCOPE,
     observationScope: `${CAPTURE_COMPLETE_SCOPE} Channel coverage comes from the positive controls (the SC-009 control window and the per-profile webview controls); a genuinely quiet window is never required to record a network event.`,
@@ -1139,6 +1143,8 @@ async function openOfflineSession(
       testHarness: true,
       artifactDir: artifactRoot(root),
       workspaceDir: fixture.dir,
+      // Host blocking is scoped to the cgroup the Desktop starts in.
+      ...hostBlockingLaunchOption(),
     });
   } catch (error) {
     try {
@@ -1250,7 +1256,9 @@ async function provisionOffline(
   // Provisioning (download, profile, VSIX, trust) is complete: block now.
   const blocked = await blockOutbound(driver.context);
   session.blocked = blocked;
-  const blocking = await enableHostBlocking();
+  const blocking = await enableHostBlocking({
+    desktopPid: driver.identity.processId,
+  });
   session.blocking = blocking;
   return { blocked, blocking };
 }
@@ -1873,6 +1881,7 @@ async function runProfileLeg(
       testHarness: true,
       artifactDir: artifactRoot(root),
       workspaceDir: own.dir,
+      ...hostBlockingLaunchOption(),
     });
     if (profile === 'trusted') {
       await grantWorkspaceTrust(driver);
@@ -1905,12 +1914,16 @@ async function runProfileLeg(
 
     // Provisioning of this profile is complete: block now.
     const blocked = await blockOutbound(driver.context);
-    blocking = await enableHostBlocking();
+    blocking = await enableHostBlocking({
+      desktopPid: driver.identity.processId,
+    });
     leg.hostBlocking = {
       mechanism: blocking.mechanism,
       ipv6: blocking.ipv6,
       ipv6Reason: blocking.ipv6Reason,
+      cgroup: blocking.cgroup,
       ruleHits: blocking.hits,
+      outsideHits: blocking.outsideHits,
       ipv6RuleHits: blocking.ipv6Hits,
       browserBlocked: blocked.blocked,
       browserHosts: blocked.hosts,

@@ -191,7 +191,7 @@ on the whole Desktop matrix. A single failure in any repeat blocks the pull requ
   `scripts/desktop-matrix.ts`; nothing is duplicated. Each job gets
   `RDLC_DESKTOP_SPECS=<its specs>`, which restricts the run to those files (it requires
   `--measure`, and a spec outside the job's mode is refused). Linux provisioning
-  (`strace`, `iptables`, `xvfb`, locale) is the flake hunt's, shared by both uses.
+  (`strace`, `iptables` plus the `rdlc-desktop` cgroup for host blocking, `xvfb`, locale) is the flake hunt's, shared by both uses.
 - Strict mode (`--strict`, with `--measure`) fails a job on any failing or flaky test,
   any skip other than the platform skips documented in
   `tests/desktop/host-observer-scope.ts`, any interrupted or never-started test, an

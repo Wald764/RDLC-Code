@@ -17,6 +17,16 @@ import { homedir, platform as osPlatform } from 'node:os';
 import { basename, join, posix } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { BrowserContext, Request } from 'playwright';
+import {
+  CGROUP2_ROOT,
+  HOST_CGROUP_NAME,
+  assertCgroupName,
+  connectProbeInCgroup,
+  hostCgroupProblem,
+  inCgroup,
+  parseProcCgroup,
+  readProcCgroup,
+} from './host-cgroup.js';
 
 /**
  * Native syscall capture is only evidence for concrete attempts. Query, entity
@@ -138,6 +148,11 @@ export interface NativeObservation {
   readonly requestedPids: readonly number[];
   readonly attachedPids: readonly number[];
   readonly attachFailures: readonly string[];
+  /**
+   * Tree members that had already exited when strace reached them. They cannot
+   * make a syscall after the observation began, so they are not a coverage gap.
+   */
+  readonly exitedBeforeAttachPids: readonly number[];
   readonly truncated: boolean;
   readonly timedOut: boolean;
   readonly events: readonly SecurityEvent[];
@@ -247,7 +262,9 @@ export const STRACE_ARGS = [
 const DEFAULT_MAX_DURATION = 60_000;
 const DEFAULT_MAX_EVENTS = 20_000;
 const DEFAULT_MAX_TRACE_BYTES = 8 * 1024 * 1024;
-const ATTACH_TIMEOUT = 5_000;
+// strace attaches the tree's processes and threads one after the other. The loop
+// below ends as soon as every process is accounted for; this only bounds a hang.
+const ATTACH_TIMEOUT = 30_000;
 const STOP_TIMEOUT = 5_000;
 
 const LAUNCH_CONTROL = `
@@ -2345,6 +2362,7 @@ interface Session {
   readonly requestedPids: readonly number[];
   readonly attachedPids: readonly number[];
   readonly attachFailures: readonly string[];
+  readonly exitedBeforeAttachPids: readonly number[];
   /** Thread working directories read from /proc before attaching. */
   readonly initialCwds: ReadonlyMap<number, InitialCwd>;
   /** Executables read from /proc before attaching, per thread id. */
@@ -2378,6 +2396,17 @@ function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
   });
 }
 
+/** True when a strace attach notice names one of the given pids (wording is locale dependent, the pid is not). */
+export function attachLineNames(
+  line: string,
+  pids: ReadonlySet<number>,
+): boolean {
+  const match =
+    /attach: ptrace\(PTRACE_(?:SEIZE|ATTACH), (\d+)\)/.exec(line) ??
+    /Could not attach to process (\d+)/.exec(line);
+  return match !== null && pids.has(Number(match[1]));
+}
+
 async function finishSession(session: Session): Promise<NativeObservation> {
   if (session.stopTimer) {
     clearTimeout(session.stopTimer);
@@ -2403,13 +2432,15 @@ async function finishSession(session: Session): Promise<NativeObservation> {
   if (!trace.present)
     failures.push('strace did not produce a trace file for this observation.');
   // Routine attach/detach notices are expected. Anything else is a capture fault.
+  const vanished = new Set(session.exitedBeforeAttachPids);
   const stderr = session
     .stderr()
     .split(/\r?\n/)
     .filter(
       (line) =>
         line.trim() &&
-        !/^strace: Process \d+ (?:attached|detached)$/.test(line.trim()),
+        !/^strace: Process \d+ (?:attached|detached)$/.test(line.trim()) &&
+        !attachLineNames(line, vanished),
     )
     .join(' ');
   if (stderr)
@@ -2433,6 +2464,7 @@ async function finishSession(session: Session): Promise<NativeObservation> {
     requestedPids: session.requestedPids,
     attachedPids: session.attachedPids,
     attachFailures: session.attachFailures,
+    exitedBeforeAttachPids: session.exitedBeforeAttachPids,
     truncated,
     timedOut: session.timedOut,
     events: parsed.events,
@@ -2448,6 +2480,7 @@ function createSession(
     requestedPids: readonly number[];
     attachedPids: readonly number[];
     attachFailures: readonly string[];
+    exitedBeforeAttachPids?: readonly number[];
     initialCwds?: ReadonlyMap<number, InitialCwd>;
     initialExes?: ReadonlyMap<number, string>;
     redactions: readonly string[];
@@ -2470,6 +2503,7 @@ function createSession(
     requestedPids: options.requestedPids,
     attachedPids: options.attachedPids,
     attachFailures: options.attachFailures,
+    exitedBeforeAttachPids: options.exitedBeforeAttachPids ?? [],
     initialCwds: options.initialCwds ?? new Map(),
     initialExes: options.initialExes ?? new Map(),
     stderr: collectStderr(child),
@@ -2643,7 +2677,7 @@ function threadExes(pids: readonly number[]): Map<number, string> {
   return exes;
 }
 
-function processTree(rootPid: number): number[] {
+export function processTree(rootPid: number): number[] {
   const parents = processParentMap();
   if (!parents.has(rootPid))
     throw new SecurityObserverUnsupportedError(
@@ -2694,6 +2728,136 @@ export function findDesktopRootPid(profileDir: string): number | null {
   return matches[0] ?? null;
 }
 
+/** What /proc says about one process of the tree right now. */
+export type ProcessState =
+  | { readonly kind: 'gone' }
+  | { readonly kind: 'unknown' }
+  | { readonly kind: 'live'; readonly tracerPid: number };
+
+/** Locale-independent: only the existence and the TracerPid of /proc/<pid>/status. */
+export function readProcessState(pid: number): ProcessState {
+  let status: string;
+  try {
+    status = readFileSync(`/proc/${pid}/status`, 'utf8');
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ESRCH'
+      ? { kind: 'gone' }
+      : { kind: 'unknown' };
+  }
+  const state = /^State:\s*(\w)/m.exec(status)?.[1];
+  // A zombie or dead process makes no syscall and cannot be attached.
+  if (state === 'Z' || state === 'X') return { kind: 'gone' };
+  const tracer = /^TracerPid:\s*(\d+)/m.exec(status)?.[1];
+  return tracer === undefined
+    ? { kind: 'unknown' }
+    : { kind: 'live', tracerPid: Number(tracer) };
+}
+
+/**
+ * What the strace attach announced on stderr so far. Both messages name the pid;
+ * their wording after it is locale dependent and only ever reported, never matched.
+ */
+export function parseAttachProgress(stderr: string): {
+  attached: Set<number>;
+  errors: Map<number, string>;
+} {
+  const attached = new Set<number>();
+  const errors = new Map<number, string>();
+  for (const match of stderr.matchAll(/Process (\d+) attached/g))
+    attached.add(Number(match[1]));
+  for (const match of stderr.matchAll(
+    /Could not attach to process (\d+)[:]?\s*([^\n]*)/g,
+  ))
+    if (!errors.has(Number(match[1])))
+      errors.set(Number(match[1]), match[2] || 'attach failed');
+  for (const match of stderr.matchAll(
+    /attach: ptrace\(PTRACE_(?:SEIZE|ATTACH), (\d+)\):\s*([^\n]*)/g,
+  ))
+    if (!errors.has(Number(match[1])))
+      errors.set(Number(match[1]), match[2] || 'attach failed');
+  return { attached, errors };
+}
+
+export interface AttachResolution {
+  readonly attached: ReadonlySet<number>;
+  /** Tree members other than the root that were gone before strace reached them. */
+  readonly exited: readonly number[];
+  /** Real attach failures: strace refused a live process, or the root is gone. */
+  readonly failures: ReadonlyMap<number, string>;
+  /** Neither announced, refused, traced nor gone yet. */
+  readonly pending: readonly number[];
+}
+
+/** What earlier polls saw of one pid; refusals and sightings are never forgotten. */
+export interface AttachHistory {
+  /** Seen alive and not yet traced by an earlier poll. */
+  sawLive: boolean;
+  /** strace refused it while it was alive; kept even if it is gone later. */
+  refusal?: string;
+}
+
+/**
+ * Decide, from strace's announcements and the observable /proc state, what
+ * became of each process of the snapshotted tree. A process that was already
+ * gone at its first check, or that strace reported as vanished while /proc
+ * agrees, exited before the attach and ran nothing under observation. A
+ * process seen alive and untraced earlier that disappears with no report from
+ * strace is not assumed benign: it stays pending until strace accounts for it,
+ * and a refusal seen while it was alive is a gap whatever happens next. A live
+ * process traced by `tracerPid` is attached even if strace has not announced it
+ * yet, so slow attachment is waited out rather than guessed. `history` carries
+ * what earlier polls saw and is updated in place.
+ */
+export function resolveAttach(input: {
+  pids: readonly number[];
+  rootPid: number;
+  tracerPid: number | undefined;
+  progress: {
+    attached: ReadonlySet<number>;
+    errors: ReadonlyMap<number, string>;
+  };
+  state: (pid: number) => ProcessState;
+  history?: Map<number, AttachHistory>;
+}): AttachResolution {
+  const history = input.history ?? new Map<number, AttachHistory>();
+  const attached = new Set<number>();
+  const exited: number[] = [];
+  const failures = new Map<number, string>();
+  const pending: number[] = [];
+  for (const pid of input.pids) {
+    if (input.progress.attached.has(pid)) {
+      attached.add(pid);
+      continue;
+    }
+    const seen = history.get(pid) ?? { sawLive: false };
+    history.set(pid, seen);
+    const state = input.state(pid);
+    const error = input.progress.errors.get(pid);
+    if (
+      state.kind === 'live' &&
+      input.tracerPid !== undefined &&
+      state.tracerPid === input.tracerPid
+    ) {
+      attached.add(pid);
+    } else if (seen.refusal !== undefined) {
+      failures.set(pid, seen.refusal);
+    } else if (state.kind === 'gone') {
+      if (pid === input.rootPid)
+        failures.set(pid, error ?? 'process exited before attach');
+      else if (error !== undefined || !seen.sawLive) exited.push(pid);
+      else pending.push(pid);
+    } else if (error !== undefined) {
+      seen.refusal = error;
+      failures.set(pid, error);
+    } else {
+      seen.sawLive = true;
+      pending.push(pid);
+    }
+  }
+  return { attached, exited, failures, pending };
+}
+
 /**
  * Attach to an existing host process tree. Coverage starts at attach time and
  * any descendant that cannot be attached makes the result partial.
@@ -2701,13 +2865,15 @@ export function findDesktopRootPid(profileDir: string): number | null {
 export async function startAttachedObservation(
   options: AttachedObservationOptions,
   capability: NativeCapability = detectNativeCapability(),
+  snapshot: (rootPid: number) => number[] = processTree,
+  state: (pid: number) => ProcessState = readProcessState,
 ): Promise<ObservationHandle<NativeObservation>> {
   if (!capability.attach.supported)
     throw new SecurityObserverUnsupportedError(
       `Native process-tree attach is unsupported: ${capability.attach.reason}`,
     );
   const bounds = normalizeOptions(options);
-  const pids = processTree(options.rootPid);
+  const pids = snapshot(options.rootPid);
   // Read before attaching: plain calls such as stat("./") of a process that was
   // already running resolve against a directory the trace never shows.
   const initialCwds = threadCwds(pids);
@@ -2738,37 +2904,44 @@ export async function startAttachedObservation(
   }
 
   const getStderr = collectStderr(child);
-  const attached = new Set<number>();
-  const failures: string[] = [];
+  const history = new Map<number, AttachHistory>();
+  const resolve = (): AttachResolution =>
+    resolveAttach({
+      pids,
+      rootPid: options.rootPid,
+      tracerPid: child.pid,
+      progress: parseAttachProgress(getStderr()),
+      state,
+      history,
+    });
+  // strace attaches the processes one after the other and then traces silently.
+  // The wait ends on observable state: every process announced, refused, traced
+  // (TracerPid) or gone. Only a hung attach reaches the deadline.
   const deadline = Date.now() + ATTACH_TIMEOUT;
+  let resolution = resolve();
   while (
+    resolution.pending.length > 0 &&
     Date.now() < deadline &&
     child.exitCode === null &&
     child.signalCode === null
   ) {
-    const stderr = getStderr();
-    for (const match of stderr.matchAll(/Process (\d+) attached/g))
-      attached.add(Number(match[1]));
-    for (const match of stderr.matchAll(
-      /Could not attach to process (\d+)[:]?\s*([^\n]*)/g,
-    )) {
-      const pid = Number(match[1]);
-      if (!failures.some((failure) => failure.startsWith(`pid ${pid}:`)))
-        failures.push(
-          `pid ${pid}: ${sanitizeTarget(match[2] ?? 'attach failed', bounds.redactions)}`,
-        );
-    }
-    if (attached.size + failures.length >= pids.length) break;
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, 100);
+    await new Promise<void>((done) => {
+      const timer = setTimeout(done, 100);
       timer.unref();
     });
+    resolution = resolve();
   }
   const stderr = getStderr();
+  const attached = new Set(resolution.attached);
+  const failures: string[] = [];
   for (const pid of pids) {
-    if (attached.has(pid)) continue;
-    if (failures.some((failure) => failure.startsWith(`pid ${pid}:`))) continue;
-    failures.push(`pid ${pid}: attach not confirmed`);
+    const refusal = resolution.failures.get(pid);
+    if (refusal !== undefined)
+      failures.push(
+        `pid ${pid}: ${sanitizeTarget(refusal, bounds.redactions)}`,
+      );
+    else if (resolution.pending.includes(pid))
+      failures.push(`pid ${pid}: attach not confirmed`);
   }
   if (!attached.has(options.rootPid)) {
     await waitForExit(child, STOP_TIMEOUT);
@@ -2791,6 +2964,7 @@ export async function startAttachedObservation(
     requestedPids: pids,
     attachedPids: [...attached],
     attachFailures: failures,
+    exitedBeforeAttachPids: resolution.exited,
     initialCwds,
     initialExes,
     redactions: [...bounds.redactions, homedir()],
@@ -2901,6 +3075,7 @@ export function createSecurityObserver(
       requestedPids: [],
       attachedPids: [],
       attachFailures: [],
+      exitedBeforeAttachPids: [],
       truncated: false,
       timedOut: false,
       events: [],
@@ -2923,6 +3098,7 @@ export function createSecurityObserver(
               requestedPids: [],
               attachedPids: [],
               attachFailures: [],
+              exitedBeforeAttachPids: [],
               truncated: false,
               timedOut: false,
               events: [],
@@ -2991,6 +3167,10 @@ export function assertCompleteObservation(
 }
 
 const BLOCK_COMMENT = 'rdlc-desktop-security';
+/** Tag of the counting-only rule that sees the probe destination from the cgroup alone. */
+const PROBE_COMMENT = 'rdlc-desktop-probe';
+const isOurRule = (line: string): boolean =>
+  line.includes(BLOCK_COMMENT) || line.includes(PROBE_COMMENT);
 const BLOCKED_CODES = new Set([
   'ECONNREFUSED',
   'EHOSTUNREACH',
@@ -3000,12 +3180,14 @@ const BLOCKED_CODES = new Set([
 ]);
 
 /**
- * Owner-scoped REJECT of every non-loopback packet. Loopback stays open because
- * the driver reaches the Desktop over it. ponytail: scopes the whole runner uid
- * for the observation window, not only the Desktop tree; use a cgroup match if
- * a dedicated user/cgroup is ever provisioned.
+ * Cgroup-scoped REJECT of every non-loopback packet of the processes in the
+ * cgroup v2 `cgroup` (relative to the cgroup2 root, matched recursively). The
+ * Desktop is launched into that cgroup, so only its tree is blocked; the runner
+ * agent, which shares the runner uid, keeps its network. Loopback stays open
+ * because the driver reaches the Desktop over it. There is deliberately no uid
+ * scope: it would also reject the runner agent.
  */
-export function hostBlockingRules(uid: number): {
+export function hostBlockingRules(cgroup: string = HOST_CGROUP_NAME): {
   tool: 'iptables' | 'ip6tables';
   add: string[];
   remove: string[];
@@ -3018,9 +3200,9 @@ export function hostBlockingRules(uid: number): {
   ).map(([tool, loopback]) => {
     const spec = [
       '-m',
-      'owner',
-      '--uid-owner',
-      String(uid),
+      'cgroup',
+      '--path',
+      assertCgroupName(cgroup),
       '!',
       '-d',
       loopback,
@@ -3037,6 +3219,44 @@ export function hostBlockingRules(uid: number): {
       remove: ['-D', 'OUTPUT', ...spec],
     };
   });
+}
+
+/**
+ * Counting-only IPv4 rule (no target: matching packets carry on to the REJECT
+ * rule behind it) for the probe destination from the cgroup. The REJECT rule's
+ * own counter also moves for the Desktop's own traffic; this one can only move
+ * for a packet to the probe destination, so the inside and outside probes are
+ * told apart without depending on what the Desktop is doing.
+ */
+export function hostBlockingProbeRule(
+  cgroup: string = HOST_CGROUP_NAME,
+  host: string = PROBE_HOST,
+): { tool: 'iptables'; add: string[]; remove: string[] } {
+  const spec = [
+    '-m',
+    'cgroup',
+    '--path',
+    assertCgroupName(cgroup),
+    '-d',
+    host,
+    '-m',
+    'comment',
+    '--comment',
+    PROBE_COMMENT,
+  ];
+  return {
+    tool: 'iptables',
+    add: ['-I', 'OUTPUT', '1', ...spec],
+    remove: ['-D', 'OUTPUT', ...spec],
+  };
+}
+
+/** Packets matched by each tagged counting rule of the probe destination. */
+export function probeRuleHits(listing: string): number[] {
+  return listing
+    .split(/\r?\n/)
+    .filter((line) => line.includes(PROBE_COMMENT))
+    .map((line) => Number(/^\s*(\d+)/.exec(line)?.[1] ?? 0));
 }
 
 /**
@@ -3059,8 +3279,7 @@ function sweepTagged(
   let removed = 0;
   for (const tool of tools)
     for (const line of invoke(tool, ['-S', 'OUTPUT']).split(/\r?\n/)) {
-      if (!line.startsWith('-A OUTPUT ') || !line.includes(BLOCK_COMMENT))
-        continue;
+      if (!line.startsWith('-A OUTPUT ') || !isOurRule(line)) continue;
       const tokens = (line.match(/"[^"]*"|[^ ]+/g) ?? []).map((token) =>
         token.replace(/^"|"$/g, ''),
       );
@@ -3105,6 +3324,12 @@ export type HostCommandRunner = (
 
 export interface HostBlocking {
   readonly mechanism: string;
+  /** The cgroup v2 (relative to the cgroup2 root) the rules are scoped to. */
+  readonly cgroup: string;
+  /** Desktop tree processes verified to live in the cgroup before the rules went in. */
+  readonly scopedPids: readonly number[];
+  /** Packets the probe-destination counting rule matched during a probe from outside the cgroup; must be 0. */
+  readonly outsideHits: number;
   /** `unavailable` (with a reason) when no IPv6 connect can reach the OUTPUT chain; never inferred. */
   readonly ipv6: 'blocked' | 'unavailable';
   readonly ipv6Reason: string | null;
@@ -3155,8 +3380,9 @@ function connectProbe(host: string): Promise<string> {
 }
 
 // TEST-NET-3 and the IPv6 documentation prefix: never routable, never loopback.
-const defaultProbe = (): Promise<string> => connectProbe('203.0.113.9');
-const defaultProbe6 = (): Promise<string> => connectProbe('2001:db8::1');
+const PROBE_HOST = '203.0.113.9';
+const PROBE_HOST6 = '2001:db8::1';
+const defaultProbe = (): Promise<string> => connectProbe(PROBE_HOST);
 
 /** Failures that happen in the kernel before a packet reaches the OUTPUT chain. */
 const NO_ROUTE_CODES = new Set([
@@ -3166,21 +3392,34 @@ const NO_ROUTE_CODES = new Set([
 ]);
 
 /**
- * Block non-loopback traffic of the runner uid (so the launched Desktop tree).
- * Call after provisioning/launch. Fails with an explicit reason when the
- * mechanism is unavailable, not effective, or its rule counter never moved.
+ * Block non-loopback traffic of the Desktop process tree, and of nothing else:
+ * the rules match the cgroup the Desktop was launched into (`launchDesktop`
+ * with `hostCgroup`), never the runner uid, which the runner agent shares.
+ * Call after provisioning/launch. Fails with an explicit reason when the cgroup
+ * is missing or the tree is not inside it, when the mechanism is unavailable or
+ * not effective, when its rule counter never moved for a probe run inside the
+ * cgroup, or when a probe from outside the cgroup moved it.
  */
-export async function enableHostBlocking(
-  options: {
-    platform?: NodeJS.Platform;
-    uid?: number;
-    hasIpv6?: boolean;
-    run?: HostCommandRunner;
-    probe?: () => Promise<string>;
-    probe6?: () => Promise<string>;
-    proc?: ProcessHooks;
-  } = {},
-): Promise<HostBlocking> {
+export async function enableHostBlocking(options: {
+  /** Root pid of the Desktop: it and its descendants must live in the cgroup. */
+  desktopPid: number;
+  cgroup?: string;
+  cgroupRoot?: string;
+  platform?: NodeJS.Platform;
+  uid?: number;
+  hasIpv6?: boolean;
+  run?: HostCommandRunner;
+  /** Connect probes run inside the cgroup; the defaults go through the launcher. */
+  probe?: () => Promise<string>;
+  probe6?: () => Promise<string>;
+  /** Connect probe run from the test process, outside the cgroup. */
+  probeOutside?: () => Promise<string>;
+  /** Reason the cgroup cannot be used, or null. */
+  cgroupProblem?: (cgroup: string) => string | null;
+  listTree?: (rootPid: number) => number[];
+  readCgroup?: (pid: number) => string | null;
+  proc?: ProcessHooks;
+}): Promise<HostBlocking> {
   const platform = options.platform ?? osPlatform();
   if (platform === 'win32')
     throw new SecurityObserverUnsupportedError(WINDOWS_BLOCKING_REQUIREMENT);
@@ -3193,14 +3432,65 @@ export async function enableHostBlocking(
     throw new SecurityObserverUnsupportedError(
       'Host-level outbound blocking is unavailable: the runner uid cannot be determined.',
     );
+  const cgroup = assertCgroupName(options.cgroup ?? HOST_CGROUP_NAME);
+  const cgroupRoot = options.cgroupRoot ?? CGROUP2_ROOT;
+  const unavailable = (reason: string): SecurityObserverUnsupportedError =>
+    new SecurityObserverUnsupportedError(
+      `Host-level outbound blocking is unavailable: ${reason}`,
+    );
+  // No cgroup, no blocking: never fall back to a uid scope, which would also
+  // reject the runner agent's own traffic.
+  const problem = (
+    options.cgroupProblem ??
+    ((name: string) => hostCgroupProblem(name, { root: cgroupRoot, uid }))
+  )(cgroup);
+  if (problem) throw unavailable(problem);
+  let tree: number[];
+  try {
+    tree = (options.listTree ?? processTree)(options.desktopPid);
+  } catch (error) {
+    throw unavailable(
+      `the Desktop process ${options.desktopPid} cannot be listed (${
+        error instanceof Error ? error.message : String(error)
+      }).`,
+    );
+  }
+  const scopedPids: number[] = [];
+  const outside: string[] = [];
+  for (const pid of tree) {
+    const listing = (options.readCgroup ?? readProcCgroup)(pid);
+    if (listing === null) {
+      // A short-lived helper may be gone already; the root never may.
+      if (pid === options.desktopPid)
+        throw unavailable(
+          `the Desktop process ${pid} exited before blocking was enabled.`,
+        );
+    } else if (inCgroup(listing, cgroup)) scopedPids.push(pid);
+    else
+      outside.push(
+        `${pid} (${parseProcCgroup(listing) ?? 'no cgroup v2 entry'})`,
+      );
+  }
+  if (outside.length > 0)
+    throw unavailable(
+      `the Desktop tree is not inside the cgroup /${cgroup}: ${outside.join(', ')}. Launch it with the hostCgroup option so it starts inside the cgroup.`,
+    );
   const hasIpv6 = options.hasIpv6 ?? existsSync('/proc/net/if_inet6');
   const run = options.run ?? defaultRun;
   const proc: ProcessHooks = options.proc ?? process;
   const invoke = (tool: string, args: readonly string[]): string =>
     uid === 0 ? run(tool, args) : run('sudo', ['-n', tool, ...args]);
-  const rules = hostBlockingRules(uid).filter(
+  const probeOptions = { cgroup, root: cgroupRoot, uid };
+  const rules: {
+    tool: 'iptables' | 'ip6tables';
+    add: string[];
+    remove: string[];
+  }[] = hostBlockingRules(cgroup).filter(
     (rule) => hasIpv6 || rule.tool === 'iptables',
   );
+  // Inserted after the REJECT rule at the same position, so it sits in front of
+  // it and counts the probe destination before the REJECT.
+  rules.push(hostBlockingProbeRule(cgroup));
   const installed: typeof rules = [];
   let released = false;
 
@@ -3259,6 +3549,16 @@ export async function enableHostBlocking(
       return ` (${error instanceof Error ? error.message : String(error)})`;
     }
   };
+  const probeCounter = (): number => {
+    const hits = probeRuleHits(
+      invoke('iptables', ['-L', 'OUTPUT', '-v', '-n', '-x']),
+    );
+    if (hits.length !== 1)
+      throw new Error(
+        `iptables lists ${hits.length} probe counting rules, expected exactly 1`,
+      );
+    return hits[0] ?? 0;
+  };
   const counter = (tool: 'iptables' | 'ip6tables'): number => {
     const hits = ruleHits(invoke(tool, ['-L', 'OUTPUT', '-v', '-n', '-x']));
     if (hits.length !== 1)
@@ -3287,13 +3587,34 @@ export async function enableHostBlocking(
   let code6: string | null = null;
   let hits: number;
   let ipv6Hits = 0;
+  let outsideHits: number;
+  let insideProbeHits: number;
   try {
     const before = counter('iptables');
+    const beforeProbe = probeCounter();
     const before6 = hasIpv6 ? counter('ip6tables') : 0;
-    code = await (options.probe ?? defaultProbe)();
-    if (hasIpv6) code6 = await (options.probe6 ?? defaultProbe6)();
-    hits = counter('iptables') - before;
+    // Both probes run inside the cgroup: a probe from this process would be
+    // outside it and say nothing about the rule that blocks the Desktop.
+    code = await (
+      options.probe ??
+      (() => connectProbeInCgroup({ ...probeOptions, host: PROBE_HOST }))
+    )();
+    if (hasIpv6)
+      code6 = await (
+        options.probe6 ??
+        (() => connectProbeInCgroup({ ...probeOptions, host: PROBE_HOST6 }))
+      )();
+    const afterInside = counter('iptables');
+    const afterInsideProbe = probeCounter();
+    insideProbeHits = afterInsideProbe - beforeProbe;
+    hits = afterInside - before;
     if (hasIpv6) ipv6Hits = counter('ip6tables') - before6;
+    // The same destination from this process (the runner uid, outside the
+    // cgroup) must not match: that is what proves the runner keeps its network.
+    // Only the counting rule of the probe destination is compared: the
+    // Desktop's own traffic moves the REJECT rule's counter, never this one.
+    await (options.probeOutside ?? defaultProbe)();
+    outsideHits = probeCounter() - afterInsideProbe;
   } catch (error) {
     throw new SecurityObserverUnsupportedError(
       `Host-level outbound blocking cannot be verified: ${
@@ -3308,6 +3629,14 @@ export async function enableHostBlocking(
   if (hits <= 0)
     throw new SecurityObserverUnsupportedError(
       `Host-level outbound blocking is unproven: the rule did not match the probe packet.${rollback()}`,
+    );
+  if (insideProbeHits <= 0)
+    throw new SecurityObserverUnsupportedError(
+      `Host-level outbound blocking is unproven: the probe-destination counting rule did not match the probe from inside the cgroup, so the outside check would prove nothing.${rollback()}`,
+    );
+  if (outsideHits > 0)
+    throw new SecurityObserverUnsupportedError(
+      `Host-level outbound blocking is not scoped to the cgroup /${cgroup}: a probe from the test process outside it matched the rule (${outsideHits} packet(s)), so the runner agent would be blocked too.${rollback()}`,
     );
 
   let ipv6: HostBlocking['ipv6'] = 'blocked';
@@ -3328,7 +3657,10 @@ export async function enableHostBlocking(
     ipv6Reason = `The IPv6 connect failed locally (${code6}) before reaching the OUTPUT chain, so no ip6tables counter could move.`;
   }
   return {
-    mechanism: 'iptables owner-uid REJECT of non-loopback traffic',
+    mechanism: `iptables cgroup-v2 (/${cgroup}) REJECT of non-loopback traffic`,
+    cgroup,
+    scopedPids,
+    outsideHits,
     ipv6,
     ipv6Reason,
     hits,

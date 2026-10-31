@@ -15,6 +15,7 @@ import {
   TRUSTED_TEXT,
   type DesktopDriver,
 } from './driver.js';
+import { hostBlockingLaunchOption } from './host-cgroup.js';
 import {
   hostObserverSkipReason,
   hostObserverUnsupported,
@@ -521,6 +522,8 @@ test('security observer: real trust states, host tree and webview attempts fail 
         artifactDir: artifacts,
         // The window opens only the fixture folder, never the repository.
         workspaceDir: isolation.fixtureDir,
+        // Host blocking is scoped to the cgroup the Desktop starts in.
+        ...hostBlockingLaunchOption(),
       });
       checks[launchKey] = 'passed';
       identities[profile] = driver.identity;
@@ -557,7 +560,9 @@ test('security observer: real trust states, host tree and webview attempts fail 
       const blocked = await blockOutbound(driver.context);
       checks[name('hostOutboundBlocking')] = 'failed';
       try {
-        blocking = await enableHostBlocking();
+        blocking = await enableHostBlocking({
+          desktopPid: driver.identity.processId,
+        });
         record.hostBlocking = blocking;
         checks[name('hostOutboundBlocking')] = 'passed';
       } catch (error) {
@@ -938,7 +943,9 @@ test('security observer: real trust states, host tree and webview attempts fail 
               mechanism: record.hostBlocking.mechanism,
               ipv6: record.hostBlocking.ipv6,
               ipv6Reason: record.hostBlocking.ipv6Reason,
+              cgroup: record.hostBlocking.cgroup,
               ruleHits: record.hostBlocking.hits,
+              outsideRuleHits: record.hostBlocking.outsideHits,
               ipv6RuleHits: record.hostBlocking.ipv6Hits,
             }
           : null,

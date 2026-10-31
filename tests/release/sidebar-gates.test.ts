@@ -190,6 +190,34 @@ test('the macOS display is enlarged with the bundled Swift script, bounded and b
   }
 });
 
+test('every Linux provisioning step creates the host-blocking cgroup before any journey and never scopes by uid', () => {
+  for (const [where, source, id] of [
+    ['ci.yml', CI, 'desktop'],
+    ['flake-hunt.yml', FLAKE, 'desktop'],
+    ['release.yml', RELEASE, 'canonical'],
+  ] as const) {
+    const list = steps(job(jobs(source), id));
+    const prepare = list.find((step) => /apt-get install/.test(step));
+    assert.ok(prepare, `${where}: has a Linux provisioning step`);
+    assert.match(
+      prepare,
+      /^ {10}sudo mkdir -p \/sys\/fs\/cgroup\/rdlc-desktop$/m,
+      `${where}: creates the cgroup the Desktop is launched into`,
+    );
+    assert.match(prepare, /cgroup\.controllers/, `${where}: needs cgroup v2`);
+    assert.match(prepare, /iptables -m cgroup -h/, `${where}: needs --path`);
+    ordered(where, list, [
+      ['cgroup', /^ {10}sudo mkdir -p \/sys\/fs\/cgroup\/rdlc-desktop$/m],
+      ['journeys', RUN('pnpm test:e2e')],
+    ]);
+  }
+  assert.doesNotMatch(
+    readFileSync('tests/desktop/security-observer.ts', 'utf8'),
+    /--uid-owner/,
+    'the iptables rule must never match the runner uid',
+  );
+});
+
 test('every matrix entry runs the functional and installed journeys fail-closed', () => {
   const all = steps(job(jobs(CI), 'desktop'));
   const groups = {

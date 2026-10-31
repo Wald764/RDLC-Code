@@ -101,7 +101,7 @@ These cases are explicitly scoped or skipped. A skipped case is **UNVALIDATED** 
 
 ### Mandatory native host observation is Linux-only
 
-The host observer (strace process-tree capture plus iptables owner-uid blocking) exists on Linux only. Windows (ETW/WFP) needs elevation that CI runners do not grant, and macOS has no unprivileged observer. On `win32` and `darwin` the following Playwright cases call `test.skip` with that reason (`tests/desktop/host-observer-scope.ts` owns the list):
+The host observer (strace process-tree capture plus iptables cgroup-scoped blocking) exists on Linux only. Windows (ETW/WFP) needs elevation that CI runners do not grant, and macOS has no unprivileged observer. On `win32` and `darwin` the following Playwright cases call `test.skip` with that reason (`tests/desktop/host-observer-scope.ts` owns the list):
 
 | Case | Why it depends on host observation |
 | --- | --- |
@@ -111,6 +111,16 @@ The host observer (strace process-tree capture plus iptables owner-uid blocking)
 | `offline.spec.ts` `US6.4-trusted-restricted` | Repeats the monitored journeys under real restricted and trusted profiles |
 
 On Linux they remain mandatory: an unsupported or incomplete capture is a failure. `tests/desktop/run-tests.ts` accepts these skips only off Linux and only for these titles; any other skip still invalidates the run. In `--probe` mode the `securityObserver` capability is recorded as `unsupported` (never `passed`) off Linux and only that capability may be unsupported. AT-09 (offline, trust, host-observed network attempts) is therefore not validated on Windows or macOS.
+
+### Linux host blocking is scoped to a cgroup, not to the runner uid
+
+`enableHostBlocking` (`tests/desktop/security-observer.ts`) installs an `OUTPUT` chain `REJECT` of every non-loopback packet, tagged `rdlc-desktop-security`. An earlier version matched the runner uid (`-m owner --uid-owner`). On a GitHub-hosted Ubuntu runner `Runner.Listener` and `Runner.Worker` run as that same uid, so during the observation window the runner lost its connection to GitHub ("The hosted runner lost communication with the server"). The rule now matches a dedicated cgroup v2, `-m cgroup --path rdlc-desktop` (relative to the cgroup2 root, matched recursively), and only the Desktop tree lives in it.
+
+- **Setup (once per job, needs `sudo`).** The Linux provisioning step of `ci.yml`, `flake-hunt.yml` and `release.yml` checks for `/sys/fs/cgroup/cgroup.controllers`, runs `sudo mkdir -p /sys/fs/cgroup/rdlc-desktop`, and requires `iptables -m cgroup -h` to offer `--path`. Locally, run `sudo mkdir -p /sys/fs/cgroup/rdlc-desktop` and allow passwordless `sudo` for the user (the launcher and the iptables calls use `sudo -n`).
+- **Launch.** `launchDesktop({ hostCgroup })` (`tests/desktop/driver.ts`) starts the Desktop through a generated shell launcher (`tests/desktop/host-cgroup.ts`). The launcher writes its own `$$` to `/sys/fs/cgroup/rdlc-desktop/cgroup.procs` with `sudo -n` (directly when root) and then `exec`s the real executable with every argument. It does not fork, so the pid that Playwright (`_electron.launch` / `connectOverCDP` fallback) and the observer see is the Desktop's, and every descendant inherits the cgroup. If the move fails the launcher exits with status 97 and the Desktop is never started outside the cgroup. `hostBlockingLaunchOption()` sets the option on Linux only; the specs that enable blocking (`security-observer.spec.ts`, `offline.spec.ts`) pass it.
+- **Fail clearly, no silent fallback.** A missing cgroup, a non-writable `cgroup.procs`, or missing passwordless `sudo` fails the launch with the exact setup command. `enableHostBlocking` refuses to install anything unless the Desktop root and every process of its tree report `0::/rdlc-desktop` (or a descendant) in `/proc/<pid>/cgroup`. There is no uid fallback.
+- **Proofs kept and added.** The per-rule packet counter delta around the probe, the IPv6 handling, the rollback on every failure path, the exit/signal hooks, the stale-rule sweep before installing and the runner-level sweep in `run-tests.ts` are unchanged. The connectivity probe now runs inside the cgroup, through the same launcher (a probe from the test process would be outside the rule's scope). A second probe to the same destination from the test process, outside the cgroup, must not move the counter (`outsideHits` must be 0); otherwise the rule is refused and rolled back because it would block the runner agent. Both counters are recorded (`ruleHits`, `outsideHits`) next to the `cgroup` name.
+- **Limits.** The match uses the cgroup of the socket's creating task, which is the Desktop tree because the launcher enters the cgroup before `exec`. A process that leaves the cgroup (for example through `systemd-run`) would escape the rule; none is started by the Desktop tree under test. The cgroup is left in place after the job (a throwaway runner VM); an empty cgroup has no effect without the rule.
 
 ### Metadata-only host observer allowances
 

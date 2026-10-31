@@ -126,12 +126,22 @@ jobs:
           sudo locale-gen en_US.UTF-8
           # The native observer attaches strace to the running Desktop process tree.
           sudo sysctl -w kernel.yama.ptrace_scope=0
+          # Host blocking rejects traffic of this cgroup v2 only (the Desktop is
+          # launched into it), never of the runner uid: the runner agent shares
+          # that uid and must keep its connection to GitHub.
+          test -f /sys/fs/cgroup/cgroup.controllers || { echo 'cgroup v2 is required for host blocking'; exit 1; }
+          sudo mkdir -p /sys/fs/cgroup/rdlc-desktop
+          cgroup_help="$(iptables -m cgroup -h 2>&1 || true)"
+          grep -qe '--path' <<<"$cgroup_help" || { echo 'iptables lacks the cgroup --path match'; exit 1; }
           mkdir -p .vscode-test/desktop-artifacts
           {
             echo "image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
             grep -E '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release
             dpkg-query -W -f='${Package} ${Version}\n' strace iptables fontconfig fonts-dejavu-core locales
             echo "ptrace_scope: $(sysctl -n kernel.yama.ptrace_scope)"
+            echo "cgroup: $(stat -f -c %T /sys/fs/cgroup) $(ls -d /sys/fs/cgroup/rdlc-desktop)"
+            echo "kernel: $(uname -r)"
+            iptables --version
             echo "node: $(node --version)"
           } | tee .vscode-test/desktop-artifacts/linux-environment.txt
       - name: Probe installed Desktop capabilities on Linux
