@@ -25,6 +25,7 @@
             @if (field.kind === 'select') {
               <select
                 [attr.data-property]="field.property"
+                data-escape-cancel
                 [attr.aria-describedby]="refusal() ? 'textbox-refusal' : null"
                 [value]="current(field.property)"
                 [disabled]="!can(field.property)"
@@ -56,6 +57,7 @@
               <input
                 type="text"
                 [attr.data-property]="field.property"
+                data-escape-cancel
                 [attr.aria-describedby]="refusal() ? 'textbox-refusal' : null"
                 [value]="current(field.property)"
                 [disabled]="!can(field.property)"

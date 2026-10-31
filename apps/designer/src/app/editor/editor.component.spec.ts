@@ -480,6 +480,92 @@ describe('editor surface', () => {
     ).toBe(false);
   });
 
+  it('Escape in a docked inspector field restores it and returns focus to the canvas', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest({
+      ...snapshotMessage({}),
+      viewBinding: {
+        viewId: 'view-1',
+        documentLifetimeId: 'document-1',
+        contextGeneration: 1,
+      },
+    });
+    await settle();
+    // Wide workspace: the inspector is docked, not an overlay.
+    fixture.componentInstance.workspaceResize(1200, 800);
+    await settle();
+    fixture.componentInstance.select(0);
+    await settle();
+    expect(fixture.componentInstance.overlay()).toBeNull();
+    const name = element.querySelector<HTMLInputElement>(
+      '.inspector [data-property="name"]',
+    )!;
+    name.focus();
+    expect(document.activeElement).toBe(name);
+    name.value = 'Draft';
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
+    name.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    await settle();
+    expect(name.value).toBe('Title');
+    expect(document.activeElement).toBe(
+      element.querySelector<HTMLElement>('.viewport'),
+    );
+    expect(
+      host.sent().some((message) => validateMessage(message)?.kind === 'edit'),
+    ).toBe(false);
+  });
+
+  it('Escape in a docked table form field leaves focus and the typed draft alone', async () => {
+    const { fixture, host, element, settle } = mount();
+    const multiple = multipleSnapshot();
+    host.ingest({
+      ...multiple,
+      authoring: {
+        ...multiple.authoring,
+        tables: [
+          {
+            id: '2:4',
+            name: 'Other',
+            dataset: null,
+            columns: 1,
+            structural: true,
+            reason: null,
+            rows: [],
+            groups: [],
+          },
+        ],
+      },
+      viewBinding: {
+        viewId: 'view-1',
+        documentLifetimeId: 'document-1',
+        contextGeneration: 1,
+      },
+    });
+    await settle();
+    fixture.componentInstance.workspaceResize(1200, 800);
+    await settle();
+    fixture.componentInstance.select(1);
+    await settle();
+    expect(fixture.componentInstance.overlay()).toBeNull();
+    const field = element.querySelector<HTMLInputElement>(
+      '.inspector rdlc-table-properties input',
+    )!;
+    expect(field).not.toBeNull();
+    field.focus();
+    field.value = 'Draft';
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
+    field.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    await settle();
+    expect(document.activeElement).toBe(field);
+    expect(field.value).toBe('Draft');
+  });
+
   it('restores the inspector control a pending refusal disabled, unless focus moved', async () => {
     const { fixture, host, element, settle } = mount();
     host.ingest({

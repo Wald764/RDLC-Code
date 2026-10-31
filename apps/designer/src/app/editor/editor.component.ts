@@ -2125,6 +2125,18 @@ export class EditorComponent {
         else this.viewport()?.nativeElement.focus({ preventScroll: true });
         return;
       }
+      if (
+        editable &&
+        event.target instanceof Element &&
+        event.target.closest('.inspector') &&
+        event.target.closest('[data-escape-cancel]')
+      ) {
+        // A docked inspector field that cancels its draft on Escape (marked
+        // with data-escape-cancel) gives focus back to the canvas just like
+        // the overlay does; it already restored its accepted value. Forms
+        // that commit on submit and have no Escape handler keep their focus.
+        this.viewport()?.nativeElement.focus({ preventScroll: true });
+      }
       if (this.conflict()) this.cancelConflict();
       else if (this.preview() || this.marquee() || this.nudge())
         this.cancelGesture();
