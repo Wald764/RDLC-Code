@@ -12,6 +12,7 @@ import type { XmlNode, XmlSyntaxDocument } from '@rdlc/report-model/syntax';
 import { projectStructure } from '@rdlc/renderer/structure';
 import { validateMessage } from '@rdlc/report-model/protocol';
 import { DocumentBinding } from './protocol.js';
+import { settleHistoryChange } from './history-settle.js';
 import { planTextboxIntent, correlateTargets } from './edit-controller.js';
 import { PasteCounter, runClipboard, WindowClipboard } from './clipboard.js';
 import {
@@ -572,6 +573,23 @@ export class DocumentSession {
           message.action === 'undo' ? 'undo' : 'redo',
         );
         accepted = true;
+        // The workbench may resolve the command before this host's document
+        // mirror receives the change: wait for it instead of reporting a
+        // no-op for a history step that was applied.
+        const forThisDocument = (document: vscode.TextDocument): boolean =>
+          document.uri.toString() === this.document.uri.toString();
+        await settleHistoryChange(
+          this.document,
+          before,
+          (listener) =>
+            vscode.workspace.onDidChangeTextDocument((event) => {
+              if (forThisDocument(event.document)) listener();
+            }),
+          (listener) =>
+            vscode.workspace.onDidCloseTextDocument((document) => {
+              if (forThisDocument(document)) listener();
+            }),
+        );
       }
     } catch {
       reason =

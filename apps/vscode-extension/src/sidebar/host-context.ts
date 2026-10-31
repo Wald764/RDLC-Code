@@ -437,18 +437,24 @@ export class SidebarHostContext implements vscode.Disposable {
     capture: CapturedAction,
     sequence: number,
   ): void {
-    if (this.disposed || sequence !== this.dispatchSequence) return;
-    const context = this.registry.context();
-    if (
-      context.viewId !== capture.viewId ||
-      context.documentId !== capture.documentId ||
-      !vscode.window.state.focused
-    )
-      return;
+    // The panel wait can last seconds: every guard is re-checked right before
+    // focus actually moves.
+    const wanted = (): boolean => {
+      if (this.disposed || sequence !== this.dispatchSequence) return false;
+      const context = this.registry.context();
+      return (
+        context.viewId === capture.viewId &&
+        context.documentId === capture.documentId &&
+        vscode.window.state.focused
+      );
+    };
+    if (!wanted()) return;
     try {
-      activateHistoryTarget(view.document, view.panel).catch(() => {
-        // Focus is a convenience; never report an applied creation as failed.
-      });
+      activateHistoryTarget(view.document, view.panel, undefined, wanted).catch(
+        () => {
+          // Focus is a convenience; never report an applied creation as failed.
+        },
+      );
     } catch {
       // Same: a synchronous failure must not fail the accepted creation.
     }

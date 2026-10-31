@@ -686,7 +686,8 @@ async function nativeDesignerHistory(): Promise<void> {
         );
         assert.ok(
           result?.kind === 'historyResult' && result.accepted && result.changed,
-          JSON.stringify(result),
+          // If this ever fails again, say where the native command landed.
+          `${JSON.stringify(result)}; B left untouched: ${b.getText() === exactB}`,
         );
         await until(
           () =>

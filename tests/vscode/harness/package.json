@@ -50,6 +50,16 @@
         "priority": "option"
       },
       {
+        "viewType": "rdlcTests.panelActivation",
+        "displayName": "RDLC panel activation test",
+        "selector": [
+          {
+            "filenamePattern": "*.rdlc"
+          }
+        ],
+        "priority": "option"
+      },
+      {
         "viewType": "rdlcCode.historyProof",
         "displayName": "RDLC native history test",
         "selector": [
