@@ -435,6 +435,8 @@ export class DocumentSession {
     if (this.disposed) return;
     const parsed = validateMessage(input);
     const kind = parsed?.kind;
+    // Focus probe answers belong to the panel activation awaiting them.
+    if (kind === 'focusProbeResult') return;
     if (
       parsed &&
       (parsed.kind === 'acceptedSelection' || parsed.kind === 'actionOutcome')
@@ -543,6 +545,7 @@ export class DocumentSession {
   ): Promise<void> {
     const before = this.document.version;
     let accepted = false;
+    let foreignChanged = false;
     let reason = '';
     try {
       if (busy)
@@ -569,27 +572,50 @@ export class DocumentSession {
         reason =
           'The report changed while activating history; no command was executed.';
       else {
-        await vscode.commands.executeCommand(
-          message.action === 'undo' ? 'undo' : 'redo',
-        );
-        accepted = true;
-        // The workbench may resolve the command before this host's document
-        // mirror receives the change: wait for it instead of reporting a
-        // no-op for a history step that was applied.
         const forThisDocument = (document: vscode.TextDocument): boolean =>
           document.uri.toString() === this.document.uri.toString();
-        await settleHistoryChange(
-          this.document,
-          before,
-          (listener) =>
-            vscode.workspace.onDidChangeTextDocument((event) => {
-              if (forThisDocument(event.document)) listener();
-            }),
-          (listener) =>
-            vscode.workspace.onDidCloseTextDocument((document) => {
-              if (forThisDocument(document)) listener();
-            }),
-        );
+        // Last line of defence: activation attests this designer owns DOM
+        // focus, but if the workbench still routed the command to another
+        // document, say so instead of reporting a successful history step.
+        // Only user documents count (not output, SCM inputs, ...), and only
+        // when this document did not move: an unrelated document changing
+        // while this report's history applied correctly is no misroute.
+        const foreign = vscode.workspace.onDidChangeTextDocument((event) => {
+          if (
+            !forThisDocument(event.document) &&
+            event.contentChanges.length &&
+            ['file', 'untitled'].includes(event.document.uri.scheme)
+          )
+            foreignChanged = true;
+        });
+        try {
+          await vscode.commands.executeCommand(
+            message.action === 'undo' ? 'undo' : 'redo',
+          );
+          accepted = true;
+          // The workbench may resolve the command before this host's document
+          // mirror receives the change: wait for it instead of reporting a
+          // no-op for a history step that was applied.
+          await settleHistoryChange(
+            this.document,
+            before,
+            (listener) =>
+              vscode.workspace.onDidChangeTextDocument((event) => {
+                if (forThisDocument(event.document)) listener();
+              }),
+            (listener) =>
+              vscode.workspace.onDidCloseTextDocument((document) => {
+                if (forThisDocument(document)) listener();
+              }),
+          );
+        } finally {
+          foreign.dispose();
+        }
+        if (foreignChanged && this.document.version === before) {
+          accepted = false;
+          reason =
+            'Native history changed another document, not this report. Check the open editors before continuing.';
+        }
       }
     } catch {
       reason =

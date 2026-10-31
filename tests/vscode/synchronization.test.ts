@@ -14,6 +14,11 @@ import { WindowClipboard } from '../../apps/vscode-extension/src/clipboard.js';
 import { memory, open, view } from './clipboard.test.js';
 import { DocumentSession } from '../../apps/vscode-extension/src/document-session.js';
 import { activateHistoryTarget } from '../../apps/vscode-extension/src/editor-provider.js';
+import type { ActivationReport } from '../../apps/vscode-extension/src/panel-activation.js';
+import {
+  focusProbeHtml,
+  focusProbeWebviewOptions,
+} from './focus-probe-webview.js';
 import { SidebarHostContext } from '../../apps/vscode-extension/src/sidebar/host-context.js';
 import type { NativeIntent } from '../../apps/vscode-extension/src/sidebar/host-context.js';
 import type {
@@ -534,17 +539,27 @@ async function nativeDesignerHistory(): Promise<void> {
     session: DocumentSession;
     messages: HostMessage[];
   }[] = [];
+  // Where the last activation stopped: named in assertion messages so a refusal
+  // on another platform says which phase failed and what the webview answered.
+  let lastActivation: ActivationReport | undefined;
   const registration = vscode.window.registerCustomEditorProvider(
     type,
     {
       resolveCustomTextEditor(document, panel) {
-        panel.webview.html =
-          '<html><body>Native history targeting proof</body></html>';
+        panel.webview.options = focusProbeWebviewOptions;
+        panel.webview.html = focusProbeHtml('Native history targeting proof');
         const session = new DocumentSession(
           document,
           undefined,
           undefined,
-          () => activateHistoryTarget(document, panel, type),
+          () =>
+            activateHistoryTarget(
+              document,
+              panel,
+              type,
+              undefined,
+              (report) => (lastActivation = report),
+            ),
         );
         const messages: HostMessage[] = [];
         session.onMessage((message) => messages.push(message));
@@ -564,11 +579,14 @@ async function nativeDesignerHistory(): Promise<void> {
   );
   const dir = mkdtempSync(join(tmpdir(), 'rdlc-history-'));
   const aFile = join(dir, 'a.rdlc'),
-    bFile = join(dir, 'b.rdlc');
+    bFile = join(dir, 'b.rdlc'),
+    cFile = join(dir, 'c.rdlc');
   writeFileSync(aFile, source);
   writeFileSync(bFile, source);
+  writeFileSync(cFile, source);
   const a = await vscode.workspace.openTextDocument(aFile),
-    b = await vscode.workspace.openTextDocument(bFile);
+    b = await vscode.workspace.openTextDocument(bFile),
+    c = await vscode.workspace.openTextDocument(cFile);
   try {
     await vscode.commands.executeCommand('vscode.openWith', a.uri, type, {
       viewColumn: vscode.ViewColumn.One,
@@ -687,7 +705,7 @@ async function nativeDesignerHistory(): Promise<void> {
         assert.ok(
           result?.kind === 'historyResult' && result.accepted && result.changed,
           // If this ever fails again, say where the native command landed.
-          `${JSON.stringify(result)}; B left untouched: ${b.getText() === exactB}`,
+          `${JSON.stringify(result)}; B left untouched: ${b.getText() === exactB}; activation: ${JSON.stringify(lastActivation)}`,
         );
         await until(
           () =>
@@ -809,6 +827,75 @@ async function nativeDesignerHistory(): Promise<void> {
     );
     assert.equal(a.getText(), texts.at(-1));
     assert.equal(b.getText(), exactB);
+    // An unrelated document changing while this report's history applies
+    // correctly (A is the verified, active target) is not a misroute.
+    const unrelated = new DocumentSession(a, undefined, undefined, async () => {
+      const verified = await activateHistoryTarget(
+        a,
+        first.panel,
+        type,
+        undefined,
+        (report) => (lastActivation = report),
+      );
+      void replaceSource(c, source + '\n<!-- Unrelated C -->');
+      return verified;
+    });
+    const concurrent: HostMessage[] = [];
+    unrelated.onMessage((message) => concurrent.push(message));
+    try {
+      unrelated.receive({ protocol: 2, kind: 'ready' });
+      await until(
+        () => concurrent.some((m) => m.kind === 'snapshot'),
+        'Unrelated-change session ready',
+      );
+      // A focus attestation (current, stale or foreign) belongs to the panel
+      // activation: the session neither answers nor reports a protocol error.
+      const settled = concurrent.length;
+      for (const probeId of ['focus-late', 'focus-foreign'])
+        unrelated.receive({
+          protocol: 2,
+          kind: 'focusProbeResult',
+          probeId,
+          focused: true,
+        });
+      unrelated.receive({ protocol: 2, kind: 'ready' });
+      await until(
+        () => concurrent.length > settled,
+        'The session still serves requests after focus attestations',
+      );
+      assert.equal(
+        concurrent.filter((m) => m.kind === 'protocolError').length,
+        0,
+        'focus attestations are not protocol errors',
+      );
+      const beforeText = a.getText();
+      unrelated.receive({
+        protocol: 2,
+        kind: 'history',
+        requestId: 'unrelated-change-history',
+        baseVersion: a.version,
+        action: 'undo',
+      });
+      await until(
+        () => concurrent.some((m) => m.kind === 'historyResult'),
+        'History with an unrelated concurrent change settles',
+      );
+      const applied = concurrent.find((m) => m.kind === 'historyResult');
+      await until(
+        () => c.getText().endsWith('<!-- Unrelated C -->'),
+        'The unrelated document changed',
+      );
+      assert.ok(
+        applied?.kind === 'historyResult' &&
+          applied.accepted &&
+          applied.changed,
+        `${JSON.stringify(applied)}; activation: ${JSON.stringify(lastActivation)}`,
+      );
+      assert.notEqual(a.getText(), beforeText, 'A moved back in its history');
+      assert.equal(b.getText(), exactB);
+    } finally {
+      unrelated.dispose();
+    }
     const version = a.version;
     await vscode.window.showTextDocument(b, vscode.ViewColumn.Three);
     first.session.receive({
@@ -836,6 +923,51 @@ async function nativeDesignerHistory(): Promise<void> {
         !refused.accepted &&
         !refused.changed,
     );
+    // Even if activation wrongly vouched for the designer, a command the
+    // workbench routes to the focused source editor of B is reported as such.
+    const misrouting = new DocumentSession(
+      a,
+      undefined,
+      undefined,
+      async () => {
+        return true;
+      },
+    );
+    const misrouted: HostMessage[] = [];
+    misrouting.onMessage((message) => misrouted.push(message));
+    try {
+      misrouting.receive({ protocol: 2, kind: 'ready' });
+      await until(
+        () => misrouted.some((m) => m.kind === 'snapshot'),
+        'Misrouting session ready',
+      );
+      misrouting.receive({
+        protocol: 2,
+        kind: 'history',
+        requestId: 'misrouted-history',
+        baseVersion: a.version,
+        action: 'undo',
+      });
+      await until(
+        () => misrouted.some((m) => m.kind === 'historyResult'),
+        'Misrouted history settles',
+      );
+      const outcome = misrouted.find((m) => m.kind === 'historyResult');
+      assert.notEqual(
+        b.getText(),
+        exactB,
+        'the focused source editor B was undone',
+      );
+      assert.ok(
+        outcome?.kind === 'historyResult' &&
+          !outcome.accepted &&
+          !outcome.changed &&
+          /another document/.test(outcome.reason ?? ''),
+        JSON.stringify(outcome),
+      );
+    } finally {
+      misrouting.dispose();
+    }
   } finally {
     for (const v of views) {
       v.session.dispose();

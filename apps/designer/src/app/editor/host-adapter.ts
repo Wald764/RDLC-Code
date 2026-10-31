@@ -159,6 +159,17 @@ export class HostAdapter {
       }
       return;
     }
+    if (message.kind === 'focusProbe') {
+      // The host routes native undo by DOM focus, which only this frame can
+      // attest. Not a document message: it stays out of `sent` and all state.
+      this.api?.postMessage({
+        protocol: 2,
+        kind: 'focusProbeResult',
+        probeId: message.probeId,
+        focused: globalThis.document?.hasFocus() ?? false,
+      });
+      return;
+    }
     if (message.kind === 'nativeAction') {
       if (this.nativeRequests.has(message.requestId)) return;
       if (this.nativeRequests.size >= 1024) {

@@ -1915,3 +1915,20 @@ test('native edit authorization is single-use regardless of the first outcome', 
   assert.equal(binding.authorizeNativeEdit('native-once', 2).ok, false);
   assert.equal(binding.authorizeNativeEdit('native-once', 3).ok, false);
 });
+
+test('focus probes are closed, correlated panel messages', () => {
+  const probe = { protocol: 2, kind: 'focusProbe', probeId: 'focus-1' };
+  assert.ok(validateMessage(probe));
+  const result = { ...probe, kind: 'focusProbeResult', focused: false };
+  assert.ok(validateMessage(result));
+  for (const invalid of [
+    { ...probe, focused: true },
+    { ...probe, extra: 1 },
+    { ...probe, probeId: 'not valid' },
+    { ...probe, probeId: undefined },
+    { ...result, focused: 'yes' },
+    { ...result, focused: undefined },
+    { ...result, probeId: '' },
+  ])
+    assert.equal(validateMessage(invalid), null);
+});

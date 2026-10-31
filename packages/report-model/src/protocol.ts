@@ -92,8 +92,28 @@ export interface HistoryResultMessage
   readonly reason?: string;
 }
 
+/**
+ * Panel-level handshake, outside the document protocol: the host asks a webview
+ * whether it truly owns DOM focus. VS Code routes native commands such as undo
+ * by DOM focus, which the extension host cannot read, so only the webview can
+ * attest that no code editor holds it.
+ */
+export interface FocusProbeMessage {
+  readonly protocol: 2;
+  readonly kind: 'focusProbe';
+  readonly probeId: string;
+}
+export interface FocusProbeResultMessage {
+  readonly protocol: 2;
+  readonly kind: 'focusProbeResult';
+  readonly probeId: string;
+  /** `document.hasFocus()` of the designer frame at answer time. */
+  readonly focused: boolean;
+}
+
 export type ClientMessage =
   | { readonly protocol: 2; readonly kind: 'ready' }
+  | FocusProbeResultMessage
   | ({
       readonly protocol: 2;
       readonly kind: 'edit';
@@ -124,6 +144,7 @@ export interface ClipboardRequestMessage {
 }
 export type HostMessage =
   | HistoryResultMessage
+  | FocusProbeMessage
   | NativeActionMessage
   | {
       readonly protocol: 2;
@@ -645,6 +666,18 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
     }
     case 'ready':
       valid = keys(value, ['protocol', 'kind']);
+      break;
+    case 'focusProbe':
+    case 'focusProbeResult':
+      valid =
+        keys(value, [
+          'protocol',
+          'kind',
+          'probeId',
+          ...(value.kind === 'focusProbeResult' ? ['focused'] : []),
+        ]) &&
+        id(value.probeId) &&
+        (value.kind === 'focusProbe' || typeof value.focused === 'boolean');
       break;
     case 'edit':
       valid =

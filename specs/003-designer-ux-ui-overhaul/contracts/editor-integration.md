@@ -57,7 +57,12 @@ No URI, node ID, arbitrary command ID or client-generated inverse edit is permit
 1. UI cancels uncommitted manipulation, resolves draft conflicts, then submits. Normal input/textarea/contenteditable history stays native to the field and is not intercepted as report history.
 2. Binding dispatches through the existing document session queue shared by all views of that report.
 3. Provider establishes the originating panel using its real view column and verifies the active designer tab/document. Recheck base version after any asynchronous activation. An inactive/disposed/unverifiable target refuses before invoking history.
-4. Execute only the literal native `undo` or `redo` command. Do not route through Open Source or operate on the last focused unrelated text editor.
+   Tab and panel state do not decide where the workbench routes `undo`; DOM focus does (a focused code editor or text input takes the command first). The host therefore asks the webview, after the tab settled, whether its frame owns DOM focus, and runs history only on a positive answer:
+   - Host to webview: `{ protocol: 2, kind: 'focusProbe', probeId }`.
+   - Webview to host: `{ protocol: 2, kind: 'focusProbeResult', probeId, focused }`, with `focused = document.hasFocus()` of the designer frame.
+   - It is a panel-level handshake outside the document protocol: it changes no state and the document session ignores the answer. Only an answer carrying the probe's own `probeId` counts; `focused: false`, no answer, a failed post or a disposed webview all refuse with the unverifiable-target reason.
+   - The probe has its own budget (1 s) that starts after the tab settled (2 s), so the overall activation bound is 3 s.
+4. Execute only the literal native `undo` or `redo` command. Do not route through Open Source or operate on the last focused unrelated text editor. As a last line of defence, if this document did not change while another `file` or `untitled` document did during the command, return `accepted=false` with an actionable reason, never success; nothing is reverted automatically.
 5. Publish actual current accepted state and return a correlated `historyResult` even for no-op or failure.
 
 Result fields: existing protocol envelope, `kind: historyResult`, `requestId`, `baseVersion`, `resultVersion`, `action`, boolean `accepted`, boolean `changed`, optional actionable `reason`. Accepted/no-op is `accepted=true, changed=false`; refusal before execution is `accepted=false, changed=false`. After attempted execution, `changed` reflects actual observed document-version change even if command completion fails. Actual document changes are always reflected by authoritative snapshots; a result never fabricates or rolls back document text.

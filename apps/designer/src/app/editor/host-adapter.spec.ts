@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HostAdapter } from './host-adapter';
 import { emptySelection, selectItem } from './selection';
 import type { ActionOutcomeMessage } from '@rdlc/report-model/protocol';
@@ -635,5 +635,44 @@ describe('view binding and correlated native edits', () => {
       host.ingest(authorResult);
       expect(outcomes(host), 'late result adds nothing').toHaveLength(1);
     }
+  });
+});
+
+describe('focus probe', () => {
+  afterEach(() => {
+    delete (globalThis as { acquireVsCodeApi?: unknown }).acquireVsCodeApi;
+    vi.restoreAllMocks();
+  });
+
+  it('attests the frame DOM focus and changes no designer state', () => {
+    for (const focused of [true, false]) {
+      const posted: unknown[] = [];
+      (globalThis as { acquireVsCodeApi?: unknown }).acquireVsCodeApi = () => ({
+        postMessage: (message: unknown) => posted.push(message),
+      });
+      vi.spyOn(globalThis.document, 'hasFocus').mockReturnValue(focused);
+      TestBed.resetTestingModule();
+      const host = TestBed.inject(HostAdapter);
+      posted.length = 0;
+      const sent = host.sent().length;
+      host.ingest({ protocol: 2, kind: 'focusProbe', probeId: 'probe-1' });
+      expect(posted).toEqual([
+        { protocol: 2, kind: 'focusProbeResult', probeId: 'probe-1', focused },
+      ]);
+      expect(host.sent(), 'not a document message').toHaveLength(sent);
+    }
+  });
+
+  it('ignores a malformed probe', () => {
+    const posted: unknown[] = [];
+    (globalThis as { acquireVsCodeApi?: unknown }).acquireVsCodeApi = () => ({
+      postMessage: (message: unknown) => posted.push(message),
+    });
+    TestBed.resetTestingModule();
+    const host = TestBed.inject(HostAdapter);
+    posted.length = 0;
+    host.ingest({ protocol: 2, kind: 'focusProbe', probeId: 'bad id' });
+    host.ingest({ protocol: 2, kind: 'focusProbe' });
+    expect(posted).toEqual([]);
   });
 });

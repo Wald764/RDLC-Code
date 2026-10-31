@@ -40,6 +40,8 @@ Format authority is inherited from [001 compatibility](../001-rdlc-vscode-editor
 
 **Alternatives considered**: Reversing XML patches creates a competing history. Opening source to undo changes the user workflow. Executing against the last active text editor can undo another report. An unrestricted command-name message expands authority unnecessarily.
 
+**DOM focus attestation**: The workbench routes native `undo` by DOM focus (a code editor with text focus, then a focused input or textarea, only then the custom editor), not by the active tab, and the extension host cannot read DOM focus. A panel can be the active tab while DOM focus stays in another document's code editor (observed on macOS), so the host asks the webview (`focusProbe` / `focusProbeResult`, `document.hasFocus()` of the designer frame) after the tab settled and refuses history unless the answer is positive. The probe has its own 1 s budget after the 2 s settle phase. A post-condition guard reports `accepted=false` if another `file`/`untitled` document changed while this one did not. This requires the window to be the OS key window, which a real user clicking Undo in the designer satisfies.
+
 **Validation obligation**: Panel activation alone is not proven to route native history correctly. Integration must demonstrate report A history after report B was last focused, split views, empty history, disposed/inactive panels, pending races and twenty individually undoable/redoable accepted edits. Failure blocks delivery of this workflow; it is not an unresolved design choice.
 
 ## R5 — Extend current per-view preference restoration

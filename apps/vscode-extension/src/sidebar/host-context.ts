@@ -10,7 +10,7 @@ import {
   type ReportEvaluation,
 } from '../report-evaluation.js';
 import type { DocumentSession } from '../document-session.js';
-import { activateHistoryTarget } from '../panel-activation.js';
+import { activateDesignerPanel } from '../panel-activation.js';
 import { WindowContextRegistry, type CapturedAction } from './context.js';
 
 type Intent<T> = T extends NativeActionMessage
@@ -450,7 +450,7 @@ export class SidebarHostContext implements vscode.Disposable {
     };
     if (!wanted()) return;
     try {
-      activateHistoryTarget(view.document, view.panel, undefined, wanted).catch(
+      activateDesignerPanel(view.document, view.panel, undefined, wanted).catch(
         () => {
           // Focus is a convenience; never report an applied creation as failed.
         },
