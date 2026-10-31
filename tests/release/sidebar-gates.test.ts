@@ -141,6 +141,35 @@ test('the desktop job keeps the six-entry OS and minimum/stable matrix', () => {
   ]);
 });
 
+test('the matrix VS Code is pre-downloaded with retries before any test uses it', () => {
+  for (const [where, source] of [
+    ['ci.yml', CI],
+    ['flake-hunt.yml', FLAKE],
+  ] as const) {
+    const block = job(jobs(source), 'desktop');
+    assert.equal(env(block, 'VSCODE_VERSION'), '${{ matrix.vscode }}');
+    ordered(where, steps(block), [
+      ['build', RUN('pnpm build')],
+      ['VS Code download', RUN('node dist/scripts/download-vscode\\.js$')],
+      ['journeys', RUN('pnpm test:e2e')],
+    ]);
+    const download = steps(block).find((step) =>
+      RUN('node dist/scripts/download-vscode\\.js$').test(step),
+    );
+    assert.equal(
+      stepField(download!, 'timeout-minutes'),
+      '10',
+      `${where}: the download is bounded`,
+    );
+  }
+  const ci = steps(job(jobs(CI), 'desktop'));
+  const download = ci.findIndex((step) =>
+    RUN('node dist/scripts/download-vscode\\.js$').test(step),
+  );
+  const hostTests = ci.findIndex((step) => RUN('pnpm test:vscode').test(step));
+  assert.ok(download < hostTests, 'the extension-host tests reuse the cache');
+});
+
 test('every matrix entry runs the functional and installed journeys fail-closed', () => {
   const all = steps(job(jobs(CI), 'desktop'));
   const groups = {
