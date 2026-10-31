@@ -517,7 +517,34 @@ test('US6.1-keyboard-journey', async () => {
       'the focused tree row exposes an accessible name',
     ).not.toBeNull();
 
-    // 2. Arrow navigation moves focus through the real tree, and Enter
+    // The tree shows the report's own rows once the host has published its
+    // first projection of the document; only then is no refresh of that
+    // publication still on its way.
+    await expect(
+      page.getByRole('treeitem', { name: /^Textbox: Scroll0\b/ }),
+      'the initial tree publication shows the report rows',
+    ).toBeVisible();
+
+    // 2. Expansion: the root row collapses with Left and reopens with Right.
+    // This runs before any selection is dispatched on purpose. Every selection
+    // makes the host publish the whole tree twice, about 200 ms apart (the
+    // extension host debounces tree refreshes), and nothing on the page says
+    // when the second publication has landed. The tree drops an expand pressed
+    // while such a refresh is in flight, so the row would stay collapsed
+    // forever. With no selection pending, no refresh is in flight.
+    await page.keyboard.press('Home');
+    const expandedBefore = await focusedRowAttribute(page, 'aria-expanded');
+    expect(expandedBefore, 'the root row is collapsible').not.toBeNull();
+    await page.keyboard.press('ArrowLeft');
+    await expect
+      .poll(() => focusedRowAttribute(page, 'aria-expanded'))
+      .toBe('false');
+    await page.keyboard.press('ArrowRight');
+    await expect
+      .poll(() => focusedRowAttribute(page, 'aria-expanded'))
+      .toBe(expandedBefore);
+
+    // 3. Arrow navigation moves focus through the real tree, and Enter
     // activates the focused row: primary selection on both surfaces.
     const activated = await focusRow(page, /^Textbox: Scroll0\b/);
     expect(activated).not.toBe(startLabel);
@@ -539,19 +566,6 @@ test('US6.1-keyboard-journey', async () => {
     expect((await activeTreeRow(page))?.startsWith('Textbox: Scroll0')).toBe(
       true,
     );
-
-    // 3. Expansion: the root row collapses with Left and reopens with Right.
-    await page.keyboard.press('Home');
-    const expandedBefore = await focusedRowAttribute(page, 'aria-expanded');
-    expect(expandedBefore, 'the root row is collapsible').not.toBeNull();
-    await page.keyboard.press('ArrowLeft');
-    await expect
-      .poll(() => focusedRowAttribute(page, 'aria-expanded'))
-      .toBe('false');
-    await page.keyboard.press('ArrowRight');
-    await expect
-      .poll(() => focusedRowAttribute(page, 'aria-expanded'))
-      .toBe(expandedBefore);
 
     // 4. Obscured target: the tree is virtualized, so some rows are off
     // screen; End scrolls them into view and reveals the last row inside
