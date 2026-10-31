@@ -1293,10 +1293,8 @@ test('US5.3-two-views', async () => {
     const view2 = await frameShowing(page, TEXT.aFront);
 
     // Activate the first group's designer tab and select a different item.
-    const firstGroupTabs = page
-      .locator('.editor-group-container')
-      .nth(0)
-      .locator('.tabs-container .tab');
+    const group1 = page.locator('.editor-group-container').nth(0);
+    const firstGroupTabs = group1.locator('.tabs-container .tab');
     const tabCount = await firstGroupTabs.count();
     for (let index = 0; index < tabCount; index++) {
       await firstGroupTabs.nth(index).click();
@@ -1307,10 +1305,9 @@ test('US5.3-two-views', async () => {
     // while it is still bound to view 2 would replace view 2's primary item.
     // View 1 has no selection yet, so the tree is bound to it once the Front
     // row (primary in view 2) no longer reports Primary.
-    await expect(
-      page.locator('.editor-group-container').nth(0),
-      'first editor group is the active group',
-    ).toHaveClass(/\bactive\b/);
+    await expect(group1, 'first editor group is the active group').toHaveClass(
+      /\bactive\b/,
+    );
     await expect(
       page.getByRole('treeitem', { name: /^Textbox: Front, Primary/ }),
       'structure tree rebound to view 1',
@@ -1375,6 +1372,27 @@ test('US5.3-two-views', async () => {
     expect(updated.replace('Behind updated', 'Behind &amp; preserved')).toBe(
       original.get('a.rdlc')!.toString('utf8'),
     );
+    // The host runs native history only after verifying that the originating
+    // designer is the active custom tab ("Cannot verify the originating
+    // designer" otherwise, with nothing undone). Nothing above guarantees that:
+    // view 1 was only typed into (programmatic focus), and the workbench hands
+    // the active group over asynchronously. Establish the precondition through
+    // the workbench instead of racing it: activate view 1's tab, then wait for
+    // the active group and the structure tree (bound to the active view).
+    await step('US5.3: activating view 1 before Undo', () =>
+      group1.locator('.tabs-container .tab.active').click({
+        timeout: STEP_TIMEOUT,
+      }),
+    );
+    await expect(group1, 'first editor group is the active group').toHaveClass(
+      /\bactive\b/,
+      { timeout: STEP_TIMEOUT },
+    );
+    expect(await editorIs(page, 'designer')).toBe(true);
+    await expect(
+      page.getByRole('treeitem', { name: /^Textbox: Behind, Primary/ }),
+      'structure tree follows view 1',
+    ).toBeVisible({ timeout: STEP_TIMEOUT });
     await view1.getByRole('button', { name: 'Undo', exact: true }).click();
     await saveEdit(ctx);
     await expectPristine(ctx, original);
