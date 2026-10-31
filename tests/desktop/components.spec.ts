@@ -39,6 +39,7 @@ import { dirname, join, resolve } from 'node:path';
 import {
   launchTrustedDesktop,
   openWorkspaceFile,
+  setQuickInputText,
   type DesktopDriver,
 } from './driver.js';
 
@@ -324,7 +325,7 @@ async function runFilter(
     '.quick-input-widget:visible .quick-input-box input',
   );
   await expect(input).toBeVisible();
-  await input.fill(query);
+  await setQuickInputText(input, query);
   await input.press(cancel ? 'Escape' : 'Enter');
   await expect(ctx.page.locator('.quick-input-widget:visible')).toBeHidden();
 }

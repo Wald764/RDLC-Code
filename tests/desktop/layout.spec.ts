@@ -24,6 +24,7 @@ import { dirname, join, resolve } from 'node:path';
 import {
   launchTrustedDesktop,
   openContextMenuWithKeyboard,
+  setQuickInputText,
   type DesktopDriver,
 } from './driver.js';
 
@@ -192,11 +193,11 @@ async function palettePicks(
     '.quick-input-widget:visible .quick-input-box input',
   );
   await input.waitFor({ state: 'visible', timeout: 15_000 });
-  await page.keyboard.type(command, { delay: 10 });
+  await setQuickInputText(input, `>${command}`);
   await chooseQuickResult(page, command);
   for (const pick of picks) {
     await input.waitFor({ state: 'visible', timeout: 15_000 });
-    await page.keyboard.type(pick, { delay: 10 });
+    await setQuickInputText(input, pick);
     await chooseQuickResult(page, pick);
   }
   await expect(page.locator('.quick-input-widget:visible')).toBeHidden();
@@ -208,7 +209,11 @@ const palette = (page: Page, command: string, frame?: Frame) =>
 async function openReport(ctx: Ctx, name: string): Promise<void> {
   await blur(ctx.page);
   await ctx.page.keyboard.press(`${MOD}+p`);
-  await ctx.page.keyboard.insertText(ctx.path(name));
+  const quickOpen = ctx.page.locator(
+    '.quick-input-widget:visible .quick-input-box input',
+  );
+  await quickOpen.waitFor({ state: 'visible' });
+  await setQuickInputText(quickOpen, ctx.path(name));
   // Results arrive asynchronously; Enter before the file is listed picks nothing.
   await expect(
     ctx.page

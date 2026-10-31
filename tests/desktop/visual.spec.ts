@@ -48,7 +48,11 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { launchTrustedDesktop, type DesktopDriver } from './driver.js';
+import {
+  launchTrustedDesktop,
+  setQuickInputText,
+  type DesktopDriver,
+} from './driver.js';
 import {
   environmentFromDriver,
   referenceEnvironmentReasons,
@@ -747,7 +751,7 @@ async function palette(
     '.quick-input-widget:visible .quick-input-box input',
   );
   await input.waitFor({ state: 'visible', timeout: 15_000 });
-  await page.keyboard.type(command, { delay: 10 });
+  await setQuickInputText(input, `>${command}`);
   // Fuzzy ranking can put other commands first on a fresh profile, so the row
   // is selected by its exact label and clicked rather than taking Enter.
   const first = exactLabelRow(page, command);
@@ -759,7 +763,11 @@ async function palette(
 async function openReport(ctx: Ctx, name: string): Promise<void> {
   await blur(ctx.page);
   await ctx.page.keyboard.press(`${MOD}+p`);
-  await ctx.page.keyboard.insertText(ctx.path(name));
+  const quickOpen = ctx.page.locator(
+    '.quick-input-widget:visible .quick-input-box input',
+  );
+  await quickOpen.waitFor({ state: 'visible' });
+  await setQuickInputText(quickOpen, ctx.path(name));
   // Results arrive asynchronously; Enter before the file is listed picks nothing.
   await expect(
     ctx.page
@@ -793,7 +801,7 @@ async function applyTheme(
     '.quick-input-widget:visible .quick-input-box input',
   );
   await input.waitFor({ state: 'visible' });
-  await page.keyboard.type(theme.label, { delay: 10 });
+  await setQuickInputText(input, theme.label);
   // The first row can be "Browse Additional Color Themes..." (recently used).
   const row = exactLabelRow(page, theme.label);
   await expect(row, `theme row for ${theme.label}`).toBeVisible();

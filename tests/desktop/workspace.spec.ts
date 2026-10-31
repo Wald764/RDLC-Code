@@ -22,6 +22,7 @@ import { dirname, join, resolve } from 'node:path';
 import {
   commandAvailable,
   launchTrustedDesktop,
+  setQuickInputText,
   type DesktopDriver,
 } from './driver.js';
 
@@ -204,7 +205,11 @@ async function openFile(ctx: Ctx, name: string): Promise<void> {
   const { page } = ctx;
   await blur(page);
   await page.keyboard.press(`${MOD}+p`);
-  await page.keyboard.insertText(ctx.path(name));
+  const quickOpen = page.locator(
+    '.quick-input-widget:visible .quick-input-box input',
+  );
+  await quickOpen.waitFor({ state: 'visible' });
+  await setQuickInputText(quickOpen, ctx.path(name));
   await page
     .locator('.quick-input-widget:visible .monaco-list-row')
     .filter({ hasText: name })
@@ -230,7 +235,7 @@ async function palette(
     '.quick-input-widget:visible .quick-input-box input',
   );
   await input.waitFor({ state: 'visible' });
-  await page.keyboard.type(command, { delay: 10 });
+  await setQuickInputText(input, `>${command}`);
   const rows = page.locator(
     '.quick-input-widget:visible .quick-input-list .monaco-list-row',
   );
@@ -238,7 +243,7 @@ async function palette(
   for (const pick of picks) {
     await page.waitForTimeout(500);
     await input.waitFor({ state: 'visible' });
-    await page.keyboard.type(pick, { delay: 10 });
+    await setQuickInputText(input, pick);
     await rows.filter({ hasText: pick }).first().click();
   }
   await expect(page.locator('.quick-input-widget:visible')).toBeHidden();
@@ -252,10 +257,11 @@ async function reload(page: Page): Promise<void> {
   }, marker);
   await blur(page);
   await page.keyboard.press(`${MOD}+Shift+P`);
-  await page
-    .locator('.quick-input-widget:visible .quick-input-box input')
-    .waitFor({ state: 'visible' });
-  await page.keyboard.type('Developer: Reload Window', { delay: 10 });
+  const reloadInput = page.locator(
+    '.quick-input-widget:visible .quick-input-box input',
+  );
+  await reloadInput.waitFor({ state: 'visible' });
+  await setQuickInputText(reloadInput, '>Developer: Reload Window');
   await page
     .locator('.quick-input-widget:visible .quick-input-list .monaco-list-row')
     .filter({ hasText: 'Developer: Reload Window' })
@@ -455,7 +461,7 @@ test('US1.1-new-open-report', async () => {
         '.quick-input-widget:visible .quick-input-box input',
       );
       await input.waitFor({ state: 'visible' });
-      await input.fill(ctx.path('opened.rdlc'));
+      await setQuickInputText(input, ctx.path('opened.rdlc'));
       await input.press('Enter');
       await ctx.driver.designerFrame();
       for (const label of VIEWS)
@@ -780,7 +786,7 @@ test('FR-003-state-coverage', async () => {
       const input = page.locator(
         '.quick-input-widget:visible .quick-input-box input',
       );
-      await input.fill('no matching component');
+      await setQuickInputText(input, 'no matching component');
       await input.press('Enter');
       await expect(
         page.getByRole('treeitem', {

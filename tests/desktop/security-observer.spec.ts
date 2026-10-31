@@ -11,6 +11,7 @@ import {
   grantWorkspaceTrust,
   launchDesktop,
   readWorkspaceTrust,
+  setQuickInputText,
   TRUST_COMMAND,
   TRUSTED_TEXT,
   type DesktopDriver,
@@ -209,7 +210,11 @@ async function reportJourney(
     );
   const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
   await driver.page.keyboard.press(`${modifier}+p`);
-  await driver.page.keyboard.insertText(fixture);
+  const quickOpen = driver.page.locator(
+    '.quick-input-widget:visible .quick-input-box input',
+  );
+  await quickOpen.waitFor({ state: 'visible' });
+  await setQuickInputText(quickOpen, fixture);
   await driver.page
     .locator('.quick-input-widget:visible .monaco-list-row')
     .filter({ hasText: 'security.rdlc' })

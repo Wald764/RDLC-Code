@@ -30,6 +30,7 @@ import { dirname, join, resolve } from 'node:path';
 import {
   launchTrustedDesktop,
   openContextMenuWithKeyboard,
+  setQuickInputText,
   type DesktopDriver,
 } from './driver.js';
 
@@ -208,7 +209,7 @@ async function palette(
     '.quick-input-widget:visible .quick-input-box input',
   );
   await input.waitFor({ state: 'visible', timeout: 15_000 });
-  await page.keyboard.type(command, { delay: 10 });
+  await setQuickInputText(input, `>${command}`);
   await chooseQuickResult(page, command);
 }
 
@@ -236,7 +237,11 @@ async function chooseQuickResult(page: Page, label: string): Promise<void> {
 async function openReport(ctx: Ctx, name: string): Promise<void> {
   await blur(ctx.page);
   await ctx.page.keyboard.press(`${MOD}+p`);
-  await ctx.page.keyboard.insertText(ctx.path(name));
+  const quickOpen = ctx.page.locator(
+    '.quick-input-widget:visible .quick-input-box input',
+  );
+  await quickOpen.waitFor({ state: 'visible' });
+  await setQuickInputText(quickOpen, ctx.path(name));
   // Results arrive asynchronously; Enter before the file is listed picks nothing.
   await expect(
     ctx.page
@@ -452,7 +457,7 @@ test('US4.4-filter-clear', async () => {
       '.quick-input-widget:visible .quick-input-box input',
     );
     await input.waitFor({ state: 'visible' });
-    await page.keyboard.type('no matching component', { delay: 10 });
+    await setQuickInputText(input, 'no matching component');
     await input.press('Enter');
     await expect(page.locator('.quick-input-widget:visible')).toBeHidden();
     await expect(
@@ -799,7 +804,7 @@ test('FR-003-state-labels', async () => {
         '.quick-input-widget:visible .quick-input-box input',
       );
       await input.waitFor({ state: 'visible' });
-      await page.keyboard.type('definitely no component', { delay: 10 });
+      await setQuickInputText(input, 'definitely no component');
       await input.press('Enter');
       await expect(
         page.getByRole('treeitem', {
@@ -866,7 +871,16 @@ test('FR-003-state-labels', async () => {
 
       // Truncated projection: the incomplete state names its own next action.
       await openReport(ctx, 'big.rdlc');
+      // The view's focus command does nothing while its tree is still being
+      // published for the new report: wait for the report's own rows first.
+      await expect(
+        pane(page, 'Report Structure').getByRole('treeitem', {
+          name: /^Textbox: T0/,
+        }),
+      ).toBeVisible();
       await palette(page, 'Focus on Report Structure View');
+      // End goes to whichever element owns focus: wait for the tree to own it.
+      await expect(sidebarTree(page)).toHaveCount(1);
       await page.keyboard.press('End');
       await expect(
         page.getByRole('treeitem', {
@@ -1216,7 +1230,7 @@ test('SC-006-keyboard-themes', async () => {
           '.quick-input-widget:visible .quick-input-box input',
         );
         await input.waitFor({ state: 'visible' });
-        await page.keyboard.type(theme.label, { delay: 10 });
+        await setQuickInputText(input, theme.label);
         await chooseQuickResult(page, theme.label);
         await expect(page.locator('.quick-input-widget:visible')).toBeHidden();
         await expect

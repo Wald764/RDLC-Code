@@ -9,7 +9,11 @@ import {
 } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
-import { launchTrustedDesktop, type DesktopDriver } from './driver.js';
+import {
+  launchTrustedDesktop,
+  setQuickInputText,
+  type DesktopDriver,
+} from './driver.js';
 
 const mime = 'application/vnd.rdlc-code.native-drag-probe';
 
@@ -40,7 +44,11 @@ test('native drag: observe public TreeView custom MIME delivery and cancellation
     });
     const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
     await driver.page.keyboard.press(`${modifier}+p`);
-    await driver.page.keyboard.insertText(fixture);
+    const quickOpen = driver.page.locator(
+      '.quick-input-widget:visible .quick-input-box input',
+    );
+    await quickOpen.waitFor({ state: 'visible' });
+    await setQuickInputText(quickOpen, fixture);
     await driver.page
       .locator('.quick-input-widget:visible .monaco-list-row')
       .filter({ hasText: 'native-drag.rdlc' })

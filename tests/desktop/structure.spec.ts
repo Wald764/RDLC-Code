@@ -23,7 +23,11 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { launchTrustedDesktop, type DesktopDriver } from './driver.js';
+import {
+  launchTrustedDesktop,
+  setQuickInputText,
+  type DesktopDriver,
+} from './driver.js';
 import {
   platformSkipAccepted,
   platformSkipReason,
@@ -126,7 +130,11 @@ const blur = async (page: Page): Promise<void> => {
 async function openFile(ctx: Ctx, name: string): Promise<void> {
   await blur(ctx.page);
   await ctx.page.keyboard.press(`${MOD}+p`);
-  await ctx.page.keyboard.insertText(ctx.path(name));
+  const quickOpen = ctx.page.locator(
+    '.quick-input-widget:visible .quick-input-box input',
+  );
+  await quickOpen.waitFor({ state: 'visible' });
+  await setQuickInputText(quickOpen, ctx.path(name));
   await ctx.page
     .locator('.quick-input-widget:visible .monaco-list-row')
     .filter({ hasText: name })

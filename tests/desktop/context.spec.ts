@@ -37,6 +37,7 @@ import { dirname, join, resolve } from 'node:path';
 import {
   launchTrustedDesktop,
   openWorkspaceFile,
+  setQuickInputText,
   type DesktopDriver,
 } from './driver.js';
 import {
@@ -349,7 +350,7 @@ async function palette(
   await step(`palette ${command}: input showing`, () =>
     input.waitFor({ state: 'visible', timeout: STEP_TIMEOUT }),
   );
-  await page.keyboard.type(command, { delay: 10 });
+  await setQuickInputText(input, `>${command}`);
   const rows = page.locator(
     '.quick-input-widget:visible .quick-input-list .monaco-list-row',
   );
@@ -360,7 +361,7 @@ async function palette(
     await step(`palette ${command}: input for pick ${pick}`, () =>
       input.waitFor({ state: 'visible', timeout: STEP_TIMEOUT }),
     );
-    await page.keyboard.type(pick, { delay: 10 });
+    await setQuickInputText(input, pick);
     await step(`palette ${command}: pick row ${pick}`, () =>
       rows.filter({ hasText: pick }).first().click({ timeout: STEP_TIMEOUT }),
     );
@@ -2143,7 +2144,7 @@ test('EDGE-01-identity', async () => {
       const target = ctx.path('saved.rdlc');
       const dialog = page.locator('.quick-input-widget:visible');
       try {
-        await input.fill(target);
+        await setQuickInputText(input, target);
         // The simple file dialog rewrites the typed path (completion, folder
         // resolution) and validates it asynchronously: Enter before it settles
         // is swallowed. Wait for the exact path, an idle progress bar and no

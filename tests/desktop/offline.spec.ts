@@ -77,6 +77,7 @@ import {
   grantWorkspaceTrust,
   launchDesktop,
   readWorkspaceTrust,
+  setQuickInputText,
   type DesktopDriver,
 } from './driver.js';
 import { hostBlockingLaunchOption } from './host-cgroup.js';
@@ -688,7 +689,11 @@ async function openFixture(driver: DesktopDriver, path: string): Promise<void> {
   const name = basename(path);
   await blur(driver.page);
   await driver.page.keyboard.press(`${MOD}+p`);
-  await driver.page.keyboard.insertText(path);
+  const quickOpen = driver.page.locator(
+    '.quick-input-widget:visible .quick-input-box input',
+  );
+  await quickOpen.waitFor({ state: 'visible' });
+  await setQuickInputText(quickOpen, path);
   await driver.page
     .locator('.quick-input-widget:visible .monaco-list-row')
     .filter({ hasText: name })
@@ -770,7 +775,7 @@ async function filterComponents(
   const input = driver.page.locator(
     '.quick-input-widget:visible .quick-input-box input',
   );
-  await input.fill(query);
+  await setQuickInputText(input, query);
   await input.press('Enter');
   await expect(driver.page.locator('.quick-input-widget:visible')).toBeHidden();
 }

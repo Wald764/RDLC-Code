@@ -27,13 +27,14 @@ import {
   parseTrustProbe,
   readExecutableVersion,
   retryTransientEvaluate,
+  setQuickInputText,
   trustProbePath,
   validateDesktopOptions,
   workbenchCommand,
   workbenchLocation,
 } from './driver.js';
 import config from './playwright.config.js';
-import type { BrowserContext, Page } from 'playwright';
+import type { BrowserContext, Locator, Page } from 'playwright';
 
 /** A page whose `.monaco-workbench` count never answers: the hung-transport case. */
 const fakePage = (url: string, count: () => Promise<number>): Page =>
@@ -106,7 +107,7 @@ function palettePage(escapeHangs: boolean) {
     evaluate: async () => {},
     locator: (selector: string) => ({
       count: async () => 1,
-      fill: async () => {},
+      evaluate: async () => {},
       waitFor: async (options: { state?: string }) => {
         // Only "the palette is still open after its budget" fails here.
         if (selector.endsWith('input') && options.state === 'hidden')
@@ -230,7 +231,7 @@ function closingPalettePage(options: {
     evaluate: async () => {},
     locator: () => ({
       count: async () => (options.open === false ? 0 : 1),
-      fill: async () => {},
+      evaluate: async () => {},
       waitFor: async () => {},
       filter: () => ({ ...rows, filter: () => rows }),
     }),
@@ -933,6 +934,35 @@ test('a transient evaluate failure is repeated at most three times, nothing else
     other,
   );
   assert.equal(calls, 1);
+});
+
+test('quick input text is set on the input itself and never typed into the focused element', async () => {
+  const element = Object.assign(new EventTarget(), { value: 'old' });
+  const heard: string[] = [];
+  element.addEventListener('input', () => heard.push(element.value));
+  const calls: string[] = [];
+  const input = {
+    evaluate: async (
+      run: (target: unknown, value: string) => void,
+      value: string,
+    ) => {
+      calls.push('evaluate');
+      run(element, value);
+    },
+    fill: async () => {
+      calls.push('fill');
+    },
+    type: async () => {
+      calls.push('type');
+    },
+    press: async () => {
+      calls.push('press');
+    },
+  } as unknown as Locator;
+  await setQuickInputText(input, '>View: Close All Editors');
+  assert.equal(element.value, '>View: Close All Editors');
+  assert.deepEqual(heard, ['>View: Close All Editors']);
+  assert.deepEqual(calls, ['evaluate']);
 });
 
 test('fitContentSize reduces the request to the display work area', () => {

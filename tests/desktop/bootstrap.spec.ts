@@ -11,7 +11,11 @@ import {
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { launchTrustedDesktop, type DesktopDriver } from './driver.js';
+import {
+  launchTrustedDesktop,
+  setQuickInputText,
+  type DesktopDriver,
+} from './driver.js';
 import {
   environmentFromDriver,
   referenceEnvironmentReasons,
@@ -97,7 +101,11 @@ test('bootstrap: real Desktop insertion, source oracle, Undo, semantics and pixe
     capabilities.nativeInput = 'failed';
     const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
     await driver.page.keyboard.press(`${modifier}+p`);
-    await driver.page.keyboard.insertText(fixture);
+    const quickOpen = driver.page.locator(
+      '.quick-input-widget:visible .quick-input-box input',
+    );
+    await quickOpen.waitFor({ state: 'visible' });
+    await setQuickInputText(quickOpen, fixture);
     await driver.page
       .locator('.quick-input-widget:visible .monaco-list-row')
       .filter({ hasText: 'bootstrap.rdlc' })

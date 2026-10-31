@@ -5,6 +5,7 @@ import {
   type BrowserContext,
   type ElectronApplication,
   type Frame,
+  type Locator,
   type Page,
 } from 'playwright';
 import {
@@ -524,7 +525,7 @@ async function commandListed(page: Page, id: string): Promise<boolean> {
     '.quick-input-widget:visible .quick-input-box input',
   );
   await input.waitFor({ state: 'visible', timeout: 15_000 });
-  await page.keyboard.type(id, { delay: 10 });
+  await setQuickInputText(input, `>${id}`);
   const available = await page
     .locator('.quick-input-widget:visible .quick-input-list .monaco-list-row')
     .filter({ hasText: id })
@@ -1039,6 +1040,25 @@ export async function openContextMenuWithKeyboard(
 }
 
 /**
+ * Set the text of a quick input box from inside the page. `Locator.fill` focuses
+ * the input and then inserts the text into whichever element holds focus one
+ * protocol round trip later, and `keyboard.type` types into the focused element
+ * outright: an editor that takes focus late (a freshly opened tab, mostly on
+ * macOS) then receives the text, which dirties it. Assigning the value of this
+ * one input and notifying its `input` listeners cannot reach any other element.
+ */
+export async function setQuickInputText(
+  input: Locator,
+  text: string,
+): Promise<void> {
+  await input.evaluate((element, value) => {
+    const box = element as HTMLInputElement;
+    box.value = value;
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+  }, text);
+}
+
+/**
  * One palette round trip: open the command palette, run `id` and confirm the
  * palette closed. Every caller (specs and the trust helpers) shares it, so its
  * recovery is shared too: a transport that stops answering must not turn a
@@ -1098,10 +1118,10 @@ export async function workbenchCommand(page: Page, id: string): Promise<void> {
       });
       await page.keyboard.press(shortcut);
       await input.waitFor({ state: 'visible', timeout: PALETTE_STEP_TIMEOUT });
-      // fill() writes into the palette input itself: typed keys would land in
-      // the focused editor (and dirty it) whenever the palette loses focus to
-      // a late-focusing editor between the shortcut and the first character.
-      await input.fill(`>${id}`);
+      // Never typed keys, and not fill() either (it inserts into the focused
+      // element): either would land in the focused editor, and dirty it,
+      // whenever the palette loses focus to a late-focusing editor.
+      await setQuickInputText(input, `>${id}`);
       const listed = rows.filter({ hasText: id }).first();
       await listed.waitFor({ state: 'visible', timeout: PALETTE_STEP_TIMEOUT });
       // Fuzzy ranking can list other commands first: prefer the exact label.
