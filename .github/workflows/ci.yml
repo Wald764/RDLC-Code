@@ -88,17 +88,20 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
-      # macOS windows are clamped to the display work area: hide the Dock so the
-      # 1440x900 workbench keeps its height, and record the display it gets.
+      # The default 1024x768 runner display cannot hold the 1440x900 workbench:
+      # switch to a larger CoreGraphics mode (no tool to install) and record the
+      # modes. macOS windows are clamped to the display work area, so hide the
+      # Dock too and the workbench keeps its height.
       - name: Prepare the macOS display
         if: runner.os == 'macOS'
+        timeout-minutes: 5
         run: |
           defaults write com.apple.dock autohide -bool true
           defaults write com.apple.dock autohide-delay -float 1000
           killall Dock || true
           sleep 2
           mkdir -p .vscode-test/desktop-artifacts
-          system_profiler SPDisplaysDataType | tee .vscode-test/desktop-artifacts/macos-display.txt
+          swift scripts/macos-display.swift 2>&1 | tee .vscode-test/desktop-artifacts/macos-display.txt
       # Host suites and the capability probe run once per OS/version, in core.
       - if: runner.os == 'Linux' && matrix.group == 'core'
         run: xvfb-run -a pnpm test:vscode

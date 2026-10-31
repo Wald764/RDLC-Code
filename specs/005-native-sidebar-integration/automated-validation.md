@@ -133,6 +133,8 @@ The Linux host observer (`tests/desktop/security-observer.ts`) classifies every 
 
 The macOS runs cited above ran on `macos-14`. GitHub retires that image on 2026-11-02 (brownouts cancel its jobs, actions/runner-images#13518), so the matrix now uses `macos-15`. The macOS skip rows were diagnosed on `macos-14` and must be re-checked on `macos-15`.
 
+The `macos-15` runner display is 1024x768 (work area 1024x743), below the Desktop driver's 1280x600 content floor, and `system_profiler SPDisplaysDataType` printed nothing on it. The "Prepare the macOS display" step of `ci.yml` and `flake-hunt.yml` therefore hides the Dock and runs `swift scripts/macos-display.swift` (Swift ships with Xcode; nothing is installed). The script lists the current and available CoreGraphics display modes, switches to the smallest usable mode of at least 1440x900 points (else the largest usable one, preferring 1x pixel density), and prints the resulting display bounds. The output is saved as the `macos-display.txt` artifact. The script never fails the step: if no larger mode exists, `assessWindowGeometry` in `tests/desktop/driver.ts` still rejects the launch with its clear error, and the floor is unchanged.
+
 Fixed rather than disabled (test or harness defects, not validated by an Electron run locally):
 
 - `accessibility.spec.ts` `US6.1-keyboard-journey` and `FR-027-keyboard` (macOS): the workbench relays Cmd+A into the webview asynchronously, so typing straight after it dropped the first character (`enamedByKeyboard`, `raftThatNeverCommits`). A `selectAllInField` helper now waits until the selection spans the field value before typing; unvalidated on macOS until the next run.

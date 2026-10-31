@@ -170,6 +170,26 @@ test('the matrix VS Code is pre-downloaded with retries before any test uses it'
   assert.ok(download < hostTests, 'the extension-host tests reuse the cache');
 });
 
+const SWIFT_DISPLAY = /^ {10}swift scripts\/macos-display\.swift\b/m;
+
+test('the macOS display is enlarged with the bundled Swift script, bounded and before any test', () => {
+  for (const [where, source] of [
+    ['ci.yml', CI],
+    ['flake-hunt.yml', FLAKE],
+  ] as const) {
+    const list = steps(job(jobs(source), 'desktop'));
+    const display = list.find((step) => SWIFT_DISPLAY.test(step));
+    assert.ok(display, `${where}: the display step runs the Swift script`);
+    assert.equal(stepField(display, 'timeout-minutes'), '5', where);
+    assert.equal(stepField(display, 'if'), "runner.os == 'macOS'", where);
+    assert.match(display, /macos-display\.txt/, `${where}: output is kept`);
+    ordered(where, list, [
+      ['display', SWIFT_DISPLAY],
+      ['journeys', RUN('pnpm test:e2e')],
+    ]);
+  }
+});
+
 test('every matrix entry runs the functional and installed journeys fail-closed', () => {
   const all = steps(job(jobs(CI), 'desktop'));
   const groups = {
