@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import {
   assertCompleteObservation,
   attachLineNames,
+  isRoutineStraceNotice,
   type AttachHistory,
   createSecurityObserver,
   detectNativeCapability,
@@ -3059,4 +3060,19 @@ test('the VS Code binary may make its fixed read-only startup probes, no other p
     }),
     true,
   );
+});
+
+test('routine strace notices include the multi-threaded attach form', () => {
+  for (const line of [
+    'strace: Process 15627 attached',
+    'strace: Process 15627 attached with 37 threads',
+    '  strace: Process 15627 detached  ',
+  ])
+    assert.equal(isRoutineStraceNotice(line), true, line);
+  for (const line of [
+    'strace: attach: ptrace(PTRACE_SEIZE, 15627): Operation not permitted',
+    'strace: Process 15627 attached with many threads',
+    'strace: Process 15627 attached; extra',
+  ])
+    assert.equal(isRoutineStraceNotice(line), false, line);
 });

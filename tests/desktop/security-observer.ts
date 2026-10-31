@@ -2396,6 +2396,16 @@ function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
   });
 }
 
+/**
+ * strace's routine attach/detach notices, including the per-process thread
+ * count it prints when attaching to a multi-threaded process.
+ */
+export function isRoutineStraceNotice(line: string): boolean {
+  return /^strace: Process \d+ (?:attached(?: with \d+ threads?)?|detached)$/.test(
+    line.trim(),
+  );
+}
+
 /** True when a strace attach notice names one of the given pids (wording is locale dependent, the pid is not). */
 export function attachLineNames(
   line: string,
@@ -2439,7 +2449,7 @@ async function finishSession(session: Session): Promise<NativeObservation> {
     .filter(
       (line) =>
         line.trim() &&
-        !/^strace: Process \d+ (?:attached|detached)$/.test(line.trim()) &&
+        !isRoutineStraceNotice(line) &&
         !attachLineNames(line, vanished),
     )
     .join(' ');
