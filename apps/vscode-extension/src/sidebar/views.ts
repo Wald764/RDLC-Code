@@ -6,7 +6,7 @@ import {
   type CreationKind,
 } from '@rdlc/report-model/components';
 import type { NavigationNode } from '@rdlc/report-model/navigation';
-import { SidebarHostContext } from './host-context.js';
+import { SidebarHostContext, isDroppedOutcome } from './host-context.js';
 import type { ContextState } from './context.js';
 import {
   clipboardIntent,
@@ -75,6 +75,12 @@ export function stateMessage(
     : text;
 }
 
+interface OwnReveal {
+  readonly authority: string;
+  readonly provider: NativeView;
+  readonly selection: string;
+}
+
 /** Native display rows have no authority until their owned activation is rechecked. */
 export class SidebarViews implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
@@ -85,14 +91,8 @@ export class SidebarViews implements vscode.Disposable {
   private contentSignature = '';
   private lastFilter: string | undefined;
   private lastTreeSelection = '';
-  private readonly selecting = new Set<string>();
-  /**
-   * Tail of the native selection dispatches. The designer settles one native
-   * action at a time and refuses a second as already pending, so a click that
-   * follows another before it settled (a Ctrl-click right after a click) queues
-   * behind it instead of being refused.
-   */
-  private selectionTail: Promise<void> = Promise.resolve();
+  /** Signature of the newest native selection requested and not yet settled. */
+  private latestSelection: string | null = null;
   /**
    * One native selection this view itself dispatched, held until the host
    * accepts it: the tree the user just clicked already shows that row with its
@@ -101,11 +101,7 @@ export class SidebarViews implements vscode.Disposable {
    * accepted selection it caused, so it can neither outlive that context nor
    * suppress an unrelated canvas selection.
    */
-  private ownReveal: {
-    readonly authority: string;
-    readonly provider: NativeView;
-    readonly selection: string;
-  } | null = null;
+  private ownReveal: OwnReveal | null = null;
 
   constructor(private readonly host: SidebarHostContext) {
     this.providers = (['structure', 'data', 'components'] as const).map(
@@ -170,7 +166,9 @@ export class SidebarViews implements vscode.Disposable {
           this.host.evaluation?.scene ?? null,
           action,
         );
-        const outcome = await this.host.dispatch(intent, [row.node.id]);
+        const outcome = await this.host.dispatch(intent, [row.node.id], {
+          beforeDispatch: this.stillCurrent(row),
+        });
         if (outcome.status !== 'accepted')
           throw new Error(
             outcome.reason ?? 'The clipboard action was cancelled.',
@@ -187,7 +185,11 @@ export class SidebarViews implements vscode.Disposable {
           action,
           this.host.evaluation?.navigation.structure.nodes ?? [],
         );
-        const outcome = await this.host.dispatch(route.intent, route.targetIds);
+        const outcome = await this.host.dispatch(
+          route.intent,
+          route.targetIds,
+          { beforeDispatch: this.stillCurrent(row) },
+        );
         if (outcome.status !== 'accepted')
           throw new Error(outcome.reason ?? 'The report action was cancelled.');
         void vscode.window.showInformationMessage(route.notice);
@@ -245,6 +247,16 @@ export class SidebarViews implements vscode.Disposable {
     return row;
   }
 
+  /**
+   * Host dispatches queue behind the one in flight: a row that went stale while
+   * its action waited is refused with the same warning as a stale click.
+   */
+  private stillCurrent(row: Row): () => void {
+    return () => {
+      this.checked(row);
+    };
+  }
+
   private async activate(
     input?: Row,
     nativeRows?: readonly Row[],
@@ -252,10 +264,14 @@ export class SidebarViews implements vscode.Disposable {
     const row = this.checked(input);
     if (row.component) {
       if (!row.component.creatable) throw new Error(row.component.reason!);
-      const outcome = await this.host.dispatch({
-        action: 'create',
-        create: row.component.kind as CreationKind,
-      });
+      const outcome = await this.host.dispatch(
+        {
+          action: 'create',
+          create: row.component.kind as CreationKind,
+        },
+        [],
+        { beforeDispatch: this.stillCurrent(row) },
+      );
       if (outcome.status !== 'accepted')
         throw new Error(outcome.reason ?? 'Insertion was cancelled.');
     } else if (row.node) {
@@ -285,37 +301,46 @@ export class SidebarViews implements vscode.Disposable {
         throw new Error('Choose report nodes only.');
       const targetIds = rows.map((candidate) => candidate.node!.id);
       const signature = JSON.stringify([row.authority, targetIds, row.node.id]);
-      if (this.selecting.has(signature)) return;
-      this.selecting.add(signature);
-      const previous = this.selectionTail;
-      let release!: () => void;
-      this.selectionTail = new Promise<void>((resolve) => (release = resolve));
+      // The same selection requested again while it is the newest one (a tree
+      // event and its command route) is one interaction.
+      if (this.latestSelection === signature) return;
+      this.latestSelection = signature;
+      let own: OwnReveal | null = null as OwnReveal | null;
       try {
-        await previous;
-        // The queue can outlive the context the rows were captured for: a
-        // selection for a previous projection is dropped, as its event route
-        // already does, rather than warned about.
-        if (rows.some((candidate) => candidate.authority !== this.authority()))
-          return;
-        if (provider)
-          this.ownReveal = {
-            authority: row.authority,
-            provider,
-            selection: JSON.stringify([targetIds, row.node.id]),
-          };
         const outcome = await this.host.dispatch(
           { action: 'select', primaryId: row.node.id, additive: false },
           targetIds,
+          {
+            // The host queues native actions and may run this one long after the
+            // click: a selection for a previous projection is dropped, as its
+            // event route already does, rather than warned about.
+            beforeDispatch: () => {
+              if (
+                rows.some(
+                  (candidate) => candidate.authority !== this.authority(),
+                )
+              )
+                return false;
+              if (provider)
+                this.ownReveal = own = {
+                  authority: row.authority,
+                  provider,
+                  selection: JSON.stringify([targetIds, row.node!.id]),
+                };
+              return true;
+            },
+          },
         );
+        if (isDroppedOutcome(outcome)) return;
         if (outcome.status !== 'accepted')
           throw new Error(outcome.reason ?? 'Selection was cancelled.');
       } catch (error) {
-        // A refused selection never arrives as an accepted one.
-        this.ownReveal = null;
+        // A refused selection never arrives as an accepted one. Only the claim
+        // this very selection made is withdrawn, never an earlier pending one.
+        if (own && this.ownReveal === own) this.ownReveal = null;
         throw error;
       } finally {
-        release();
-        this.selecting.delete(signature);
+        if (this.latestSelection === signature) this.latestSelection = null;
       }
     }
   }
@@ -331,9 +356,11 @@ export class SidebarViews implements vscode.Disposable {
       throw new Error(
         'Properties are unavailable for this target. Inspect Code XML.',
       );
-    const outcome = await this.host.dispatch({ action: 'properties' }, [
-      row.node.id,
-    ]);
+    const outcome = await this.host.dispatch(
+      { action: 'properties' },
+      [row.node.id],
+      { beforeDispatch: this.stillCurrent(row) },
+    );
     if (outcome.status !== 'accepted')
       throw new Error(outcome.reason ?? 'Properties were cancelled.');
   }
@@ -356,7 +383,9 @@ export class SidebarViews implements vscode.Disposable {
       action,
       this.host.evaluation?.navigation.data.nodes ?? [],
     );
-    const outcome = await this.host.dispatch(route.intent, route.targetIds);
+    const outcome = await this.host.dispatch(route.intent, route.targetIds, {
+      beforeDispatch: this.stillCurrent(row),
+    });
     if (outcome.status !== 'accepted')
       throw new Error(outcome.reason ?? 'The data action was refused.');
     void vscode.window.showInformationMessage(route.notice);

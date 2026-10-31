@@ -100,7 +100,9 @@ registerHooks({
         }
       : next(url, context),
 });
-const { SidebarHostContext } = await import('./sidebar/host-context.js');
+const { SidebarHostContext, isDroppedOutcome } = await import(
+  './sidebar/host-context.js'
+);
 
 const uri: FakeUri = {
   path: '/report.rdlc',
@@ -501,6 +503,255 @@ test('the insert outcome does not wait for the focus command', async () => {
       new Promise<string>((resolve) => setTimeout(() => resolve('late'), 2000)),
     ]);
     assert.notEqual(outcome, 'late');
+  } finally {
+    host.dispose();
+  }
+});
+
+/**
+ * A ready designer that, like the real one, refuses a native action while
+ * another is pending. Each delivered action waits for `settle()`; `failNext`
+ * makes the next delivery fail instead.
+ */
+function gatedSetup() {
+  document.version = 1;
+  fakeVscode.workspace.textDocuments = [document];
+  document.getText = () => editableReport;
+  const listeners = new Set<(outcome: unknown) => void>();
+  const log = {
+    started: [] as string[],
+    overlaps: 0,
+    inflight: 0,
+    failNext: false,
+    gates: [] as Array<() => void>,
+  };
+  const gated = {
+    ...session(),
+    isReady: true,
+    onActionOutcome: (listener: (outcome: unknown) => void) => {
+      listeners.add(listener);
+      return new FakeDisposable(() => listeners.delete(listener));
+    },
+    cancelNativeAction: () => {},
+    dispatchNativeAction: async (message: {
+      requestId: string;
+      action: string;
+    }) => {
+      if (log.inflight > 0) log.overlaps += 1;
+      log.started.push(message.action);
+      if (log.failNext) {
+        log.failNext = false;
+        return { delivered: false, reason: 'Delivery failed.' };
+      }
+      log.inflight += 1;
+      void new Promise<void>((resolve) => log.gates.push(resolve)).then(() => {
+        log.inflight -= 1;
+        // An insert applies a document edit; a selection never changes the version.
+        if (message.action === 'create') {
+          document.version += 1;
+          (host as unknown as { accept(value: unknown): unknown }).accept(
+            document,
+          );
+        }
+        for (const listener of listeners)
+          listener({ requestId: message.requestId, status: 'accepted' });
+      });
+      return { delivered: true };
+    },
+  };
+  const host: HostContext = new SidebarHostContext();
+  host.register(
+    document as never,
+    panel(1) as never,
+    gated as unknown as DocumentSession,
+  );
+  group.viewColumn = 1;
+  group.activeTab = { input: new TabInputCustom(uri, 'rdlcCode.designer') };
+  host.refreshFocus();
+  // Resolved per call: a new document version issues new target ids.
+  const select = (options?: Parameters<HostContext['dispatch']>[2]) => {
+    const id = host.evaluation?.syntax.root?.id;
+    assert.ok(id);
+    return host.dispatch(
+      { action: 'select', primaryId: id, additive: false },
+      [id],
+      options,
+    );
+  };
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
+  const settleNext = async () => {
+    await tick();
+    const gate = log.gates.shift();
+    assert.ok(gate, 'an action is waiting at the designer');
+    gate();
+  };
+  return { host, log, select, tick, settleNext };
+}
+
+test('a rejected dispatch lets the next queued action proceed', async () => {
+  const { host, log, select, settleNext } = gatedSetup();
+  try {
+    log.failNext = true;
+    const create = host.dispatch({ action: 'create', create: 'textbox' });
+    const failed = assert.rejects(create, /Delivery failed/);
+    const next = host.dispatch({ action: 'create', create: 'textbox' });
+    await failed;
+    await settleNext();
+    assert.equal((await next).status, 'accepted');
+    const after = select();
+    await settleNext();
+    assert.equal((await after).status, 'accepted');
+    assert.equal(log.overlaps, 0);
+  } finally {
+    host.dispose();
+  }
+});
+
+test('queued selections coalesce to the latest pending one', async () => {
+  const { host, log, select, tick, settleNext } = gatedSetup();
+  try {
+    const running = select();
+    await tick();
+    assert.equal(log.started.length, 1);
+    const older = select();
+    const newer = select();
+    // The superseded selection resolves at once, without waiting for the designer.
+    const droppedOutcome = await older;
+    assert.ok(isDroppedOutcome(droppedOutcome));
+    await settleNext();
+    assert.equal((await running).status, 'accepted');
+    await settleNext();
+    const outcome = await newer;
+    assert.equal(outcome.status, 'accepted');
+    assert.ok(!isDroppedOutcome(outcome));
+    assert.deepEqual(log.started, ['select', 'select']);
+    assert.equal(log.overlaps, 0);
+  } finally {
+    host.dispose();
+  }
+});
+
+test('a select never drops a queued non-select action', async () => {
+  const { host, log, select, tick, settleNext } = gatedSetup();
+  try {
+    const running = select();
+    await tick();
+    const create = host.dispatch({ action: 'create', create: 'textbox' });
+    const later = select();
+    await settleNext();
+    await running;
+    await settleNext();
+    const created = await create;
+    assert.equal(created.status, 'accepted');
+    assert.ok(!isDroppedOutcome(created));
+    // The insert changed the document version: the select captured before it
+    // is refused, never rebased onto the new version.
+    await assert.rejects(
+      later,
+      /report or designer changed while the action was being delivered/,
+    );
+    assert.deepEqual(log.started, ['select', 'create']);
+    assert.equal(log.overlaps, 0);
+  } finally {
+    host.dispose();
+  }
+});
+
+test('a second insert captured before the first applied is refused as stale', async () => {
+  const { host, log, tick, settleNext } = gatedSetup();
+  try {
+    const first = host.dispatch({ action: 'create', create: 'textbox' });
+    const second = host.dispatch({ action: 'create', create: 'textbox' });
+    const refusal = assert.rejects(
+      second,
+      /report or designer changed while the action was being delivered/,
+    );
+    await tick();
+    assert.deepEqual(log.started, ['create'], 'the second waits for the first');
+    await settleNext();
+    assert.equal((await first).status, 'accepted');
+    await refusal;
+    assert.deepEqual(
+      log.started,
+      ['create'],
+      'the stale insert never delivers',
+    );
+    assert.equal(log.overlaps, 0);
+    assert.equal(host.registry.pendingCount, 0);
+    // A fresh capture after the settlement applies normally.
+    const third = host.dispatch({ action: 'create', create: 'textbox' });
+    await settleNext();
+    assert.equal((await third).status, 'accepted');
+  } finally {
+    host.dispose();
+  }
+});
+
+test('a select queued after an insert waits for it and is then dropped or refused as stale', async () => {
+  const { host, log, select, tick, settleNext } = gatedSetup();
+  try {
+    const create = host.dispatch({ action: 'create', create: 'textbox' });
+    await tick();
+    // A caller whose rows went stale with the version drops silently...
+    const silent = select({ beforeDispatch: () => false });
+    // ...and one that does not guard is refused by the host.
+    const loud = select();
+    // Selections coalesce: only the latest waiting one is still pending.
+    assert.ok(isDroppedOutcome(await silent));
+    const refusal = assert.rejects(
+      loud,
+      /report or designer changed while the action was being delivered/,
+    );
+    await tick();
+    assert.deepEqual(
+      log.started,
+      ['create'],
+      'the select waits for the insert',
+    );
+    await settleNext();
+    assert.equal((await create).status, 'accepted');
+    await refusal;
+    assert.deepEqual(log.started, ['create']);
+    assert.equal(log.overlaps, 0);
+    assert.equal(
+      (host as unknown as { dispatchSequence: number }).dispatchSequence,
+      3,
+    );
+    assert.equal(host.registry.pendingCount, 0);
+  } finally {
+    host.dispose();
+  }
+});
+
+test('an action stale after its wait is dropped without reaching the designer', async () => {
+  const { host, log, select, tick, settleNext } = gatedSetup();
+  try {
+    const running = select();
+    await tick();
+    let stale = false;
+    const queued = select({ beforeDispatch: () => !stale });
+    stale = true;
+    await settleNext();
+    await running;
+    const outcome = await queued;
+    assert.ok(isDroppedOutcome(outcome));
+    assert.deepEqual(log.started, ['select']);
+    // A guard that throws refuses the action instead, and the chain survives.
+    const running2 = select();
+    await tick();
+    const refused = host.dispatch({ action: 'create', create: 'textbox' }, [], {
+      beforeDispatch: () => {
+        throw new Error('stale row');
+      },
+    });
+    const refusal = assert.rejects(refused, /stale row/);
+    await settleNext();
+    await running2;
+    await refusal;
+    const next = select();
+    await settleNext();
+    assert.equal((await next).status, 'accepted');
+    assert.equal(log.overlaps, 0);
   } finally {
     host.dispose();
   }

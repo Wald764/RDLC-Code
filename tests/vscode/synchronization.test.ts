@@ -646,15 +646,27 @@ async function nativeDesignerHistory(): Promise<void> {
     const exactB = b.getText();
     // Simulate returning to the originating designer, not opening its source text editor.
     first.panel.reveal(vscode.ViewColumn.One, false);
-    await until(
-      () => first.panel.active,
-      'Originating designer active after B',
-    );
+    // The workbench applies a reveal asynchronously: wait for what it exposes,
+    // the active tab group showing A's designer, before any history request, so
+    // undo cannot reach the previously active editor (B).
+    const designerIsActive = () => {
+      const group = vscode.window.tabGroups.activeTabGroup;
+      const input = group.activeTab?.input;
+      return (
+        first.panel.active &&
+        group.viewColumn === vscode.ViewColumn.One &&
+        input instanceof vscode.TabInputCustom &&
+        input.viewType === type &&
+        input.uri.toString() === a.uri.toString()
+      );
+    };
+    await until(designerIsActive, 'Originating designer active after B');
     for (const action of ['undo', 'redo'] as const) {
       const expected =
         action === 'undo' ? texts.slice(0, -1).reverse() : texts.slice(1);
       for (const [i, text] of expected.entries()) {
         const requestId = `native-${action}-${i}`;
+        await until(designerIsActive, `${requestId}: designer is active`);
         first.session.receive({
           protocol: 2,
           kind: 'history',
@@ -2271,22 +2283,15 @@ async function concurrentDuplicateDispatch(env: RaceEnv): Promise<void> {
   const label = 'concurrent-duplicate-dispatch';
   const file = join(env.directory, 'concurrent.rdlc');
   writeFileSync(file, env.source);
-  let firstDone = false;
   const rig = await openRig({
     file,
     ready: true,
+    // Only the first request is ever delivered: the stale second capture is
+    // refused by the queue before it can reach the designer.
     onDeliver: async (current) => {
       const action = current.delivered.at(-1);
       assert.ok(action, 'the request reached the designer');
-      if (current.deliveries === 1) {
-        await react(current, action);
-        firstDone = true;
-        return true;
-      }
-      await until(
-        () => firstDone,
-        'the accepted request settles before the second delivers',
-      );
+      await react(current, action);
       return true;
     },
   });
@@ -2318,8 +2323,13 @@ async function concurrentDuplicateDispatch(env: RaceEnv): Promise<void> {
       /report or designer changed while the action was being delivered/,
       `${label}: the refusal names the changed authority`,
     );
-    assert.equal(rig.deliveries, 2, `${label}: each capture delivered once`);
-    assert.equal(rig.outcomes.length, 2, `${label}: one result per request`);
+    // The queue revalidates the stale capture before it can reach the designer.
+    assert.equal(
+      rig.deliveries,
+      1,
+      `${label}: only the current capture delivers`,
+    );
+    assert.equal(rig.outcomes.length, 1, `${label}: one result per delivery`);
     assert.equal(
       rig.outcomes.filter((outcome) => outcome.status === 'accepted').length,
       1,

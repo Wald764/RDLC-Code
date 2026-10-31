@@ -30,6 +30,8 @@
 
 **Alternatives considered**: Optimistic tree highlight as authority bypasses drafts; arbitrary command strings weaken validation; waiting for draft application inside its own document queue can deadlock; automatic retry rebases forbidden stale actions.
 
+**Stale selections after a wait**: A native selection queued behind an insert or another action is re-checked once its turn comes. A caller that guards with `beforeDispatch` (the sidebar tree, whose rows went stale with the version) is dropped silently: `isDroppedOutcome` marks the placeholder outcome and no warning is shown, because a navigation-only select the user has already moved past is not an error. A caller without that guard is refused with "The report or designer changed while the action was being delivered: <reason>." where `<reason>` is the registry revalidation failure (for example `stale-version`). A refusal is never rebased onto the version that exists now.
+
 **Evidence**: `packages/report-model/src/protocol.ts`; Angular `host-adapter.ts`, `selection.ts`, `editor.component.ts` methods `selectTree`, `create`, `held`, `applyDraft`, `discardDraft`, `cancelConflict`. See [bridge contract](contracts/sidebar-bridge.md).
 
 ## 4. Navigation coverage, safety and allocation

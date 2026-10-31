@@ -30,11 +30,59 @@ type Intent<T> = T extends NativeActionMessage
   : never;
 export type NativeIntent = Intent<NativeActionMessage>;
 
+const dropped = new WeakSet<ActionOutcomeMessage>();
+
+/**
+ * True for the placeholder outcome of a native selection that never ran because
+ * a newer one superseded it, or because its context went stale while it waited.
+ * It is not a refusal: callers resolve it silently and show no warning.
+ */
+export function isDroppedOutcome(outcome: ActionOutcomeMessage): boolean {
+  return dropped.has(outcome);
+}
+
+function droppedOutcome(reason: string): ActionOutcomeMessage {
+  const outcome: ActionOutcomeMessage = {
+    protocol: 2,
+    kind: 'actionOutcome',
+    requestId: `dropped-${randomUUID()}`,
+    baseVersion: 0,
+    resultVersion: 0,
+    status: 'cancelled',
+    reason,
+    selectionSequence: 0,
+  };
+  dropped.add(outcome);
+  return outcome;
+}
+
+export interface DispatchOptions {
+  /**
+   * Runs once the action reaches the head of the queue, before its context is
+   * captured. Return false to drop a stale action silently (a dropped outcome);
+   * throw to refuse it with a warning.
+   */
+  readonly beforeDispatch?: () => boolean | void;
+}
+
+interface QueuedDispatch {
+  readonly select: boolean;
+  supersede(): void;
+}
+
 /** Connect actual host document/panel/tab events to the window's routing registry. */
 export class SidebarHostContext implements vscode.Disposable {
   private disposed = false;
   /** Bumped by every native dispatch so a late outcome can tell the user moved on. */
   private dispatchSequence = 0;
+  /**
+   * The designer settles one native action at a time and refuses a second as
+   * already pending, so every dispatch of this window waits for the one before
+   * it. The tail only ever resolves (never rejects): a failed dispatch cannot
+   * poison the chain. Each action stays bounded by its own timeouts.
+   */
+  private dispatchTail: Promise<void> = Promise.resolve();
+  private readonly queued = new Set<QueuedDispatch>();
   private readonly panels = new Set<vscode.Disposable>();
   readonly registry = new WindowContextRegistry();
   private previousContext = JSON.stringify(this.registry.context());
@@ -161,10 +209,18 @@ export class SidebarHostContext implements vscode.Disposable {
       : null;
   }
 
-  /** Open only the captured document, and never borrow another report's panel. */
+  /**
+   * Queue a native action behind the ones already dispatched. The report, view,
+   * version and targets are captured now, at call time, and revalidated once the
+   * action reaches the head of the queue: an action whose document or designer
+   * changed while it waited is refused, never rebased onto the new version.
+   * Selections coalesce: only the latest still-waiting selection runs, older waiting ones
+   * resolve as dropped outcomes. Every other action always runs, in order.
+   */
   async dispatch(
     intent: NativeIntent,
     targetIds: readonly string[] = [],
+    options: DispatchOptions = {},
   ): Promise<ActionOutcomeMessage> {
     if (intent.action === 'properties') {
       const navigation = this.evaluation?.navigation;
@@ -194,13 +250,75 @@ export class SidebarHostContext implements vscode.Disposable {
     );
     if (!captured.ok)
       throw new Error(`Report action is unavailable: ${captured.reason}.`);
-    let capture = captured.capture;
-    const sequence = ++this.dispatchSequence;
+    const capture = captured.capture;
     this.actions.set(capture.requestId, {
       targets: capture.targetIds,
       ...(intent.action === 'create' ? { create: intent.create } : {}),
     });
     this.changed.fire();
+    // A later action, even one still queued, means the user moved on.
+    const sequence = ++this.dispatchSequence;
+    let supersede!: () => void;
+    const superseded = new Promise<true>((resolve) => {
+      supersede = () => resolve(true);
+    });
+    const entry: QueuedDispatch = {
+      select: intent.action === 'select',
+      supersede,
+    };
+    if (entry.select)
+      for (const waiting of this.queued)
+        if (waiting.select) waiting.supersede();
+    this.queued.add(entry);
+    const previous = this.dispatchTail;
+    let release!: () => void;
+    this.dispatchTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started = false;
+    try {
+      const wasSuperseded = await Promise.race([
+        previous.then(() => false as const),
+        superseded,
+      ]);
+      this.queued.delete(entry);
+      if (wasSuperseded)
+        return droppedOutcome('Superseded by a newer selection.');
+      if (this.disposed) throw new Error('Sidebar context is disposed');
+      // The queue can outlive the context the caller acted on.
+      if (options.beforeDispatch?.() === false)
+        return droppedOutcome('The report context changed while queued.');
+      // Same refusal as a capture that went stale while being delivered: the
+      // action is never rebased onto the version that exists now.
+      const stale = this.registry.revalidate(capture);
+      if (stale)
+        throw new Error(
+          `The report or designer changed while the action was being delivered: ${stale}.`,
+        );
+      started = true;
+      return await this.execute(intent, capture, sequence);
+    } finally {
+      this.queued.delete(entry);
+      if (!started) {
+        // Never reached the designer: only the capture made at call time remains.
+        this.registry.settle(capture);
+        this.actions.delete(capture.requestId);
+        if (!this.disposed) this.changed.fire();
+      }
+      // A superseded entry never owned the designer: it frees its place in the
+      // chain only once everything before it did.
+      if (started) release();
+      else void previous.then(release);
+    }
+  }
+
+  /** Open only the captured document, and never borrow another report's panel. */
+  private async execute(
+    intent: NativeIntent,
+    initial: CapturedAction,
+    sequence: number,
+  ): Promise<ActionOutcomeMessage> {
+    let capture = initial;
     let outcomeSubscription: vscode.Disposable | undefined;
     let termination: (() => void) | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
