@@ -324,6 +324,49 @@ async function focusRow(
   throw new Error(`No focused tree row matched ${String(pattern)}`);
 }
 
+/**
+ * Every row the focused native list really visits, Home then ArrowDown until
+ * the focused row stops changing. The list renders only the rows near its
+ * viewport, so keyboard traversal is the only inventory that sees them all.
+ * Labels repeat across rows (every empty category says "No definitions."), so
+ * the end is the flat list index, never a label.
+ */
+async function walkRows(page: Page, steps = 60): Promise<string[]> {
+  const focused = () =>
+    page.evaluate(() => {
+      const active = document.activeElement as HTMLElement | null;
+      const owned = active?.getAttribute('aria-activedescendant');
+      const row =
+        (owned ? document.getElementById(owned) : null) ??
+        active
+          ?.closest('[role="tree"]')
+          ?.querySelector('.monaco-list-row.focused') ??
+        null;
+      return row
+        ? {
+            index: row.getAttribute('data-index'),
+            last: row.getAttribute('data-last-element') === 'true',
+            label:
+              row.getAttribute('aria-label') ??
+              row.textContent?.replace(/\s+/g, ' ').trim() ??
+              '',
+          }
+        : null;
+    });
+  await page.keyboard.press('Home');
+  const labels: string[] = [];
+  let previous: string | null = null;
+  for (let step = 0; step < steps; step++) {
+    const row = await focused();
+    if (row === null || row.index === previous) break;
+    previous = row.index;
+    labels.push(row.label);
+    if (row.last) break;
+    await page.keyboard.press('ArrowDown');
+  }
+  return labels;
+}
+
 /** Painted focus of the focused native row, read from computed styles. */
 async function paintedFocus(page: Page): Promise<{
   focusVisible: boolean;
@@ -715,9 +758,19 @@ test('FR-003-state-labels', async () => {
 
       // Empty categories: each category states that it holds no definitions.
       await openReport(ctx, 'empty.rdlc');
-      await expect(
-        page.getByRole('treeitem', { name: 'No definitions.' }),
-      ).toHaveCount(4);
+      // Rows beyond a short list's viewport are not rendered: count them by
+      // walking both native lists with the keyboard.
+      const emptyRows: string[] = [];
+      for (const view of ['Report Structure', 'Report Data']) {
+        await palette(page, `Focus on ${view} View`);
+        await expect(sidebarTree(page)).toHaveCount(1);
+        emptyRows.push(
+          ...(await walkRows(page)).filter((label) =>
+            /^No definitions\.\s*$/.test(label),
+          ),
+        );
+      }
+      expect(emptyRows, 'empty categories say so').toHaveLength(4);
       expect(await page.locator('.part.sidebar').ariaSnapshot()).toContain(
         'No definitions.',
       );
@@ -768,22 +821,30 @@ test('FR-003-state-labels', async () => {
       await expect(
         pane(page, 'Report Structure').getByRole('treeitem'),
       ).toHaveCount(0);
-      const dataRows = pane(page, 'Report Data')
-        .locator('.monaco-list-rows')
-        .getByRole('treeitem');
-      await expect(dataRows).toHaveCount(8);
-      await expect(
-        dataRows.filter({ hasText: /^No definitions\.$/ }),
-      ).toHaveCount(4);
+      // The native list renders only the rows near its viewport, so a short
+      // window never holds all eight at once: read them by keyboard traversal,
+      // which visits every row whatever the window height.
+      await palette(page, 'Focus on Report Data View');
+      await expect(sidebarTree(page)).toHaveCount(1);
+      const dataRows = await walkRows(page);
+      expect(dataRows, 'Report Data rows visited by the keyboard').toHaveLength(
+        8,
+      );
+      expect(
+        dataRows.filter((label) => /^No definitions\.\s*$/.test(label)),
+      ).toHaveLength(4);
       for (const category of [
         'Datasets / Fields',
         'Parameters',
         'Embedded Images',
         'Data Sources',
       ])
-        await expect(
-          dataRows.filter({ hasText: new RegExp(`^${category}\\s*$`) }),
-        ).toHaveCount(1);
+        expect(
+          dataRows.filter((label) =>
+            new RegExp(`^${category}\\s*$`).test(label),
+          ),
+          `${category} row`,
+        ).toHaveLength(1);
 
       // Truncated projection: the incomplete state names its own next action.
       await openReport(ctx, 'big.rdlc');

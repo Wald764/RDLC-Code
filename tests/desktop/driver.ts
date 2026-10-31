@@ -183,10 +183,94 @@ function inspector(
   return { inspectExtensions: port };
 }
 
-/** Unix socket paths are limited to 104 bytes on macOS (108 on Linux). */
 /** Workbench content size the journeys are written against. */
 const WINDOW_CONTENT_SIZE = { width: 1440, height: 900 } as const;
 
+/**
+ * Smallest content size the journeys are valid in. A host whose screen cannot
+ * hold the full size (a macOS runner clamps windows to the display work area)
+ * runs at the largest size that fits, recorded and logged; below this floor
+ * the launch fails instead of running a cramped, misleading session.
+ */
+const MIN_WINDOW_CONTENT_SIZE = { width: 1280, height: 600 } as const;
+
+export interface WindowSize {
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface WindowGeometry {
+  /** Size the journeys are written against. */
+  readonly desired: WindowSize;
+  /** Content size requested after fitting the display work area. */
+  readonly requested: WindowSize;
+  /** Content size the window actually has once sized. */
+  readonly content: WindowSize;
+  /** Work area of the display holding the window. */
+  readonly workArea: WindowSize;
+  /** `full` meets the desired size; `constrained` runs smaller but valid. */
+  readonly status: 'full' | 'constrained';
+}
+
+/** Recorded when the window geometry could not be measured at all. */
+export interface UnknownWindowGeometry {
+  readonly status: 'unknown';
+  readonly reason: string;
+}
+
+/** Log and record that geometry is unknown instead of silently skipping it. */
+function unknownWindowGeometry(reason: string): UnknownWindowGeometry {
+  console.warn(`Desktop window geometry is unknown: ${reason}`);
+  return { status: 'unknown', reason };
+}
+
+/** Size to request: the desired content size, reduced to what the display holds. */
+export function fitContentSize(
+  desired: WindowSize,
+  workArea: WindowSize,
+  frame: WindowSize,
+): WindowSize {
+  return {
+    width: Math.max(1, Math.min(desired.width, workArea.width - frame.width)),
+    height: Math.max(
+      1,
+      Math.min(desired.height, workArea.height - frame.height),
+    ),
+  };
+}
+
+/**
+ * Judge the window once sized. Throws a descriptive error when the content is
+ * below the supported floor; never lets a cramped window pass unnoticed.
+ */
+export function assessWindowGeometry(
+  measured: {
+    readonly requested: WindowSize;
+    readonly content: WindowSize;
+    readonly workArea: WindowSize;
+  },
+  desired: WindowSize = WINDOW_CONTENT_SIZE,
+  minimum: WindowSize = MIN_WINDOW_CONTENT_SIZE,
+): WindowGeometry {
+  const { content, workArea } = measured;
+  if (content.width < minimum.width || content.height < minimum.height)
+    throw new Error(
+      `Desktop window content is ${content.width}x${content.height}, below the ` +
+        `${minimum.width}x${minimum.height} minimum (wanted ${desired.width}x` +
+        `${desired.height}; display work area ${workArea.width}x${workArea.height}). ` +
+        'Enlarge the display, hide the Dock or taskbar, or run on a larger screen.',
+    );
+  return {
+    desired,
+    ...measured,
+    status:
+      content.width >= desired.width && content.height >= desired.height
+        ? 'full'
+        : 'constrained',
+  };
+}
+
+/** Unix socket paths are limited to 104 bytes on macOS (108 on Linux). */
 const SOCKET_PATH_LIMIT = 103;
 
 export function desktopPaths(
@@ -1122,6 +1206,7 @@ export async function launchDesktop(
   let child: ChildProcess | undefined;
   let transport: DesktopIdentity['transport'] | undefined;
   let electronError: string | undefined;
+  let windowGeometry: WindowGeometry | UnknownWindowGeometry | undefined;
 
   try {
     try {
@@ -1183,25 +1268,84 @@ export async function launchDesktop(
     page.setDefaultTimeout(COMMAND_TIMEOUT);
     // One window geometry on every host: a 1024x768 CI desktop otherwise puts
     // the workbench and designer into their narrow layouts.
-    if (app) {
+    if (!app)
+      windowGeometry = unknownWindowGeometry(
+        'The CDP transport exposes no window or display to measure.',
+      );
+    else {
       const electronApp = app;
-      // Idempotent, so a transient Playwright evaluate failure right after
-      // launch may be repeated; any other error is rethrown at once.
-      await retryTransientEvaluate(() =>
+      // Both evaluates are idempotent, so a transient Playwright failure right
+      // after launch may be repeated; any other error is rethrown at once.
+      const display = await retryTransientEvaluate(() =>
         withTimeout(
-          electronApp.evaluate(({ BrowserWindow }, size) => {
+          electronApp.evaluate(({ BrowserWindow, screen }) => {
             const window = BrowserWindow.getAllWindows().find(
               (candidate: { isDestroyed(): boolean }) =>
                 !candidate.isDestroyed(),
             );
-            if (!window) return;
+            if (!window) return null;
             if (window.isMaximized()) window.unmaximize();
-            window.setContentSize(size.width, size.height);
-          }, WINDOW_CONTENT_SIZE),
+            const bounds = window.getBounds();
+            const inner = window.getContentBounds();
+            const area = screen.getDisplayMatching(bounds).workArea;
+            return {
+              frame: {
+                width: bounds.width - inner.width,
+                height: bounds.height - inner.height,
+              },
+              workArea: { width: area.width, height: area.height },
+            };
+          }),
           COMMAND_TIMEOUT,
-          'Desktop window size',
+          'Desktop display work area',
         ),
       );
+      if (!display)
+        windowGeometry = unknownWindowGeometry(
+          'Electron reported no live window to measure.',
+        );
+      else {
+        // macOS clamps a window to the display work area, X11 and Windows do
+        // not: ask for the size that fits and read back what was granted.
+        const requested = fitContentSize(
+          WINDOW_CONTENT_SIZE,
+          display.workArea,
+          display.frame,
+        );
+        const content = await retryTransientEvaluate(() =>
+          withTimeout(
+            electronApp.evaluate(({ BrowserWindow }, size) => {
+              const window = BrowserWindow.getAllWindows().find(
+                (candidate: { isDestroyed(): boolean }) =>
+                  !candidate.isDestroyed(),
+              );
+              if (!window) return null;
+              window.setContentSize(size.width, size.height);
+              const inner = window.getContentBounds();
+              return { width: inner.width, height: inner.height };
+            }, requested),
+            COMMAND_TIMEOUT,
+            'Desktop window size',
+          ),
+        );
+        if (!content)
+          windowGeometry = unknownWindowGeometry(
+            'The window disappeared before it could be sized.',
+          );
+        else {
+          windowGeometry = assessWindowGeometry({
+            requested,
+            content,
+            workArea: display.workArea,
+          });
+          if (windowGeometry.status === 'constrained')
+            console.warn(
+              `Desktop window is constrained to ${content.width}x${content.height} ` +
+                `(wanted ${WINDOW_CONTENT_SIZE.width}x${WINDOW_CONTENT_SIZE.height}; ` +
+                `work area ${display.workArea.width}x${display.workArea.height}).`,
+            );
+        }
+      }
     }
     const workbenchPage = page;
     const workbenchContext = context;
@@ -1257,6 +1401,7 @@ export async function launchDesktop(
       packaged: resolved.packaged,
       trace: tracing ? 'started' : 'unavailable',
       ...(vsixSha256 ? { vsixSha256 } : {}),
+      ...(windowGeometry ? { windowGeometry } : {}),
       ...(electronError ? { electronError } : {}),
     };
     const identityDir = join(resolved.artifactDir, 'identity');

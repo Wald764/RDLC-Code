@@ -364,8 +364,25 @@ test('attributed summaries name the exe and pids of unexpected events, bounded',
     target: '/sys/fs/selinux',
     exe: '/opt/vscode/code',
     pids: [11, 12, 13, 14],
+    pidCount: 4,
     count: 4,
   });
+  const crowd = attributeEvents(
+    Array.from({ length: 25 }, (_, index) =>
+      event('/sys/fs/selinux', 100 + index, '/opt/vscode/code'),
+    ),
+  );
+  assert.equal(crowd[0]?.pids.length, 10);
+  assert.equal(crowd[0]?.pidCount, 25);
+  assert.match(
+    summarizeEvents(
+      Array.from({ length: 25 }, (_, index) =>
+        event('/sys/fs/selinux', 100 + index, '/opt/vscode/code'),
+      ),
+      { attribute: true },
+    ),
+    /pid=100,101,102,\+22\]/,
+  );
   const huge = Array.from({ length: 70 }, (_, index) =>
     event(`/y/${index}`, index, `/${'x'.repeat(300)}/exe`),
   );

@@ -1036,9 +1036,15 @@ test('FR-029-stability', async () => {
       // The canvas context menu is an overlay: it must not move the canvas.
       const body = await frame.locator('.body').boundingBox();
       expect(body).not.toBeNull();
+      // The body can extend past the visible canvas (a short window clips it,
+      // and a click there lands on the inspector or below the window): aim at
+      // the bottom-right of the part of the body the viewport actually shows,
+      // clear of the scrollbars.
+      const visible = await frame.locator('.viewport').boundingBox();
+      expect(visible).not.toBeNull();
       await page.mouse.click(
-        body!.x + body!.width - 14,
-        body!.y + body!.height - 14,
+        Math.min(body!.x + body!.width, visible!.x + visible!.width) - 24,
+        Math.min(body!.y + body!.height, visible!.y + visible!.height) - 24,
         {
           button: 'right',
         },

@@ -46,6 +46,8 @@ export const REPORT_ZERO_SCOPE =
 const SUMMARY_LIMIT = 60;
 /** Pids named per attributed entry before the remainder is only counted. */
 const ATTRIBUTION_PIDS = 3;
+/** Pids kept per attributed group; `pidCount` carries the full total. */
+const ATTRIBUTION_PIDS_KEPT = 10;
 /** Longest executable path kept in an attributed summary (the tail is the informative part). */
 const ATTRIBUTION_EXE_LIMIT = 80;
 /** Longest attributed summary; keeps assertion messages and reports bounded. */
@@ -86,7 +88,10 @@ export interface EventAttribution {
   readonly target: string;
   /** Sanitized executable of the calling process; null when the trace never showed it. */
   readonly exe: string | null;
+  /** At most `ATTRIBUTION_PIDS_KEPT` pids, in first-seen order. */
   readonly pids: readonly number[];
+  /** Distinct pids seen, including those not listed in `pids`. */
+  readonly pidCount: number;
   readonly count: number;
 }
 
@@ -123,7 +128,8 @@ export function attributeEvents(
   }
   return [...groups.values()].map((group) => ({
     ...group,
-    pids: [...group.pids],
+    pids: [...group.pids].slice(0, ATTRIBUTION_PIDS_KEPT),
+    pidCount: group.pids.size,
   }));
 }
 
@@ -135,13 +141,9 @@ function attributionLabel(group: EventAttribution): string {
         ? `...${group.exe.slice(-(ATTRIBUTION_EXE_LIMIT - 3))}`
         : group.exe;
   const shown = group.pids.slice(0, ATTRIBUTION_PIDS).join(',');
-  const more = group.pids.length - ATTRIBUTION_PIDS;
+  const more = group.pidCount - Math.min(group.pids.length, ATTRIBUTION_PIDS);
   const pids =
-    group.pids.length === 0
-      ? 'unknown'
-      : more > 0
-        ? `${shown},+${more}`
-        : shown;
+    group.pidCount === 0 ? 'unknown' : more > 0 ? `${shown},+${more}` : shown;
   return `[exe=${exe} pid=${pids}]`;
 }
 

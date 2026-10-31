@@ -15,7 +15,13 @@
  * race logs record the genuine cases that ran and name the remaining subset
  * instead of padding the count with repeated no-op loops.
  */
-import { test, expect, type Frame, type Page } from 'playwright/test';
+import {
+  test,
+  expect,
+  type Frame,
+  type Locator,
+  type Page,
+} from 'playwright/test';
 import {
   chmod,
   copyFile,
@@ -555,6 +561,7 @@ async function activateRowMenu(
 ): Promise<void> {
   const target = row(page, rowName);
   const entry = page.getByRole('menuitem', { name: item });
+  await revealRow(page, rowName);
   await step(`row menu ${rowName}: row visible`, () =>
     target.waitFor({ state: 'visible', timeout: STEP_TIMEOUT }),
   );
@@ -582,29 +589,78 @@ const row = (page: Page, name: string) =>
   page.getByRole('treeitem', { name: new RegExp(`^Textbox: ${name}`) });
 
 /**
- * VS Code renders tree rows virtually, so a row scrolled out of its list is
- * not in the DOM at all: scroll its tree back before it can be located. A row
- * that stays absent after the reveal is genuinely not published, and fails.
+ * True when the row's centre hit-tests to the row itself: it is rendered, inside
+ * its list's viewport and not under a pane header or a view message. VS Code
+ * keeps rows near the viewport in the DOM, so attachment alone says nothing
+ * about whether a pointer can reach them.
  */
-async function revealRow(page: Page, name: string): Promise<void> {
-  const target = row(page, name);
-  if ((await target.count()) > 0) return;
-  // The last rendered row: sticky-scroll ancestors overlay the first ones.
-  const rendered = pane(page, 'Report Structure')
-    .locator('.monaco-list-row')
-    .last();
-  // Scroll up in bounded steps from the tree itself; a step whose wheel lands
-  // on a row hover widget is simply retried.
-  await rendered.hover();
-  for (let step = 0; step < 12 && (await target.count()) === 0; step++) {
-    await rendered.hover({ timeout: 2_000 }).catch(() => {});
-    await page.mouse.wheel(0, -600);
-  }
-  await expect(
-    target,
-    `${name} is published by the current structure tree`,
-  ).toBeAttached();
+async function reachable(target: Locator): Promise<boolean> {
+  if ((await target.count()) === 0) return false;
+  return target
+    .first()
+    .evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        box.x + box.width / 2,
+        box.y + box.height / 2,
+      );
+      return hit !== null && element.contains(hit);
+    })
+    .catch(() => false);
 }
+
+/** Accessible name of the row that owns keyboard focus in the focused native tree. */
+const focusedRowLabel = (page: Page): Promise<string | null> =>
+  page.evaluate(() => {
+    const active = document.activeElement as HTMLElement | null;
+    const owned = active?.getAttribute('aria-activedescendant');
+    const row =
+      (owned ? document.getElementById(owned) : null) ??
+      active
+        ?.closest('[role="tree"]')
+        ?.querySelector('.monaco-list-row.focused') ??
+      null;
+    return row?.getAttribute('aria-label') ?? null;
+  });
+
+/**
+ * Bring a tree row into the pointer-reachable part of its list, whatever the
+ * window height. VS Code renders tree rows virtually, so a row can be absent
+ * from the DOM or present but scrolled under the pane header: walking the list
+ * with Home/ArrowDown makes the tree scroll the focused row into its viewport.
+ * Nothing is done when the row is already reachable, and keyboard navigation
+ * never selects or activates a row. A row that stays absent afterwards is
+ * genuinely not published, and fails.
+ */
+async function revealByKeyboard(
+  page: Page,
+  view: string,
+  label: RegExp,
+  target: Locator,
+  published: string,
+): Promise<void> {
+  if (await reachable(target)) return;
+  await pane(page, view).locator('[role="tree"]').first().focus();
+  await page.keyboard.press('Home');
+  for (let step = 0; step < 100; step++) {
+    const focused = await focusedRowLabel(page);
+    if (focused && label.test(focused)) break;
+    await page.keyboard.press('ArrowDown');
+  }
+  await expect(target.first(), published).toBeAttached();
+  await expect
+    .poll(() => reachable(target), `${published} and reachable in its list`)
+    .toBe(true);
+}
+
+const revealRow = (page: Page, name: string): Promise<void> =>
+  revealByKeyboard(
+    page,
+    'Report Structure',
+    new RegExp(`^Textbox: ${name}`),
+    row(page, name),
+    `${name} is published by the current structure tree`,
+  );
 
 async function selectRow(page: Page, name: string): Promise<void> {
   await revealRow(page, name);
@@ -1813,13 +1869,13 @@ test('FR-021-view-local', async () => {
       await ctx.driver.command('Focus on Components View');
       // Lower toolbox categories are virtualised out of a short pane.
       const entry = page.getByRole('treeitem', { name: creation.row });
-      const first = pane(page, 'Components')
-        .locator('.monaco-list-row')
-        .first();
-      for (let step = 0; step < 12 && (await entry.count()) === 0; step++) {
-        await first.hover({ timeout: 2_000 }).catch(() => {});
-        await page.mouse.wheel(0, 300);
-      }
+      await revealByKeyboard(
+        page,
+        'Components',
+        creation.row,
+        entry,
+        `${creation.row.source} is published by the Components view`,
+      );
       await entry.click();
       await expect
         .poll(() => designerCount(page), `${creation.row.source} opens A once`)
@@ -1883,7 +1939,17 @@ test('FR-023-orders', async () => {
     // One accepted creation: one correlated result, one edit, and the created
     // item is the one selected afterwards.
     await ctx.driver.command('Focus on Components View');
-    await page.getByRole('treeitem', { name: /^Textbox, Insert/ }).click();
+    const insertTextbox = page.getByRole('treeitem', {
+      name: /^Textbox, Insert/,
+    });
+    await revealByKeyboard(
+      page,
+      'Components',
+      /^Textbox, Insert/,
+      insertTextbox,
+      'Textbox, Insert is published by the Components view',
+    );
+    await insertTextbox.click();
     await saveEdit(ctx);
     const created = await readFile(ctx.path('a.rdlc'), 'utf8');
     const inserted = created.match(/<Textbox Name="Textbox\d+">/);

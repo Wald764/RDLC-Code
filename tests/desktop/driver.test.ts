@@ -12,11 +12,13 @@ import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import {
+  assessWindowGeometry,
   commandAvailable,
   desktopLaunchArgs,
   desktopPaths,
   ensureWorkspaceTrusted,
   finishDesktopProcess,
+  fitContentSize,
   launchDesktop,
   openRequestPath,
   openResultPath,
@@ -800,4 +802,58 @@ test('a transient evaluate failure is repeated at most three times, nothing else
     other,
   );
   assert.equal(calls, 1);
+});
+
+test('fitContentSize reduces the request to the display work area', () => {
+  const desired = { width: 1440, height: 900 };
+  const frame = { width: 0, height: 28 };
+  assert.deepEqual(
+    fitContentSize(desired, { width: 1920, height: 1040 }, frame),
+    desired,
+  );
+  assert.deepEqual(
+    fitContentSize(desired, { width: 1440, height: 712 }, frame),
+    { width: 1440, height: 684 },
+  );
+  assert.deepEqual(
+    fitContentSize(desired, { width: 1024, height: 700 }, frame),
+    { width: 1024, height: 672 },
+  );
+});
+
+test('assessWindowGeometry reports full, constrained and refuses a cramped window', () => {
+  const workArea = { width: 1440, height: 712 };
+  const full = assessWindowGeometry({
+    requested: { width: 1440, height: 900 },
+    content: { width: 1440, height: 900 },
+    workArea: { width: 1920, height: 1040 },
+  });
+  assert.equal(full.status, 'full');
+
+  const constrained = assessWindowGeometry({
+    requested: { width: 1440, height: 684 },
+    content: { width: 1440, height: 684 },
+    workArea,
+  });
+  assert.equal(constrained.status, 'constrained');
+  assert.deepEqual(constrained.desired, { width: 1440, height: 900 });
+
+  assert.throws(
+    () =>
+      assessWindowGeometry({
+        requested: { width: 1440, height: 560 },
+        content: { width: 1440, height: 560 },
+        workArea: { width: 1440, height: 588 },
+      }),
+    /1440x560, below the 1280x600 minimum/,
+  );
+  assert.throws(
+    () =>
+      assessWindowGeometry({
+        requested: { width: 1024, height: 768 },
+        content: { width: 1024, height: 768 },
+        workArea: { width: 1024, height: 768 },
+      }),
+    /below the 1280x600 minimum/,
+  );
 });

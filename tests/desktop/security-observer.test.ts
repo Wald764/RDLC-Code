@@ -2445,6 +2445,39 @@ test('events carry the sanitized executable of their pid: exec replaces it, chil
   assert.equal(byTarget('/etc/other')?.exe, '/proc/seeded');
 });
 
+test('an exited pid is forgotten so a reused pid is not misattributed, and long executables keep their tail', () => {
+  const trace = [
+    '100 1700000000.1 execve("/opt/vscode/code", ["code"], 0x7ffd) = 0',
+    '100 1700000000.2 clone(child_stack=NULL, flags=SIGCHLD) = 101',
+    '101 1700000000.3 execve("/usr/lib/old-helper", ["h"], 0x7ffd) = 0',
+    '101 1700000000.4 exit_group(0) = ?',
+    '101 1700000000.5 +++ exited with 0 +++',
+    // Pid 101 is reused by an unrelated process that never ran an execve.
+    '101 1700000000.6 openat(AT_FDCWD, "/etc/reused", O_RDONLY) = -1 ENOENT (No such file or directory)',
+    // A child that never exec'd keeps its parent's program after the parent exits.
+    '100 1700000000.7 clone(child_stack=NULL, flags=SIGCHLD) = 102',
+    '100 1700000000.8 exit_group(0) = ?',
+    '100 1700000000.9 +++ exited with 0 +++',
+    '102 1700000001.0 openat(AT_FDCWD, "/etc/orphan", O_RDONLY) = -1 ENOENT (No such file or directory)',
+    // An exit seen only as a `+++ exited` line also forgets the pid.
+    '103 1700000001.1 execve("/usr/lib/gone", ["g"], 0x7ffd) = 0',
+    '103 1700000001.2 +++ exited with 0 +++',
+    '103 1700000001.3 openat(AT_FDCWD, "/etc/gone", O_RDONLY) = -1 ENOENT (No such file or directory)',
+    `104 1700000001.4 execve("${'/d d'.repeat(100)}/tool", ["t"], 0x7ffd) = 0`,
+    '104 1700000001.5 openat(AT_FDCWD, "/etc/long", O_RDONLY) = -1 ENOENT (No such file or directory)',
+  ].join('\n');
+  const { events } = parseStraceLog(trace);
+  const byTarget = (target: string) =>
+    events.find((event) => event.target === target);
+  assert.equal(byTarget('/etc/reused')?.exe, undefined);
+  assert.equal(byTarget('/etc/orphan')?.exe, '/opt/vscode/code');
+  assert.equal(byTarget('/etc/gone')?.exe, undefined);
+  const long = events.find((event) => event.exe?.endsWith('/tool'));
+  assert.ok(long?.exe);
+  assert.ok(long.exe.length <= 200);
+  assert.ok(long.exe.startsWith('...'));
+});
+
 test('attribution never changes the allow/deny classification', () => {
   const trace = [
     '100 1700000000.1 execve("/opt/vscode/code", ["code"], 0x7ffd) = 0',
@@ -2459,4 +2492,87 @@ test('attribution never changes the allow/deny classification', () => {
   ) => events.filter((e) => e.operation === 'openat').map((e) => e.unexpected);
   assert.deepEqual(flags(tracked.events), flags(plain.events));
   assert.deepEqual(flags(tracked.events), [true]);
+});
+
+test('the VS Code binary may make its fixed read-only startup probes, no other process may', () => {
+  const code =
+    '100 1700000000.1 execve("/opt/vscode/code", ["code"], 0x7ffd) = 0';
+  const other = '101 1700000000.1 execve("/usr/bin/other", ["o"], 0x7ffd) = 0';
+  const last = (log: string, allowed: typeof ALLOWED = ALLOWED) =>
+    parseStraceLog(log, { allowed }).events.at(-1)?.unexpected;
+  const probe = (pid: number, text: string) => `${pid} 1700000000.2 ${text}`;
+  const allowedProbes = [
+    'statfs("/sys/fs/selinux", 0x7ffd) = -1 ENOENT (No such file or directory)',
+    'statfs("/selinux", 0x7ffd) = -1 ENOENT (No such file or directory)',
+    'access("/etc/selinux/config", F_OK) = -1 ENOENT (No such file or directory)',
+    'newfstatat(AT_FDCWD, "/etc/gnutls/config", 0x7ffd, 0) = -1 ENOENT (No such file or directory)',
+    'openat(AT_FDCWD, "/etc/gnutls/config", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)',
+    'openat(AT_FDCWD, "/proc/version_signature", O_RDONLY) = 3',
+  ];
+  for (const text of allowedProbes) {
+    assert.equal(last(`${code}\n${probe(100, text)}`), false, text);
+    // A forked helper that never exec'd inherits the binary.
+    assert.equal(
+      last(
+        `${code}\n100 1700000000.15 clone(child_stack=NULL, flags=SIGCHLD) = 102\n${probe(102, text)}`,
+      ),
+      false,
+      text,
+    );
+    // A different executable, an unknown one and a pid that exited are denied.
+    assert.equal(last(`${other}\n${probe(101, text)}`), true, `other ${text}`);
+    assert.equal(last(probe(103, text)), true, `unknown ${text}`);
+    assert.equal(
+      last(
+        `${code}\n100 1700000000.15 exit_group(0) = ?\n100 1700000000.16 +++ exited with 0 +++\n${probe(100, text)}`,
+      ),
+      true,
+      `exited ${text}`,
+    );
+  }
+  // A look-alike binary (sibling name or outside the install) is not the binary.
+  for (const exe of ['/opt/vscode/code-tunnel', '/opt/vscode-x/code', 'code'])
+    assert.equal(
+      last(
+        `100 1700000000.1 execve("${exe}", ["code"], 0x7ffd) = 0\n${probe(100, allowedProbes[0] as string)}`,
+      ),
+      true,
+      exe,
+    );
+  const denied = [
+    // Write opens of an allowed path.
+    'openat(AT_FDCWD, "/etc/gnutls/config", O_WRONLY|O_CREAT, 0644) = 3',
+    'openat(AT_FDCWD, "/proc/version_signature", O_RDWR) = 3',
+    'unlink("/etc/gnutls/config") = -1 EACCES (Permission denied)',
+    // Other paths, prefixes and children.
+    'access("/etc/selinux/semanage.conf", F_OK) = -1 ENOENT (No such file or directory)',
+    'openat(AT_FDCWD, "/etc/selinux/config.d", O_RDONLY) = -1 ENOENT (No such file or directory)',
+    'openat(AT_FDCWD, "/etc/selinux", O_RDONLY) = -1 ENOENT (No such file or directory)',
+    'newfstatat(AT_FDCWD, "/etc/gnutls/pkcs11.conf", 0x7ffd, 0) = -1 ENOENT (No such file or directory)',
+    'openat(AT_FDCWD, "/etc/gnutls/config/x", O_RDONLY) = -1 ENOENT (No such file or directory)',
+    'statfs("/sys/fs/selinux/enforce", 0x7ffd) = -1 ENOENT (No such file or directory)',
+    'openat(AT_FDCWD, "/proc/version_signature2", O_RDONLY) = -1 ENOENT (No such file or directory)',
+    'openat(AT_FDCWD, "/etc/gnutls/../shadow", O_RDONLY) = -1 EACCES (Permission denied)',
+    // Not a read-only content/metadata probe.
+    'readlink("/etc/gnutls/config", 0x7ffd, 4096) = -1 ENOENT (No such file or directory)',
+    'execve("/etc/gnutls/config", ["c"], 0x7ffd) = -1 EACCES (Permission denied)',
+  ];
+  for (const text of denied)
+    assert.equal(last(`${code}\n${probe(100, text)}`), true, text);
+  // An explicit host executable replaces the install default.
+  const pinned = { ...ALLOWED, hostExecutable: '/srv/ci/vscode/code' };
+  const log = `100 1700000000.1 execve("/srv/ci/vscode/code", ["code"], 0x7ffd) = 0\n${probe(100, allowedProbes[5] as string)}`;
+  assert.equal(last(log, pinned), false);
+  assert.equal(
+    last(`${code}\n${probe(100, allowedProbes[5] as string)}`, pinned),
+    true,
+  );
+  // The allowance is attributed from the raw executable, not the sanitized one.
+  assert.equal(
+    last(`${code}\n${probe(100, allowedProbes[5] as string)}`, {
+      ...ALLOWED,
+      exec: [],
+    }),
+    true,
+  );
 });

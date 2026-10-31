@@ -470,23 +470,42 @@ async function expectFullInventory(ctx: Ctx): Promise<string[]> {
 }
 
 /**
- * Reveal a native row without activating it: wheel the Components list first
- * (the native list only renders rows near the viewport, so the target row may
- * not exist yet), then bring it into view. Hovering and scrolling never fire
- * the row's activation command.
+ * True when the row's centre hit-tests to the row itself: it is rendered, inside
+ * its list's viewport and not under the pane's view message or header. The
+ * native list keeps rows near its viewport in the DOM, so attachment alone does
+ * not mean a pointer can reach the row.
+ */
+async function reachable(row: Locator): Promise<boolean> {
+  if ((await row.count()) === 0) return false;
+  return row
+    .first()
+    .evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        box.x + box.width / 2,
+        box.y + box.height / 2,
+      );
+      return hit !== null && element.contains(hit);
+    })
+    .catch(() => false);
+}
+
+/**
+ * Reveal a native row without activating it, whatever the window height: walk
+ * the Components list with Home/ArrowDown, which scrolls the focused row into
+ * the list's viewport (a short pane renders only a few rows, and its view
+ * message can cover the rest). Keyboard navigation never fires the row's
+ * activation command, and nothing is done when the row is already reachable.
  */
 async function revealRow(ctx: Ctx, row: Locator): Promise<void> {
-  const list = pane(ctx.page, 'Components').locator('[role="tree"]');
-  for (const delta of [160, -160]) {
-    for (let step = 0; step < 40 && (await row.count()) === 0; step++) {
-      await list.hover();
-      await ctx.page.mouse.wheel(0, delta);
-    }
-  }
-  if (await row.count())
-    await row.scrollIntoViewIfNeeded().catch(() => {
-      // A row that vanished again is reported by the caller's own click wait.
-    });
+  if (await reachable(row)) return;
+  await pane(ctx.page, 'Components').locator('[role="tree"]').first().focus();
+  await ctx.page.keyboard.press('Home');
+  for (let step = 0; step < 40 && !(await reachable(row)); step++)
+    await ctx.page.keyboard.press('ArrowDown');
+  await expect
+    .poll(() => reachable(row), 'the row is reachable in the Components list')
+    .toBe(true);
 }
 
 /** Pointer activation: reveal the row, then click it — one real mouse insertion. */

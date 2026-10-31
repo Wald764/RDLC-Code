@@ -45,8 +45,9 @@ export interface SecurityEvent {
   /**
    * Sanitized executable of the calling process, tracked from the execve calls
    * of the trace (a child inherits its parent's until it execs) and from
-   * /proc at attach; absent when the trace never showed it. Attribution only:
-   * no classification rule reads it.
+   * /proc at attach; absent when the trace never showed it. Attribution; the only
+   * classification rule that reads it is the startup probe allowance for the
+   * configured VS Code Electron binary (AllowedAccess.hostExecutable).
    */
   readonly exe?: string;
   /** Sanitized target: origin only for network, basename for exec, redacted path for files. */
@@ -84,6 +85,14 @@ export interface AllowedAccess {
    * (the executable-based extension tips look for docker, mvn, subl...).
    */
   readonly path?: string;
+  /**
+   * Absolute path of the VS Code Electron binary under test (the `code`
+   * executable of the `.vscode-test` install). Only a process attributed to
+   * exactly this executable may make the fixed read-only system probes of
+   * HOST_STARTUP_PROBES; an unattributed process never may. Defaults to
+   * `<root>/code` for each `exec` root (the install directory).
+   */
+  readonly hostExecutable?: string;
 }
 
 export interface NativeCaptureControls {
@@ -308,6 +317,8 @@ const SOCKET_STATE_CALLS = new Set([
 
 const EXEC_CALLS = new Set(['execve', 'execveat']);
 
+const EXIT_CALLS = new Set(['exit', 'exit_group']);
+
 const PROCESS_SPAWN_CALLS = new Set(['clone', 'clone3', 'fork', 'vfork']);
 
 const PROCESS_CALLS = new Set([
@@ -420,6 +431,23 @@ export function sanitizeTarget(
   value: string,
   redactions: readonly string[] = [],
 ): string {
+  const text = scrubTarget(value, redactions);
+  return text.length > 200 ? `${text.slice(0, 197)}...` : text;
+}
+
+/**
+ * Executable paths are identified by their tail (the program name), so a long
+ * path keeps its end instead of its beginning. Same scrubbing as any target.
+ */
+export function sanitizeExe(
+  value: string,
+  redactions: readonly string[] = [],
+): string {
+  const text = scrubTarget(value, redactions);
+  return text.length > 200 ? `...${text.slice(-197)}` : text;
+}
+
+function scrubTarget(value: string, redactions: readonly string[]): string {
   let text = value;
   for (const redaction of [...redactions, homedir()]) {
     if (!redaction) continue;
@@ -442,7 +470,7 @@ export function sanitizeTarget(
     .replace(/[\r\n\t]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  return text.length > 200 ? `${text.slice(0, 197)}...` : text;
+  return text;
 }
 
 /** Origins only: URL paths, queries, fragments and userinfo never enter the log. */
@@ -952,6 +980,8 @@ interface ClassifyContext {
   readonly allowed: AllowedAccess;
   readonly pid: number | null;
   readonly pids: ReadonlySet<number>;
+  /** Raw executable the trace attributes to the calling pid; undefined when unknown. */
+  readonly exe: string | undefined;
   /** The calling pid's working directory when the trace has shown it. */
   readonly cwd: string | null;
   /**
@@ -1293,6 +1323,51 @@ function isAllowedProbe(
   );
 }
 
+/**
+ * Exact system paths the VS Code Electron binary reads while it starts
+ * (libselinux and GnuTLS initialisation, the Ubuntu kernel signature). No
+ * prefixes: a sibling or child path is not covered.
+ */
+const HOST_STARTUP_PROBES: ReadonlySet<string> = new Set([
+  '/sys/fs/selinux',
+  '/selinux',
+  '/etc/selinux/config',
+  '/etc/gnutls/config',
+  '/proc/version_signature',
+]);
+/** The stat-family calls of METADATA_CALLS: no readlink, which is not a content probe. */
+const STARTUP_STAT_CALLS = new Set(
+  [...METADATA_CALLS].filter(
+    (operation) => operation !== 'readlink' && operation !== 'readlinkat',
+  ),
+);
+
+/**
+ * A read-only probe of one HOST_STARTUP_PROBES path by a process whose trace
+ * attribution is exactly the configured VS Code Electron binary. An unknown
+ * or different executable, any write flag and any other path stay unexpected.
+ */
+function isHostStartupProbe(
+  path: string,
+  operation: string,
+  write: boolean,
+  context: ClassifyContext,
+): boolean {
+  const { hostExecutable, exec } = context.allowed;
+  if (write || context.exe === undefined) return false;
+  if (!HOST_STARTUP_PROBES.has(path)) return false;
+  if (!STARTUP_STAT_CALLS.has(operation) && !operation.startsWith('open'))
+    return false;
+  const exe = normalPath(context.exe.replace(/\\/g, '/'));
+  const candidates =
+    hostExecutable === undefined
+      ? exec.map((root) => `${normalPath(root.replace(/\\/g, '/'))}/code`)
+      : [hostExecutable];
+  return candidates.some(
+    (candidate) => normalPath(candidate.replace(/\\/g, '/')) === exe,
+  );
+}
+
 function isAllowedFile(
   path: string,
   operation: string,
@@ -1318,6 +1393,7 @@ function isAllowedFile(
   )
     return true;
   if (isAllowedProbe(path, operation, write, context)) return true;
+  if (isHostStartupProbe(path, operation, write, context)) return true;
   return isAllowedProc(path, operation, write, context);
 }
 
@@ -1710,10 +1786,18 @@ class CwdTracker {
  * result is still unknown) replaces it, a failed one leaves it, and a pid first
  * seen without one inherits its parent's current executable (a fork child runs
  * its parent's program until it execs).
+ *
+ * Attribution is best effort, yet it feeds one verdict: isHostStartupProbe
+ * tolerates a startup probe only when the process is attributed exactly to the
+ * configured VS Code binary, so unknown or wrong attribution stays unexpected
+ * (fails closed). A pid that exits is forgotten (its children keep the
+ * program it ran), so a reused pid starts unknown instead of inheriting the
+ * previous process's executable. Reuse can still confuse the first parent recorded for a pid.
  */
 class ExeTracker {
   private readonly exes = new Map<number, string>();
   private readonly parents = new Map<number, number>();
+  private readonly children = new Map<number, number[]>();
   /** execve calls interrupted by another tracee's output, until their resumed half. */
   private readonly interruptedExecs = new Map<number, string>();
 
@@ -1731,9 +1815,31 @@ class ExeTracker {
       )
         continue;
       const child = /^(\d+)/.exec(line.result)?.[1];
-      if (child !== undefined && !this.parents.has(Number(child)))
+      if (child !== undefined && !this.parents.has(Number(child))) {
         this.parents.set(Number(child), line.pid);
+        this.children.set(line.pid, [
+          ...(this.children.get(line.pid) ?? []),
+          Number(child),
+        ]);
+      }
     }
+  }
+
+  /**
+   * The pid is gone (exit, exit_group, or a `+++ exited` line). Children that
+   * never ran an executable of their own keep the one it ran, then its entries
+   * are dropped so a later process reusing the pid is not misattributed.
+   */
+  exit(pid: number | null): void {
+    if (pid === null) return;
+    const found = this.exe(pid);
+    if (found !== undefined)
+      for (const child of this.children.get(pid) ?? [])
+        if (!this.exes.has(child)) this.exes.set(child, found);
+    this.exes.delete(pid);
+    this.parents.delete(pid);
+    this.children.delete(pid);
+    this.interruptedExecs.delete(pid);
   }
 
   /** The executable of a pid at this point of the trace, if known. */
@@ -1756,6 +1862,10 @@ class ExeTracker {
 
   /** Applies an execve/execveat line (after the event of that line was attributed). */
   follow(line: StraceLine): void {
+    if (line.pid !== null && EXIT_CALLS.has(line.operation)) {
+      this.exit(line.pid);
+      return;
+    }
     if (line.pid === null || !EXEC_CALLS.has(line.operation)) return;
     if (line.resumed) {
       const path = this.interruptedExecs.get(line.pid);
@@ -1808,7 +1918,13 @@ export function parseStraceLog(
   /** Index of the event made from each pid's unfinished call, until its resumed half. */
   const interrupted = new Map<string, number>();
   for (const [index, parsed] of parsedLines.entries()) {
-    if (!parsed) continue;
+    if (!parsed) {
+      const gone = /^\s*(\d+)\s+(?:[\d.:]+\s+)?\+\+\+ (?:exited|killed)\b/.exec(
+        lines[index] ?? '',
+      )?.[1];
+      if (gone) exes.exit(Number(gone));
+      continue;
+    }
     // The unfinished half is the one classified event of an interrupted call;
     // its resumed tail adds the result to that event (no second event) and
     // completes the cwd bookkeeping (clone results).
@@ -1853,6 +1969,8 @@ export function parseStraceLog(
     const attempted = parsed.unfinished || parsed.result.startsWith('?');
     cwds.observe(parsed);
     const fdTable = cwds.fdTable(parsed.pid);
+    // Attributed to the program that made the call, before an exec replaces it.
+    const exe = exes.exe(parsed.pid);
     const token =
       channel === 'network' ? datagramToken(parsed.args) : undefined;
     const remembered =
@@ -1866,6 +1984,7 @@ export function parseStraceLog(
             allowed: options.allowed,
             pid: parsed.pid,
             pids,
+            exe,
             cwd: cwds.cwd(parsed.pid),
             fdTable,
             datagramPeers,
@@ -1876,8 +1995,6 @@ export function parseStraceLog(
       datagramPeers.forgetFd(fdTable, fd);
     if (parsed.operation === 'exit_group') datagramPeers.forgetTable(fdTable);
     cwds.follow(parsed, index);
-    // Attributed to the program that made the call, before an exec replaces it.
-    const exe = exes.exe(parsed.pid);
     exes.follow(parsed);
     if (parsed.unfinished && parsed.pid !== null)
       interrupted.set(`${parsed.pid}:${parsed.operation}`, events.length);
@@ -1888,7 +2005,7 @@ export function parseStraceLog(
       operation: parsed.operation,
       outcome: failed ? 'failed' : attempted ? 'attempted' : 'succeeded',
       pid: parsed.pid,
-      ...(exe === undefined ? {} : { exe: sanitizeTarget(exe, redactions) }),
+      ...(exe === undefined ? {} : { exe: sanitizeExe(exe, redactions) }),
       target: eventTarget(
         channel,
         parsed.operation,
