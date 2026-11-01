@@ -546,14 +546,43 @@ async function nativeRowRefreshContract(): Promise<void> {
       const selection = session.currentSelection?.selection;
       return selection?.mode === 'body' ? selection.primaryId : null;
     };
-    // Captured before the designer binds: registering it moves the authority,
-    // so this row must belong to the previous one afterwards.
+    // Captured before the designer binds. Rows that render the same survive a
+    // context change and only adopt its authority, so this one is stale only
+    // once a rebuild replaces it: renaming a textbox republishes the view.
     const staleRows = (await rowsOf('structure')).filter((row) => row.node);
     assert.ok(
       staleRows.length > 0,
       'the structure view exposes rows before the designer binds',
     );
     const staleRow = staleRows[0]!;
+    const renameVersion = report.version;
+    const rename = new vscode.WorkspaceEdit();
+    const behind = report.getText().indexOf('Name="Behind"');
+    assert.ok(behind >= 0, 'the fixture has the Behind textbox');
+    rename.replace(
+      report.uri,
+      new vscode.Range(
+        report.positionAt(behind),
+        report.positionAt(behind + 'Name="Behind"'.length),
+      ),
+      'Name="Rear"',
+    );
+    assert.equal(
+      await vscode.workspace.applyEdit(rename),
+      true,
+      'the rename applies',
+    );
+    await until(
+      () =>
+        report.version > renameVersion &&
+        host.registry.context().version === report.version &&
+        host.registry.context().state === 'editable',
+      'the renamed report is accepted',
+    );
+    assert.ok(
+      (await rowsOf('structure')).every((row) => row !== staleRow),
+      'the rebuild replaced the captured row',
+    );
     let registration: vscode.Disposable | undefined;
     try {
       registration = host.register(report, panel, session);

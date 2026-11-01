@@ -21,8 +21,9 @@ interface Row {
   readonly key: string;
   readonly label: string;
   readonly parent?: Row;
-  readonly node?: NavigationNode;
-  readonly component?: ComponentEntry;
+  /** Replaced in place when the tree keeps this row across an identical rebuild. */
+  node?: NavigationNode;
+  component?: ComponentEntry;
   readonly children: Row[];
   /** Captured with the row; rows that survive a context change only move it. */
   authority: string;
@@ -591,7 +592,7 @@ export class SidebarViews implements vscode.Disposable {
             ),
           );
       }
-      if (rowsRebuild) provider.setRows(roots);
+      if (rowsRebuild) provider.setRows(roots, authority);
       else {
         // Rows that survive a context change only move their authority: their
         // content is unchanged, so republishing them would repaint rows a
@@ -657,6 +658,8 @@ class NativeView implements vscode.TreeDataProvider<Row>, vscode.Disposable {
   readonly view: vscode.TreeView<Row>;
   private roots: Row[] = [];
   private cues = new WeakMap<Row, string>();
+  /** What the tree was last told to render; see {@link visible}. */
+  private published = '';
   /**
    * Row keys the user folded. The host drops fold state beneath a collapsed
    * ancestor on refresh, so the provider reports it back instead of Expanded.
@@ -682,7 +685,23 @@ class NativeView implements vscode.TreeDataProvider<Row>, vscode.Disposable {
       this.collapsed.delete(event.element.key),
     );
   }
-  setRows(rows: Row[]): void {
+  /**
+   * Rows that render exactly as the ones the tree already shows are not
+   * published: every whole-view event makes the host refetch the tree, and it
+   * drops a fold or expand pressed while that refetch is in flight. The tree
+   * keeps the rows it holds, because their commands carry those very objects;
+   * they take over the new rows' facts (node ids change with every version) and
+   * authority, so they still resolve.
+   */
+  setRows(rows: Row[], authority: string): void {
+    const signature = this.visible(rows);
+    if (signature === this.published) {
+      this.adopt(rows, this.roots);
+      this.retag(authority);
+      // The tree will not fetch again, and these rows are the ones it holds.
+      this.flushDescription();
+      return;
+    }
     this.roots = rows;
     this.cues = new WeakMap();
     const keys = new Set<string>();
@@ -692,7 +711,17 @@ class NativeView implements vscode.TreeDataProvider<Row>, vscode.Disposable {
     }
     for (const key of this.collapsed)
       if (!keys.has(key)) this.collapsed.delete(key);
+    this.published = signature;
     this.changed.fire(undefined);
+  }
+  /** Both lists render alike, so they have the same shape row for row. */
+  private adopt(fresh: readonly Row[], held: readonly Row[]): void {
+    fresh.forEach((row, index) => {
+      const kept = held[index]!;
+      if (row.node) kept.node = row.node;
+      if (row.component) kept.component = row.component;
+      this.adopt(row.children, kept.children);
+    });
   }
   /** Rows kept across a context change only adopt its authority. */
   retag(authority: string): void {
@@ -706,12 +735,49 @@ class NativeView implements vscode.TreeDataProvider<Row>, vscode.Disposable {
       this.cues.set(row, cue);
       changed = true;
     }
+    if (!changed) return;
+    const signature = this.visible(this.roots);
+    if (signature === this.published) return;
+    this.published = signature;
     // One whole-view event per cue pass. A row-level refresh disposes the row it
     // replaces, and that disposal also deletes the cached command identity
     // (`<command> /<n>`) the workbench is still about to execute for the very
     // click that caused this cue change, which surfaces as
     // "Actual command not found" instead of an activation.
-    if (changed) this.changed.fire(undefined);
+    this.changed.fire(undefined);
+  }
+  /**
+   * Everything the tree renders for these rows, plus the node and component
+   * facts their commands decide on. Node ids are excluded (they change with
+   * every version, and {@link adopt} carries them over), and so is a command's
+   * row argument, which is the row's own identity. So is the fold state: the
+   * tree owns it and reports each change, so a fold is not a publication; only
+   * whether a row has children is part of the shape.
+   */
+  private visible(rows: readonly Row[]): string {
+    const entries: unknown[] = [];
+    const visit = (list: readonly Row[], depth: number): void => {
+      for (const row of list) {
+        const { command, collapsibleState, ...item } = this.getTreeItem(row);
+        entries.push([
+          depth,
+          {
+            ...item,
+            command: command?.command,
+            branch: collapsibleState !== vscode.TreeItemCollapsibleState.None,
+          },
+          row.node && [row.node.kind, row.node.capabilities],
+          row.component && [
+            row.component.kind,
+            row.component.creatable,
+            row.component.reason,
+          ],
+        ]);
+        visit(row.children, depth + 1);
+      }
+    };
+    visit(rows, 0);
+    return JSON.stringify(entries);
   }
   private *allRows(rows = this.roots): Iterable<Row> {
     for (const row of rows) {
