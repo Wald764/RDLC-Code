@@ -681,6 +681,9 @@ test('desktop launch plan is disposable, transport-neutral and trust-native', ()
       config.outputDir,
       '../../.vscode-test/desktop-artifacts/playwright',
     );
+    // The driver writes each trace into the test's output directory, so only
+    // failing tests keep one.
+    assert.equal(config.preserveOutput, 'failures-only');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

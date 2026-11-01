@@ -27,7 +27,7 @@ import {
 } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { arch, platform, release, tmpdir } from 'node:os';
 import { assertCgroupName, prepareCgroupLauncher } from './host-cgroup.js';
 
@@ -998,6 +998,24 @@ async function findDesignerFrame(
   return undefined;
 }
 
+/**
+ * Where this launch writes its trace and the raw capture files behind it. Inside
+ * a Playwright test that is the test's own output directory, which the config's
+ * `preserveOutput: 'failures-only'` removes when the test passes: a failing
+ * journey keeps its trace next to its screenshot and error context, a passing
+ * one leaves nothing to store (these traces run to hundreds of MB). Outside a
+ * test there is no verdict to wait for, so the artifact directory keeps it.
+ */
+async function traceDirectory(artifactDir: string): Promise<string> {
+  if (process.env['TEST_WORKER_INDEX'] === undefined) return artifactDir;
+  try {
+    const { test } = await import('playwright/test');
+    return test.info().outputPath();
+  } catch {
+    return artifactDir;
+  }
+}
+
 async function startTrace(context: BrowserContext): Promise<boolean> {
   try {
     await withTimeout(
@@ -1305,6 +1323,7 @@ export async function launchDesktop(
   let electronError: string | undefined;
   let windowGeometry: WindowGeometry | UnknownWindowGeometry | undefined;
 
+  const traces = await traceDirectory(resolved.artifactDir);
   try {
     try {
       app = await withTimeout(
@@ -1314,7 +1333,7 @@ export async function launchDesktop(
           cwd: resolved.root,
           env: stringEnv(process.env),
           timeout: LAUNCH_TIMEOUT,
-          artifactsDir: join(resolved.artifactDir, 'playwright-electron'),
+          artifactsDir: join(traces, 'playwright-electron'),
         }),
         LAUNCH_TIMEOUT + 5_000,
         'Electron launch',
@@ -1526,7 +1545,7 @@ export async function launchDesktop(
           const errors: unknown[] = [];
           if (tracing) {
             const tracePath = join(
-              resolved.artifactDir,
+              traces,
               `trace-${process.pid}-${Date.now()}.zip`,
             );
             try {
@@ -1535,7 +1554,14 @@ export async function launchDesktop(
                 TRACE_STOP_TIMEOUT,
                 'Trace stop',
               );
-              identity['tracePath'] = tracePath;
+              // Under a Playwright test the file sits in the test's output
+              // directory and is removed when the test passes: name it only.
+              if (traces === resolved.artifactDir)
+                identity['tracePath'] = tracePath;
+              else {
+                identity['traceFile'] = basename(tracePath);
+                identity['traceRetention'] = 'failing tests only';
+              }
             } catch (error) {
               identity['traceError'] = describeError(error);
               errors.push(error);

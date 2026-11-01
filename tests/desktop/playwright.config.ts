@@ -13,6 +13,10 @@ export default defineConfig({
   outputDir: process.env.RDLC_DESKTOP_ARTIFACT_DIR
     ? `${process.env.RDLC_DESKTOP_ARTIFACT_DIR}/playwright`
     : '../../.vscode-test/desktop-artifacts/playwright',
+  // A test's output directory also holds its Desktop trace and the raw capture
+  // behind it (see traceDirectory in driver.ts): hundreds of MB per journey, so
+  // only failing tests keep it.
+  preserveOutput: 'failures-only',
   snapshotPathTemplate: '{testDir}/baselines/{arg}{ext}',
   updateSnapshots: 'none',
   reporter: [['list']],
