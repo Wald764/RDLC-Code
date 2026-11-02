@@ -88,7 +88,7 @@ export class SidebarHostContext implements vscode.Disposable {
   private previousContext = JSON.stringify(this.registry.context());
   private readonly actions = new Map<
     string,
-    { targets: readonly string[]; create?: string }
+    { targets: readonly string[]; create?: string; repeat: boolean }
   >();
   get pendingTargets(): ReadonlySet<string> {
     return new Set(
@@ -251,8 +251,13 @@ export class SidebarHostContext implements vscode.Disposable {
     if (!captured.ok)
       throw new Error(`Report action is unavailable: ${captured.reason}.`);
     const capture = captured.capture;
+    const repeat = this.repeatsAcceptedSelection(intent, capture.targetIds);
     this.actions.set(capture.requestId, {
-      targets: capture.targetIds,
+      // A selection that only repeats what the designer already accepted leaves
+      // every row as it is, so it marks none of them pending: the cue would flash
+      // and clear, and each change is a whole-tree publication.
+      targets: repeat ? [] : capture.targetIds,
+      repeat,
       ...(intent.action === 'create' ? { create: intent.create } : {}),
     });
     this.changed.fire();
@@ -310,6 +315,32 @@ export class SidebarHostContext implements vscode.Disposable {
       if (started) release();
       else void previous.then(release);
     }
+  }
+
+  /**
+   * True for a select of exactly the targets and primary the designer holds now,
+   * and only while nothing else is on its way: any queued or running action, a
+   * selection or a mutation, can still change what is held, and this one would
+   * then be a real change. Earlier repeats do not count, they change nothing.
+   */
+  private repeatsAcceptedSelection(
+    intent: NativeIntent,
+    targetIds: readonly string[],
+  ): boolean {
+    if (intent.action !== 'select') return false;
+    for (const action of this.actions.values())
+      if (!action.repeat) return false;
+    const accepted = this.selection;
+    if (accepted?.version !== this.registry.context().version) return false;
+    const selection = accepted.selection;
+    return selection.mode === 'body'
+      ? selection.primaryId === intent.primaryId &&
+          selection.targetIds.length === targetIds.length &&
+          selection.targetIds.every((id, index) => id === targetIds[index])
+      : selection.mode !== 'empty' &&
+          targetIds.length === 1 &&
+          selection.targetId === targetIds[0] &&
+          intent.primaryId === targetIds[0];
   }
 
   /** Open only the captured document, and never borrow another report's panel. */

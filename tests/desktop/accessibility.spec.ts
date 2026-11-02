@@ -310,6 +310,21 @@ async function focusedRowAttribute(
   }, attribute);
 }
 
+/** Fold the root row with Left and open it again with Right. */
+async function foldAndUnfoldRoot(page: Page): Promise<void> {
+  await page.keyboard.press('Home');
+  const expandedBefore = await focusedRowAttribute(page, 'aria-expanded');
+  expect(expandedBefore, 'the root row is collapsible').not.toBeNull();
+  await page.keyboard.press('ArrowLeft');
+  await expect
+    .poll(() => focusedRowAttribute(page, 'aria-expanded'))
+    .toBe('false');
+  await page.keyboard.press('ArrowRight');
+  await expect
+    .poll(() => focusedRowAttribute(page, 'aria-expanded'))
+    .toBe(expandedBefore);
+}
+
 /**
  * Walk the tree with ArrowDown until the focused row matches; the journey is
  * real keyboard navigation, never a synthetic click on the target row.
@@ -530,26 +545,7 @@ test('US6.1-keyboard-journey', async () => {
       'the initial tree publication shows the report rows',
     ).toBeVisible();
 
-    // 2. Expansion: the root row collapses with Left and reopens with Right.
-    // This runs before any selection is dispatched on purpose. Every selection
-    // makes the host publish the whole tree twice, about 200 ms apart (the
-    // extension host debounces tree refreshes), and nothing on the page says
-    // when the second publication has landed. The tree drops an expand pressed
-    // while such a refresh is in flight, so the row would stay collapsed
-    // forever. With no selection pending, no refresh is in flight.
-    await page.keyboard.press('Home');
-    const expandedBefore = await focusedRowAttribute(page, 'aria-expanded');
-    expect(expandedBefore, 'the root row is collapsible').not.toBeNull();
-    await page.keyboard.press('ArrowLeft');
-    await expect
-      .poll(() => focusedRowAttribute(page, 'aria-expanded'))
-      .toBe('false');
-    await page.keyboard.press('ArrowRight');
-    await expect
-      .poll(() => focusedRowAttribute(page, 'aria-expanded'))
-      .toBe(expandedBefore);
-
-    // 3. Arrow navigation moves focus through the real tree, and Enter
+    // 2. Arrow navigation moves focus through the real tree, and Enter
     // activates the focused row: primary selection on both surfaces.
     const activated = await focusRow(page, /^Textbox: Scroll0\b/);
     expect(activated).not.toBe(startLabel);
@@ -571,6 +567,19 @@ test('US6.1-keyboard-journey', async () => {
     expect((await activeTreeRow(page))?.startsWith('Textbox: Scroll0')).toBe(
       true,
     );
+
+    // 3. Expansion after a selection: the root row collapses with Left and
+    // reopens with Right. The row label above only reaches its settled form
+    // with the last publication of that selection (the extension host
+    // debounces tree refreshes), so none is still on its way here, and the
+    // tree drops an expand pressed while one is in flight. Activating the
+    // row again repeats the selection the designer already holds, which
+    // changes nothing on screen: the host publishes nothing for it, so the
+    // fold is immediate, with no signal on the page to wait for.
+    await foldAndUnfoldRoot(page);
+    await focusRow(page, /^Textbox: Scroll0\b/);
+    await page.keyboard.press('Enter');
+    await foldAndUnfoldRoot(page);
 
     // 4. Obscured target: the tree is virtualized, so some rows are off
     // screen; End scrolls them into view and reveals the last row inside
@@ -612,15 +621,13 @@ test('US6.1-keyboard-journey', async () => {
         name: 'Textbox: Scroll0, Primary, 1 selected',
       }),
     ).toBeVisible();
-    // The label carries a transient "Pending · " part until the host settles:
-    // capture the anchor only once the focused row reports its settled label.
-    await expect
-      .poll(async () => {
-        const label = await activeTreeRow(page);
-        return label !== null && !label.includes('Pending ·');
-      }, 'the focused tree row label is settled')
-      .toBe(true);
+    // The designer already holds this selection, so repeating it marks nothing
+    // "Pending" and publishes nothing: the label is the settled one at once.
     const menuAnchor = await activeTreeRow(page);
+    expect(
+      menuAnchor,
+      'the focused row exposes an accessible name',
+    ).not.toBeNull();
     await menuTo(page, /^RDLC Code: Properties$/);
     await expect(
       page.locator('.context-view').getByRole('menuitem').first(),
@@ -629,11 +636,8 @@ test('US6.1-keyboard-journey', async () => {
     await expect(
       page.locator('.context-view').getByRole('menuitem').first(),
     ).toBeHidden();
-    // Focus returns to the same row; its state part may be transiently
-    // "Pending · " again while the host re-publishes, which is not focus.
-    const withoutPending = (label: string | null) =>
-      label?.replace('Pending · ', '') ?? null;
-    expect(withoutPending(await activeTreeRow(page))).toBe(menuAnchor);
+    // Focus returns to the same row, still carrying the label it had.
+    await expect.poll(() => activeTreeRow(page)).toBe(menuAnchor);
 
     // 6. Shift+F10 -> Properties reaches the inspector with the keyboard.
     // menuTo returns once the menu is visible and Properties is the focused item.
