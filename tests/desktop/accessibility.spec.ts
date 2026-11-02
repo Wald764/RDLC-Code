@@ -310,19 +310,52 @@ async function focusedRowAttribute(
   }, attribute);
 }
 
+/**
+ * Press `key` until the focused row reports `aria-expanded` as `target`. The
+ * native tree drops a Left or Right pressed while a refresh is in flight, so
+ * each attempt gives it a short window, then presses again only while the row
+ * still shows `pending`: pressing Right on an open row would move focus to its
+ * first child. Focus must stay on the root row, so a retry never hides a move.
+ */
+async function pressUntilExpanded(
+  page: Page,
+  key: 'ArrowLeft' | 'ArrowRight',
+  pending: 'true' | 'false',
+  target: string | null,
+  rootLabel: string | null,
+): Promise<void> {
+  await expect(async () => {
+    expect(await activeTreeRow(page), 'focus stays on the root row').toBe(
+      rootLabel,
+    );
+    if ((await focusedRowAttribute(page, 'aria-expanded')) === pending) {
+      await page.keyboard.press(key);
+    }
+    await expect
+      .poll(() => focusedRowAttribute(page, 'aria-expanded'), {
+        timeout: 1_500,
+      })
+      .toBe(target);
+  }).toPass({ intervals: [100], timeout: 15_000 });
+  expect(await activeTreeRow(page), 'focus stays on the root row').toBe(
+    rootLabel,
+  );
+}
+
 /** Fold the root row with Left and open it again with Right. */
 async function foldAndUnfoldRoot(page: Page): Promise<void> {
   await page.keyboard.press('Home');
   const expandedBefore = await focusedRowAttribute(page, 'aria-expanded');
   expect(expandedBefore, 'the root row is collapsible').not.toBeNull();
-  await page.keyboard.press('ArrowLeft');
-  await expect
-    .poll(() => focusedRowAttribute(page, 'aria-expanded'))
-    .toBe('false');
-  await page.keyboard.press('ArrowRight');
-  await expect
-    .poll(() => focusedRowAttribute(page, 'aria-expanded'))
-    .toBe(expandedBefore);
+  const rootLabel = await activeTreeRow(page);
+  await pressUntilExpanded(page, 'ArrowLeft', 'true', 'false', rootLabel);
+  await pressUntilExpanded(
+    page,
+    'ArrowRight',
+    'false',
+    expandedBefore,
+    rootLabel,
+  );
 }
 
 /**
@@ -572,7 +605,8 @@ test('US6.1-keyboard-journey', async () => {
     // reopens with Right. The row label above only reaches its settled form
     // with the last publication of that selection (the extension host
     // debounces tree refreshes), so none is still on its way here, and the
-    // tree drops an expand pressed while one is in flight. Activating the
+    // tree drops an expand pressed while one is in flight (the fold retries
+    // a dropped key press, see pressUntilExpanded). Activating the
     // row again repeats the selection the designer already holds, which
     // changes nothing on screen: the host publishes nothing for it, so the
     // fold is immediate, with no signal on the page to wait for.
