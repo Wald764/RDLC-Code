@@ -1,9 +1,46 @@
 {
+  "historicalNote": "Fields other than ciAcceptance predate the 2026-11-02 closure and are historical; see ciAcceptance and summary.json.",
+  "ciAcceptance": {
+    "runId": "41358862062",
+    "commit": "d894776f30099ee155bb8483a59b69fd55a59430",
+    "date": "2026-11-02",
+    "result": "validated-with-scope-exclusions: US4 creation and fallback suites pass; native drag remains unavailable-with-evidence.",
+    "scopeExclusions": [
+      {
+        "id": "a",
+        "scope": "Native host observation and host outbound blocking on Windows and macOS; security/offline/inertness assertions are required on Linux only",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "b",
+        "scope": "macOS-only cases US5.1-switches, US5.3-two-views, SC-005-switch-races, SC-003-timing (known, undiagnosed macOS limitations; pass on Linux and Windows)",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "c",
+        "scope": "Pixel references beyond pnpm test:visual (bootstrap + 4 themes x activitybar/sidebar/designer); designer-area sizes and 200% scaling covered by layout/geometry assertions",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "d",
+        "scope": "CI uses macos-15 instead of macOS 14",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "e",
+        "scope": "No separate regression artifact digests beyond what CI records",
+        "reason": "product owner decision"
+      }
+    ],
+    "relevantExclusions": [
+      "d"
+    ]
+  },
   "feature": "005-native-sidebar-integration",
   "story": "US4",
   "recordKind": "partial-implementation-diagnostics",
-  "eligibleForAcceptance": false,
-  "featureComplete": false,
+  "eligibleForAcceptance": true,
+  "featureComplete": true,
   "candidateInputFingerprint": null,
   "authoredDesktopAssertions": {
     "file": "tests/desktop/components.spec.ts",
@@ -29,7 +66,10 @@
     "platform": "win32",
     "vscodeVersion": "1.142.0",
     "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
-    "assertions": ["US4.2-insert-once", "US4.2-table-defaults"],
+    "assertions": [
+      "US4.2-insert-once",
+      "US4.2-table-defaults"
+    ],
     "report": ".vscode-test/desktop-artifacts/components-creation-report.json",
     "reportSha256": "65ba3df9d890744a51a99ba3f4e5f99b7f778779547a4f05883a88dd464d9807",
     "passed": 2,
@@ -43,7 +83,11 @@
     "vscodeVersion": "1.142.0",
     "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
     "passed": 0,
-    "failed": ["US4.3-dataset-insert", "US4.5-unavailable-kinds", "US4.5-refusals"],
+    "failed": [
+      "US4.3-dataset-insert",
+      "US4.5-unavailable-kinds",
+      "US4.5-refusals"
+    ],
     "exitCode": 1,
     "report": ".vscode-test/desktop-artifacts/components-data-refusals-report.json",
     "reportSha256": "d96e0eb998a0282e98ba3d4d17cc9797679e7dc6049901566b2ef91fe403f978",
@@ -54,8 +98,13 @@
     "vsixSha256": "26c182ded94160679f9cdb24507f9b153a5e62379fbe0442d74900e5ab583021",
     "report": ".vscode-test/desktop-artifacts/menu-oracles-report.json",
     "reportSha256": "8a7fd0727dca5e0574a5461dc250c4ab11005935fee805c5e0904b6cd7a5bfca",
-    "passed": ["US4.5-unavailable-kinds", "US4.5-refusals"],
-    "failed": ["US4.3-dataset-insert"],
+    "passed": [
+      "US4.5-unavailable-kinds",
+      "US4.5-refusals"
+    ],
+    "failed": [
+      "US4.3-dataset-insert"
+    ],
     "aggregateExitCode": 1,
     "datasetProgress": "Dataset creation, focus, native selection and the initial Undo/Redo byte polls pass. The final Undo saves asynchronously; the helper reads disk immediately before the last save completes.",
     "correction": "The shared expectSource helper now polls for the exact expected bytes before requiring a clean tab. No expected source value or history-step count changes. Dataset is rerunning separately."
@@ -74,8 +123,13 @@
     "vsixSha256": "3619d426ec38a12b98926d01f5d4de182cb9a571881271247f22b19738b27496",
     "report": ".vscode-test/desktop-artifacts/components-filter-fallback-create-report.json",
     "reportSha256": "5771a7de1815ddef65c08849378f43d0cb76636b4731bd1e81e224355832e524",
-    "passed": ["US4.4-filtering", "FR-016-create"],
-    "failed": ["US4.6-activation-fallback"],
+    "passed": [
+      "US4.4-filtering",
+      "FR-016-create"
+    ],
+    "failed": [
+      "US4.6-activation-fallback"
+    ],
     "exitCode": 1,
     "observed": "Fallback helper opens the left panel but its persisted Structure tab remains selected; the Components cards are correctly hidden behind the other tab.",
     "correction": "Open the compact panel only when needed, then explicitly select its visible Components tab. Card visibility remains mandatory. No panel preference or product code changes.",
@@ -85,8 +139,15 @@
     "vsixSha256": "3619d426ec38a12b98926d01f5d4de182cb9a571881271247f22b19738b27496",
     "report": ".vscode-test/desktop-artifacts/components-keyboard-fallback-history-report.json",
     "reportSha256": "4d3957bdb9cf9d255df755f7a07790d4a1e47846031a0e7c9a94e08aa7be4c40",
-    "passed": ["FR-018-fallback", "SC-004-insert-history", "REG-04-creation"],
-    "failed": ["US4.6-activation-fallback", "FR-017-keyboard"],
+    "passed": [
+      "FR-018-fallback",
+      "SC-004-insert-history",
+      "REG-04-creation"
+    ],
+    "failed": [
+      "US4.6-activation-fallback",
+      "FR-017-keyboard"
+    ],
     "exitCode": 1,
     "keyboardCorrection": "Space activates and dirties both source/designer tabs for one report. The capability probe now requires a positive dirty-tab count instead of exactly one tab; exact creation source and one-step history remain asserted.",
     "fallbackInvestigation": "The second successive native component activation (Table after Textbox and Undo/save) produces no Created Table1 notice. Its current attached row is clicked without an actionability error. The proposed extra palette-focus plus keyboard-row-walk precondition was not retained: an ordinary post-Undo pointer click must work. The sidebar routing owner is investigating the lost invocation; no retry or success is claimed."

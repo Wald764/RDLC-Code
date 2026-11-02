@@ -1,0 +1,69 @@
+{
+  "feature": "005-native-sidebar-integration",
+  "recordKind": "regression-matrix",
+  "task": "T073",
+  "date": "2026-11-02",
+  "candidate": {
+    "commit": "d894776f30099ee155bb8483a59b69fd55a59430",
+    "ciRunId": "41358862062",
+    "ciUrl": "https://github.com/Wald764/RDLC-Code/actions/runs/41358862062",
+    "pullRequest": 1,
+    "mergedAt": "2026-11-02T22:18:42Z"
+  },
+  "source": "GitHub Actions workflow CI, run 41358862062 (PR #1)",
+  "conclusion": "success",
+  "checks": [
+    {
+      "name": "quality",
+      "result": "success"
+    },
+    {
+      "name": "Desktop matrix",
+      "result": "success",
+      "detail": "ubuntu-24.04 / windows-2022 / macos-15 x VS Code 1.142.0 / stable x groups core, authoring, context; host suites test:vscode + test:package, test:e2e --probe --packaged, test:e2e, test:e2e --packaged",
+      "jobs": 18
+    },
+    {
+      "name": "Pinned visual references",
+      "result": "success",
+      "detail": "pnpm test:visual, 8 passed; pinned Ubuntu environment in tests/desktop/baselines/reference-environment.txt"
+    },
+    {
+      "name": "Stability gate on changed specs",
+      "result": "success"
+    },
+    {
+      "name": "Required checks",
+      "result": "success"
+    }
+  ],
+  "totalChecks": 36,
+  "artifactDigests": "Not recorded beyond what CI records (out of scope, decision e).",
+  "outOfScope": [
+    {
+      "id": "a",
+      "scope": "Native host observation and host outbound blocking on Windows and macOS; security/offline/inertness assertions are required on Linux only",
+      "reason": "product owner decision"
+    },
+    {
+      "id": "b",
+      "scope": "macOS-only cases US5.1-switches, US5.3-two-views, SC-005-switch-races, SC-003-timing (known, undiagnosed macOS limitations; pass on Linux and Windows)",
+      "reason": "product owner decision"
+    },
+    {
+      "id": "c",
+      "scope": "Pixel references beyond pnpm test:visual (bootstrap + 4 themes x activitybar/sidebar/designer); designer-area sizes and 200% scaling covered by layout/geometry assertions",
+      "reason": "product owner decision"
+    },
+    {
+      "id": "d",
+      "scope": "CI uses macos-15 instead of macOS 14",
+      "reason": "product owner decision"
+    },
+    {
+      "id": "e",
+      "scope": "No separate regression artifact digests beyond what CI records",
+      "reason": "product owner decision"
+    }
+  ]
+}

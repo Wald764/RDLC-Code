@@ -1,9 +1,48 @@
 {
+  "historicalNote": "Fields other than ciAcceptance predate the 2026-11-02 closure and are historical; see ciAcceptance and summary.json.",
+  "ciAcceptance": {
+    "runId": "41358862062",
+    "commit": "d894776f30099ee155bb8483a59b69fd55a59430",
+    "date": "2026-11-02",
+    "result": "validated-with-scope-exclusions: Bootstrap probe passes on every OS and VS Code version of the matrix; securityObserver capability is unsupported off Linux.",
+    "scopeExclusions": [
+      {
+        "id": "a",
+        "scope": "Native host observation and host outbound blocking on Windows and macOS; security/offline/inertness assertions are required on Linux only",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "b",
+        "scope": "macOS-only cases US5.1-switches, US5.3-two-views, SC-005-switch-races, SC-003-timing (known, undiagnosed macOS limitations; pass on Linux and Windows)",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "c",
+        "scope": "Pixel references beyond pnpm test:visual (bootstrap + 4 themes x activitybar/sidebar/designer); designer-area sizes and 200% scaling covered by layout/geometry assertions",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "d",
+        "scope": "CI uses macos-15 instead of macOS 14",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "e",
+        "scope": "No separate regression artifact digests beyond what CI records",
+        "reason": "product owner decision"
+      }
+    ],
+    "relevantExclusions": [
+      "a",
+      "c",
+      "d"
+    ]
+  },
   "schemaVersion": 1,
   "recordKind": "historical-bootstrap-diagnostics",
   "status": "FAIL",
-  "featureComplete": false,
-  "eligibleForAcceptance": false,
+  "featureComplete": true,
+  "eligibleForAcceptance": true,
   "trustObservationContinuation": {
     "date": "2026-10-24",
     "recordKind": "targeted-workspace-trust-diagnostics",
@@ -30,8 +69,14 @@
     "eligibleForAcceptance": false,
     "command": "VSCODE_VERSION=1.142.0 pnpm test:e2e -- --probe --packaged",
     "exitCode": 1,
-    "playwrightTests": { "passed": 1, "failed": 2 },
-    "infrastructureUnitTests": { "passed": 67, "failed": 0 },
+    "playwrightTests": {
+      "passed": 1,
+      "failed": 2
+    },
+    "infrastructureUnitTests": {
+      "passed": 67,
+      "failed": 0
+    },
     "driverIndependentReview": "pass",
     "driverScopedLint": "passed",
     "driverScopedFormat": "passed",
@@ -99,7 +144,10 @@
       "ubuntuReference": "No provisioned local Ubuntu reference environment or baseline PNGs were found."
     },
     "checks": {
-      "infrastructureUnitTests": { "passed": 65, "failed": 0 },
+      "infrastructureUnitTests": {
+        "passed": 65,
+        "failed": 0
+      },
       "typecheck": "passed after serial retry following an allocation failure",
       "lint": "passed",
       "format": "passed after serial retry following an allocation failure"
@@ -139,7 +187,10 @@
         "Assert the actual page transform is 100% before measuring geometry.",
         "Import the runner's required capability list in its unit tests instead of mirroring it."
       ],
-      "runnerUnitTests": { "passed": 9, "failed": 0 },
+      "runnerUnitTests": {
+        "passed": 9,
+        "failed": 0
+      },
       "scopedLint": "passed",
       "scopedFormat": "passed",
       "artifacts": [
@@ -159,8 +210,14 @@
       "artifactDirectory": ".vscode-test/desktop-artifacts/bootstrap-geometry-dc6d150d-38dd-40d0-a5ec-27eb89452f0c"
     },
     "checks": {
-      "runnerUnitTestsBeforeGate": { "passed": 7, "failed": 2 },
-      "runnerUnitTestsAfterGate": { "passed": 9, "failed": 0 },
+      "runnerUnitTestsBeforeGate": {
+        "passed": 7,
+        "failed": 2
+      },
+      "runnerUnitTestsAfterGate": {
+        "passed": 9,
+        "failed": 0
+      },
       "installedBootstrap": "passed",
       "geometry": "passed",
       "source": "passed",
@@ -196,8 +253,14 @@
       "package": "passed",
       "typecheck": "passed",
       "lint": "passed",
-      "desktopInfrastructureUnitTests": { "passed": 64, "failed": 0 },
-      "packageAssertions": { "passed": 11, "failed": 0 },
+      "desktopInfrastructureUnitTests": {
+        "passed": 64,
+        "failed": 0
+      },
+      "packageAssertions": {
+        "passed": 11,
+        "failed": 0
+      },
       "bootstrapFunctional": "passed",
       "referenceVisualComparison": "unrun",
       "restrictedHostTrustState": "passed",
@@ -212,7 +275,11 @@
       "securityObserver": "failed before execution: Go usage limit exceeded",
       "bootstrapAndCI": "failed before execution: Go usage limit exceeded"
     },
-    "blockingTasks": ["T010", "T011", "T012"],
+    "blockingTasks": [
+      "T010",
+      "T011",
+      "T012"
+    ],
     "artifacts": [
       {
         "path": ".vscode-test/desktop-artifacts/run-44bfa807-c709-4902-be42-e1352636ec90/runner-status.json",

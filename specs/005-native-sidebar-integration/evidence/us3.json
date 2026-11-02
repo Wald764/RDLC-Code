@@ -1,9 +1,47 @@
 {
+  "historicalNote": "Fields other than ciAcceptance predate the 2026-11-02 closure and are historical; see ciAcceptance and summary.json.",
+  "ciAcceptance": {
+    "runId": "41358862062",
+    "commit": "d894776f30099ee155bb8483a59b69fd55a59430",
+    "date": "2026-11-02",
+    "result": "validated-with-scope-exclusions: US3 suites pass; observer-based inertness assertions required on Linux only.",
+    "scopeExclusions": [
+      {
+        "id": "a",
+        "scope": "Native host observation and host outbound blocking on Windows and macOS; security/offline/inertness assertions are required on Linux only",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "b",
+        "scope": "macOS-only cases US5.1-switches, US5.3-two-views, SC-005-switch-races, SC-003-timing (known, undiagnosed macOS limitations; pass on Linux and Windows)",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "c",
+        "scope": "Pixel references beyond pnpm test:visual (bootstrap + 4 themes x activitybar/sidebar/designer); designer-area sizes and 200% scaling covered by layout/geometry assertions",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "d",
+        "scope": "CI uses macos-15 instead of macOS 14",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "e",
+        "scope": "No separate regression artifact digests beyond what CI records",
+        "reason": "product owner decision"
+      }
+    ],
+    "relevantExclusions": [
+      "a",
+      "d"
+    ]
+  },
   "feature": "005-native-sidebar-integration",
   "story": "US3",
   "recordKind": "test-first-implementation-diagnostics",
-  "eligibleForAcceptance": false,
-  "featureComplete": false,
+  "eligibleForAcceptance": true,
+  "featureComplete": true,
   "candidateInputFingerprint": null,
   "fixtures": [
     "sidebar-data",
@@ -87,16 +125,25 @@
     "vscodeVersion": "1.142.0",
     "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
     "initialRun": {
-      "passed": ["US3.3-inspect-only"],
-      "failed": ["US3.1-category-contents"],
+      "passed": [
+        "US3.3-inspect-only"
+      ],
+      "failed": [
+        "US3.1-category-contents"
+      ],
       "exitCode": 1,
       "report": ".vscode-test/desktop-artifacts/data-inventory-report.json",
       "reportSha256": "a2a10cc2eda49dc6bed83f551cf00ec99d4af725a02c39f3d73de25eec30d79b",
       "observed": "The test clicked the category to focus it, which collapsed Datasets / Fields. Its contiguous-window comparison also retained host-added trailing spaces on category labels."
     },
     "actionRun": {
-      "passed": ["US3.5-selection-agreement", "FR-010-data-actions"],
-      "failed": ["US3.4-reference-refusal"],
+      "passed": [
+        "US3.5-selection-agreement",
+        "FR-010-data-actions"
+      ],
+      "failed": [
+        "US3.4-reference-refusal"
+      ],
       "exitCode": 1,
       "report": ".vscode-test/desktop-artifacts/data-actions-report.json",
       "reportSha256": "842ddee8971d14c2087c137f798a4656c8aedb171f1101e915eac129a4de7f20",
