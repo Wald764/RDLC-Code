@@ -2,7 +2,7 @@
 
 **Feature**: [Native Sidebar Integration](spec.md) · **Date**: 2026-10-24
 
-This defines required future evidence, not passing tests. All cases currently have status **not run — feature not implemented**. No human approval, manual walkthrough, usability study or screenshot inspection is required to validate runtime behavior. User approval of the specification is a separate planning authorization.
+This defines the required evidence. The feature is implemented and was validated on CI run [41358862062](https://github.com/Wald764/RDLC-Code/actions/runs/41358862062) (commit `d894776`, all 36 checks green), with the scope exclusions recorded in [Delivery Scope Decision (2026-11-02)](#delivery-scope-decision-2026-11-02). Cases skipped on a platform stay **UNVALIDATED** there. No human approval, manual walkthrough, usability study or screenshot inspection is required to validate runtime behavior. User approval of the specification is a separate planning authorization.
 
 ## Mandatory Automation Adaptation
 
@@ -94,6 +94,36 @@ Test primitives and projection work can proceed independently once specification
 Record each requirement/scenario/edge/SC with test identifier, fixture IDs, expected oracle, candidate commit and VSIX digest, platform, Desktop build, driver/dependency versions, locale/fonts/theme, viewport/DPR/scaling/report zoom, executed outcome and artifact links. Save raw timing samples, selection/race assertions, network-attempt logs and expected/actual/diff images or traces on failure using minimum-permission GitHub Actions artifacts. Use per-platform failure logs without secrets or image/query payloads.
 
 Any absent or failed mandatory assertion means **not validated** and blocks the feature's completion. The only conditional scope is native-to-webview drag: a proven limitation yields an explicitly unavailable capability with passing activation/fallback assertions, not a claim that native drag passed. Functional acceptance cannot be inferred from specification review, task checkboxes, successful compilation or historical manual evidence.
+
+## Delivery Scope Decision (2026-11-02)
+
+**Decision owner**: product owner. **Candidate**: commit `d894776` (PR #1, merged 2026-11-02), CI run [41358862062](https://github.com/Wald764/RDLC-Code/actions/runs/41358862062), concluded `success` on all 36 checks (`quality`; Desktop matrix Ubuntu 24.04 / Windows 2022 / macOS 15 x VS Code 1.142.0 / stable x groups core, authoring, context; `Pinned visual references` with 8 passed; stability gate; `Required checks`). Status: **validated with scope exclusions**.
+
+The cases below were skipped or not produced. They are judged not necessary and closed as **out of scope**, not as passed. They remain UNVALIDATED on the listed platforms.
+
+| ID | Excluded from delivery | Rationale |
+| --- | --- | --- |
+| a | Native host observation and host outbound blocking on Windows and macOS. Security, offline and inertness assertions are required on Linux only, where they run and pass. Skipped elsewhere: `security-observer.spec.ts` (probe only) and 5 `offline.spec.ts` cases (see below). | Product owner decision |
+| b | Four macOS-only cases: `US5.1-switches`, `US5.3-two-views`, `SC-005-switch-races`, `SC-003-timing`. They pass on Linux and Windows. Recorded as known, undiagnosed macOS limitations, not passes. | Product owner decision |
+| c | Pixel reference comparisons beyond `pnpm test:visual` (bootstrap and 4 themes x activity bar / sidebar / designer). Designer-area sizes 1280 x 800 / 1024 x 768 / 640 x 480 / 400 x 600 and 200% scaling are covered by layout/geometry assertions (`tests/desktop/layout.spec.ts` `FR-028-scaling`, `US6.2-interface-scaling` and related), not by committed PNGs. | Product owner decision |
+| d | CI uses `macos-15` instead of macOS 14. Accepted. | Product owner decision |
+| e | No separate `regression.json` artifact digests beyond what CI records. Run 41358862062 is the regression matrix evidence (T073). | Product owner decision |
+
+For the listed exclusions only, this decision supersedes the general rules that skipped or missing mandatory cases block completion (item 5 of Mandatory Automation Adaptation and the paragraph around the disabled-cases section), the AT-08 committed-PNG coverage for designer sizes and 200% scaling, the AT-09 cross-platform host observation, and the macOS 14 matrix target. Every other rule stays in force.
+
+Native-to-webview drag remains **unavailable-with-evidence** (`evidence/native-drag.json`); it is not reported as a passed drag test.
+
+Playwright results in run 41358862062, from its CI log. Each of the functional and packaged e2e runs is counted separately, and the probe is separate. Figures apply to both VS Code versions (1.142.0 and stable).
+
+| Platform | Probe (core) | Core runs | Authoring runs | Context runs |
+| --- | --- | --- | --- | --- |
+| Ubuntu 24.04 | 3 passed | 31 passed each | 29 passed each | 17 passed each |
+| Windows 2022 | 2 passed, 1 skipped (`security-observer`) | 31 passed each, 0 skipped | 24 passed, 5 skipped (offline host-observer cases) each | 17 passed each |
+| macOS 15 | 2 passed, 1 skipped (`security-observer`) | 30 passed, 1 skipped (`SC-003-timing`) each | 24 passed, 5 skipped (offline host-observer cases) each | 14 passed, 3 skipped (`US5.1-switches`, `US5.3-two-views`, `SC-005-switch-races`) each |
+
+Ubuntu has 0 skipped cases. `Pinned visual references` (`pnpm test:visual`): 8 passed. `security-observer.spec.ts` is skipped in the probe only, not in the core runs.
+
+The tables in the next section stay unchanged: those skips are still UNVALIDATED on those platforms and are now explicitly out of scope.
 
 ## Platform Scope and Disabled Cases (CI run 40418317992)
 

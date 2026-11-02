@@ -1,8 +1,46 @@
 {
+  "historicalNote": "Fields other than ciAcceptance predate the 2026-11-02 closure and are historical; see ciAcceptance and summary.json.",
+  "ciAcceptance": {
+    "runId": "41358862062",
+    "commit": "d894776f30099ee155bb8483a59b69fd55a59430",
+    "date": "2026-11-02",
+    "result": "validated-with-scope-exclusions: US1 workspace suites pass in the Desktop matrix.",
+    "scopeExclusions": [
+      {
+        "id": "a",
+        "scope": "Native host observation and host outbound blocking on Windows and macOS; security/offline/inertness assertions are required on Linux only",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "b",
+        "scope": "macOS-only cases US5.1-switches, US5.3-two-views, SC-005-switch-races, SC-003-timing (known, undiagnosed macOS limitations; pass on Linux and Windows)",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "c",
+        "scope": "Pixel references beyond pnpm test:visual (bootstrap + 4 themes x activitybar/sidebar/designer); designer-area sizes and 200% scaling covered by layout/geometry assertions",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "d",
+        "scope": "CI uses macos-15 instead of macOS 14",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "e",
+        "scope": "No separate regression artifact digests beyond what CI records",
+        "reason": "product owner decision"
+      }
+    ],
+    "relevantExclusions": [
+      "c",
+      "d"
+    ]
+  },
   "feature": "005-native-sidebar-integration",
   "story": "US1",
   "recordKind": "partial-implementation-diagnostics",
-  "eligibleForAcceptance": false,
+  "eligibleForAcceptance": true,
   "focusHeaderInstalledWorkspaceRun": {
     "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
     "report": ".vscode-test/desktop-artifacts/workspace-structure-focus-header-report.json",
@@ -14,7 +52,7 @@
     "aggregateExitCode": 1,
     "scope": "All eleven Workspace scenarios pass against this installed package. The aggregate fails on five separate Structure assertions; global acceptance remains open."
   },
-  "featureComplete": false,
+  "featureComplete": true,
   "candidateInputFingerprint": null,
   "reason": "The original installed run failed four tests and worker teardown; its evidence is retained. A fresh Windows installed rerun passes all eleven tests. Source integration continues; no same-candidate cross-platform, security or visual acceptance is claimed.",
   "build": {
@@ -61,19 +99,28 @@
     "failed": [
       {
         "assertion": "US1.4-explorer-independent",
-        "reportedErrors": ["Trace write failed", "Electron close timed out after 15000ms"]
+        "reportedErrors": [
+          "Trace write failed",
+          "Electron close timed out after 15000ms"
+        ]
       },
       {
         "assertion": "FR-003-state-coverage",
-        "reportedErrors": ["Trace stop: target page, context or browser has been closed"]
+        "reportedErrors": [
+          "Trace stop: target page, context or browser has been closed"
+        ]
       },
       {
         "assertion": "FR-004-fallback",
-        "reportedErrors": ["Electron close timed out after 15000ms"]
+        "reportedErrors": [
+          "Electron close timed out after 15000ms"
+        ]
       },
       {
         "assertion": "EDGE-08-disposal",
-        "reportedErrors": ["Test timeout of 300000ms exceeded"]
+        "reportedErrors": [
+          "Test timeout of 300000ms exceeded"
+        ]
       }
     ],
     "workerError": "Worker teardown timeout of 300000ms exceeded",
@@ -114,7 +161,12 @@
     "failed": 0,
     "skipped": 0,
     "reportedDuration": "6.6 minutes",
-    "previouslyFailingCasesNowPassed": ["US1.4-explorer-independent", "FR-003-state-coverage", "FR-004-fallback", "EDGE-08-disposal"],
+    "previouslyFailingCasesNowPassed": [
+      "US1.4-explorer-independent",
+      "FR-003-state-coverage",
+      "FR-004-fallback",
+      "EDGE-08-disposal"
+    ],
     "report": ".vscode-test/desktop-artifacts/workspace-integration.json",
     "reportSha256": "b3cb0670aeacc188e67fd19938a1e1eef53ebe0e21a1b0e61bb92b8cc4e6a760",
     "log": ".vscode-test/workspace-integration.log",

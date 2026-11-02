@@ -1,9 +1,47 @@
 {
+  "historicalNote": "Fields other than ciAcceptance predate the 2026-11-02 closure and are historical; see ciAcceptance and summary.json.",
+  "ciAcceptance": {
+    "runId": "41358862062",
+    "commit": "d894776f30099ee155bb8483a59b69fd55a59430",
+    "date": "2026-11-02",
+    "result": "validated-with-scope-exclusions: US5 suites pass on Linux and Windows; US5.1-switches, US5.3-two-views and SC-005-switch-races are skipped on macOS only.",
+    "scopeExclusions": [
+      {
+        "id": "a",
+        "scope": "Native host observation and host outbound blocking on Windows and macOS; security/offline/inertness assertions are required on Linux only",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "b",
+        "scope": "macOS-only cases US5.1-switches, US5.3-two-views, SC-005-switch-races, SC-003-timing (known, undiagnosed macOS limitations; pass on Linux and Windows)",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "c",
+        "scope": "Pixel references beyond pnpm test:visual (bootstrap + 4 themes x activitybar/sidebar/designer); designer-area sizes and 200% scaling covered by layout/geometry assertions",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "d",
+        "scope": "CI uses macos-15 instead of macOS 14",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "e",
+        "scope": "No separate regression artifact digests beyond what CI records",
+        "reason": "product owner decision"
+      }
+    ],
+    "relevantExclusions": [
+      "b",
+      "d"
+    ]
+  },
   "feature": "005-native-sidebar-integration",
   "story": "US5",
   "recordKind": "partial-implementation-diagnostics",
-  "eligibleForAcceptance": false,
-  "featureComplete": false,
+  "eligibleForAcceptance": true,
+  "featureComplete": true,
   "candidateInputFingerprint": null,
   "preservation": {
     "fixtureCount": 23,
@@ -19,7 +57,12 @@
     "exitCode": 0,
     "suitesPassed": 12,
     "history": "sidebar-history.test.cjs executes twenty accepted changed operations, twenty individual native Undos to exact recorded states and twenty Redos, saving the final exact state. The inert battery checks refusal, cancellation, no-op and navigation without extra document history.",
-    "includedSuites": ["sidebar-data.test.cjs", "sidebar-history.test.cjs", "sidebar-loading.test.cjs", "navigation-budget.test.cjs"],
+    "includedSuites": [
+      "sidebar-data.test.cjs",
+      "sidebar-history.test.cjs",
+      "sidebar-loading.test.cjs",
+      "navigation-budget.test.cjs"
+    ],
     "artifact": ".vscode-test/host-integration.log",
     "sha256": "6f9d8a98e39585f7a21161e95dd2c0aae4fc2441763f3406d2360d62c0c1f7bc",
     "inertBatteryLimit": "The filter/expand messages deliberately exercise invalid-protocol refusal, not actual native filter or expansion interactions. Those two UI/history requirements remain open; the twenty-step history execution does not by itself close T054."
@@ -58,8 +101,12 @@
       "platform": "win32",
       "vscodeVersion": "1.142.0",
       "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
-      "passed": ["US5.2-sidebar-focus"],
-      "failed": ["US5.1-switches"],
+      "passed": [
+        "US5.2-sidebar-focus"
+      ],
+      "failed": [
+        "US5.1-switches"
+      ],
       "exitCode": 1,
       "observed": "US5.1 stops at switch index 3 (designer a.rdlc): normal activation emits This report item is stale. Activate its current row and try again. The hundred-switch oracle has not completed.",
       "followUp": "The real trace shows new title IPC before the old rows leave: switch 3 tab click at 33439ms, title observed at 33627ms, row click at 33695ms. The unchanged-message write opened a 200ms debounce ahead of row refresh. The provider now avoids unchanged message/description writes; its stale guard remains enforced. This needs a fresh bundled rerun. Header-only readiness still does not prove the new row projection has arrived."
@@ -224,9 +271,18 @@
       "Require the actual delivery-refusal reason for postMessage false/throw, distinct from context-changed refusal"
     ],
     "retainedFailures": [
-      { "log": ".vscode-test/host-api-ownership.log", "sha256": "3bb0b55d32dfca59cea79a0c9f1796b23f0ebf7eca2b646e865edaddbbc2901a" },
-      { "log": ".vscode-test/host-owned-editor-contributions.log", "sha256": "d4eaaebe4ddee94ca7da383cef2aa7554575f2b8819bc7a4f7b3fc22fe0c7a5f" },
-      { "log": ".vscode-test/host-race-eol.log", "sha256": "16826068c51dc4dc65a7caad348a1c939014c1b8dce3bbb66c40188341d1efe1" }
+      {
+        "log": ".vscode-test/host-api-ownership.log",
+        "sha256": "3bb0b55d32dfca59cea79a0c9f1796b23f0ebf7eca2b646e865edaddbbc2901a"
+      },
+      {
+        "log": ".vscode-test/host-owned-editor-contributions.log",
+        "sha256": "d4eaaebe4ddee94ca7da383cef2aa7554575f2b8819bc7a4f7b3fc22fe0c7a5f"
+      },
+      {
+        "log": ".vscode-test/host-race-eol.log",
+        "sha256": "16826068c51dc4dc65a7caad348a1c939014c1b8dce3bbb66c40188341d1efe1"
+      }
     ],
     "limitation": "Development-host evidence only. This does not close installed same-candidate, the fifty Desktop opening races, the hundred reliable switches or latency acceptance."
   },
@@ -344,8 +400,25 @@
     "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
     "report": ".vscode-test/desktop-artifacts/context-remaining-focus-header-report.json",
     "reportSha256": "75bf521909486e81ff45bd850434ad279b5e5cb948ac073544fb619a25f2c617",
-    "passed": ["US5.2-sidebar-focus", "US5.5-draft-guard", "US5.7-no-report", "FR-019-authoritative"],
-    "failed": ["US5.3-two-views", "US5.4-disposal", "US5.6-external-changes", "FR-020-context", "FR-021-view-local", "FR-023-orders", "FR-026-draft", "EDGE-01-identity", "EDGE-08-pending", "EDGE-09-rejected", "EDGE-11-readonly-conflict"],
+    "passed": [
+      "US5.2-sidebar-focus",
+      "US5.5-draft-guard",
+      "US5.7-no-report",
+      "FR-019-authoritative"
+    ],
+    "failed": [
+      "US5.3-two-views",
+      "US5.4-disposal",
+      "US5.6-external-changes",
+      "FR-020-context",
+      "FR-021-view-local",
+      "FR-023-orders",
+      "FR-026-draft",
+      "EDGE-01-identity",
+      "EDGE-08-pending",
+      "EDGE-09-rejected",
+      "EDGE-11-readonly-conflict"
+    ],
     "exitCode": 1,
     "observed": "Failures include counting editor parts instead of groups, hovering the intentionally covered Front item, counting source/designer dirty tabs as one, an unrelated Git parent-repository notification, and unresolved selection/context or opening-race conditions.",
     "followUp": "The context owner is checking each retained trace and correcting genuine test preconditions. Silent stale-selection and missing in-flight refusal evidence are not treated as successful actions or bypassed. The fifty-race requirement stays open."

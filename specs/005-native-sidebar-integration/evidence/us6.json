@@ -1,9 +1,48 @@
 {
+  "historicalNote": "Fields other than ciAcceptance predate the 2026-11-02 closure and are historical; see ciAcceptance and summary.json.",
+  "ciAcceptance": {
+    "runId": "41358862062",
+    "commit": "d894776f30099ee155bb8483a59b69fd55a59430",
+    "date": "2026-11-02",
+    "result": "validated-with-scope-exclusions: US6 keyboard, layout and offline suites pass; host-observer offline cases run on Linux only; pixel references limited to test:visual.",
+    "scopeExclusions": [
+      {
+        "id": "a",
+        "scope": "Native host observation and host outbound blocking on Windows and macOS; security/offline/inertness assertions are required on Linux only",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "b",
+        "scope": "macOS-only cases US5.1-switches, US5.3-two-views, SC-005-switch-races, SC-003-timing (known, undiagnosed macOS limitations; pass on Linux and Windows)",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "c",
+        "scope": "Pixel references beyond pnpm test:visual (bootstrap + 4 themes x activitybar/sidebar/designer); designer-area sizes and 200% scaling covered by layout/geometry assertions",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "d",
+        "scope": "CI uses macos-15 instead of macOS 14",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "e",
+        "scope": "No separate regression artifact digests beyond what CI records",
+        "reason": "product owner decision"
+      }
+    ],
+    "relevantExclusions": [
+      "a",
+      "c",
+      "d"
+    ]
+  },
   "feature": "005-native-sidebar-integration",
   "story": "US6",
   "recordKind": "partial-implementation-diagnostics",
-  "eligibleForAcceptance": false,
-  "featureComplete": false,
+  "eligibleForAcceptance": true,
+  "featureComplete": true,
   "candidateInputFingerprint": null,
   "workflowIntegration": {
     "implementation": "The existing six-entry OS/minimum/stable matrix now invokes functional and installed Desktop journeys; the required aggregate also depends on a separate minimum-version visual job. The canonical release job invokes installed, observer and visual checks before release-artifact.js.",
@@ -175,8 +214,13 @@
     "vsixSha256": "a32f2aa5bc29cc9728dc303ecfede75ca09dcf6bce21320d6c764a4f33120394",
     "report": ".vscode-test/desktop-artifacts/keyboard-state-fields-labels-report.json",
     "reportSha256": "9e722e7f9a6e3a79dbc18f940ea17eb868889a95944a60d3145c774142bf0497",
-    "passed": ["EDGE-10-long-labels"],
-    "failed": ["FR-003-state-labels", "FR-027-keyboard"],
+    "passed": [
+      "EDGE-10-long-labels"
+    ],
+    "failed": [
+      "FR-003-state-labels",
+      "FR-027-keyboard"
+    ],
     "exitCode": 1,
     "corrections": [
       "FR-027 presses Home and waits for a real active row after container focus, as in the passing US6.1 journey",
@@ -188,8 +232,12 @@
     "vsixSha256": "a32f2aa5bc29cc9728dc303ecfede75ca09dcf6bce21320d6c764a4f33120394",
     "report": ".vscode-test/desktop-artifacts/keyboard-empty-data-focus-report.json",
     "reportSha256": "7100d845af77e8071ade559dd632e044549278713c38168d871c9470636899ab",
-    "passed": ["FR-003-state-labels"],
-    "failed": ["FR-027-keyboard"],
+    "passed": [
+      "FR-003-state-labels"
+    ],
+    "failed": [
+      "FR-027-keyboard"
+    ],
     "exitCode": 1,
     "observed": "All state-label assertions pass. FR-027 now reaches visible-focus measurement but tests :focus-visible on an aria-activedescendant row instead of the actual focused tree container.",
     "correction": "Read :focus-visible on the actual active element while retaining the focused-row computed background comparison. Exclude the focused row itself when finding an unfocused sibling. No CSS class alone certifies painting.",
@@ -222,7 +270,11 @@
     "report": ".vscode-test/desktop-artifacts/layout-row-publication-report.json",
     "reportSha256": "8f17180cd460643245ecf2207d82cf01d8e94a646084f2e49f9cf0ac93888222",
     "passed": 0,
-    "failed": ["US6.2-interface-scaling", "US6.3-frame-stability", "FR-029-stability"],
+    "failed": [
+      "US6.2-interface-scaling",
+      "US6.3-frame-stability",
+      "FR-029-stability"
+    ],
     "exitCode": 1,
     "observed": "Scaling stops on a hidden status-text visibility requirement. Both stability cases stop on a pointer click aimed at Front, intentionally covered by LaterTie in the mixed fixture. No final stability or scaling measurement passes.",
     "followUp": "The layout owner is checking the actual active frame and compact status contract, and replacing only the obscured pointer target with a genuinely reachable fixture item. Force clicks and fabricated visibility are not permitted."
@@ -274,7 +326,13 @@
     "passed": 23,
     "failed": 1,
     "exitCode": 1,
-    "accessibilityPassed": ["US4.4-filter-clear", "US6.1-keyboard-journey", "FR-003-state-labels", "FR-027-keyboard", "EDGE-10-long-labels"],
+    "accessibilityPassed": [
+      "US4.4-filter-clear",
+      "US6.1-keyboard-journey",
+      "FR-003-state-labels",
+      "FR-027-keyboard",
+      "EDGE-10-long-labels"
+    ],
     "failedAssertion": "SC-006-keyboard-themes",
     "observed": "The command palette ranks Browse Color Themes in Marketplace before Preferences: Color Theme. The helper incorrectly requires the requested command to be first rather than selecting its actual result.",
     "correction": "Wait for the matching command and navigate with real ArrowDown presses until its actual aria-activedescendant is focused, then press Enter. No pointer activation or first-result assumption.",
@@ -330,8 +388,15 @@
     "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
     "report": ".vscode-test/desktop-artifacts/layout-topmost-accessible-status-report.json",
     "reportSha256": "520c69fa1505b3eb29a32464a85cb35895ba1bbe16a9bf0acc53766d62c270ac",
-    "passed": ["FR-028-scaling", "US6.2-interface-scaling"],
-    "failed": ["US6.3-frame-stability", "SC-007-stability", "FR-029-stability"],
+    "passed": [
+      "FR-028-scaling",
+      "US6.2-interface-scaling"
+    ],
+    "failed": [
+      "US6.3-frame-stability",
+      "SC-007-stability",
+      "FR-029-stability"
+    ],
     "exitCode": 1,
     "scope": "Actual 100/200-percent interface-scale guards and recorded status accessibility/geometry pass. Stability journeys now reach their next preconditions after using the topmost pointer target.",
     "remainingFailures": [

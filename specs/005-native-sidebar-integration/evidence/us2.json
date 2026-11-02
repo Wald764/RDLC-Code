@@ -1,14 +1,58 @@
 {
+  "historicalNote": "Fields other than ciAcceptance predate the 2026-11-02 closure and are historical; see ciAcceptance and summary.json.",
+  "ciAcceptance": {
+    "runId": "41358862062",
+    "commit": "d894776f30099ee155bb8483a59b69fd55a59430",
+    "date": "2026-11-02",
+    "result": "validated-with-scope-exclusions: US2 suites pass in the Desktop matrix; SC-003-timing is skipped on macOS only.",
+    "scopeExclusions": [
+      {
+        "id": "a",
+        "scope": "Native host observation and host outbound blocking on Windows and macOS; security/offline/inertness assertions are required on Linux only",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "b",
+        "scope": "macOS-only cases US5.1-switches, US5.3-two-views, SC-005-switch-races, SC-003-timing (known, undiagnosed macOS limitations; pass on Linux and Windows)",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "c",
+        "scope": "Pixel references beyond pnpm test:visual (bootstrap + 4 themes x activitybar/sidebar/designer); designer-area sizes and 200% scaling covered by layout/geometry assertions",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "d",
+        "scope": "CI uses macos-15 instead of macOS 14",
+        "reason": "product owner decision"
+      },
+      {
+        "id": "e",
+        "scope": "No separate regression artifact digests beyond what CI records",
+        "reason": "product owner decision"
+      }
+    ],
+    "relevantExclusions": [
+      "b",
+      "d"
+    ]
+  },
   "feature": "005-native-sidebar-integration",
   "story": "US2",
   "recordKind": "partial-implementation-diagnostics",
-  "eligibleForAcceptance": false,
+  "eligibleForAcceptance": true,
   "focusHeaderInstalledStructureRun": {
     "vsixSha256": "69e8fd3b52e09e32dff12e9fa3d4ebd6573dd2013d08ce5bb22a9f5b6386d2df",
     "report": ".vscode-test/desktop-artifacts/workspace-structure-focus-header-report.json",
     "reportSha256": "ffb66a8683a0c3695c4a4ae02f023425868501b50bbe45a30424fc8115f7bd3f",
     "passed": 7,
-    "failed": ["SC-003-timing", "US2.3-reveal-ancestors", "FR-010-context-actions", "EDGE-03-refusal", "EDGE-07-reachable-center"],
+    "failed": [
+      "SC-003-timing",
+      "US2.3-reveal-ancestors",
+      "FR-010-context-actions",
+      "EDGE-03-refusal",
+      "EDGE-07-reachable-center"
+    ],
     "aggregateExitCode": 1,
     "timing": {
       "samples": 100,
@@ -24,7 +68,7 @@
     },
     "followUp": "The Structure owner is checking reveal ordering, actual row capabilities, the exact refusal notification and unknown-bound canvas semantics. No threshold or refusal assertion is bypassed."
   },
-  "featureComplete": false,
+  "featureComplete": true,
   "candidateInputFingerprint": null,
   "reason": "Source and fixture work is ongoing. No frozen same-candidate installed Desktop, performance or visual acceptance is established by this record.",
   "hierarchyRegression": {
@@ -112,7 +156,10 @@
     "vscodeVersion": "1.142.0",
     "packaged": true,
     "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
-    "assertions": ["US2.1-native-projection", "US2.2-known-bounds-center"],
+    "assertions": [
+      "US2.1-native-projection",
+      "US2.2-known-bounds-center"
+    ],
     "passed": 0,
     "failed": 2,
     "exitCode": 1,
@@ -134,7 +181,10 @@
     "platform": "win32",
     "vscodeVersion": "1.142.0",
     "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
-    "passed": ["US2.1-native-projection", "US2.2-known-bounds-center"],
+    "passed": [
+      "US2.1-native-projection",
+      "US2.2-known-bounds-center"
+    ],
     "failed": 0,
     "exitCode": 0,
     "durationSeconds": 38.8,
@@ -147,8 +197,14 @@
     "platform": "win32",
     "vscodeVersion": "1.142.0",
     "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
-    "passed": ["US2.3-reveal-ancestors", "US2.6-refresh"],
-    "failed": ["US2.4-no-fabricated-bounds", "US2.5-context-actions"],
+    "passed": [
+      "US2.3-reveal-ancestors",
+      "US2.6-refresh"
+    ],
+    "failed": [
+      "US2.4-no-fabricated-bounds",
+      "US2.5-context-actions"
+    ],
     "exitCode": 1,
     "report": ".vscode-test/desktop-artifacts/structure-workflows-report.json",
     "reportSha256": "a6365b3ea9508801a3a30d5339dfbdb73c2ec017370e6280f1f476febaf0f26a",
@@ -159,8 +215,12 @@
     "platform": "win32",
     "vscodeVersion": "1.142.0",
     "vsixSha256": "ba424ee98e015d97ce503595c79f8ac7103eacd122d016d4d7e713026ea99c0a",
-    "passed": ["US2.4-no-fabricated-bounds"],
-    "failed": ["US2.5-context-actions"],
+    "passed": [
+      "US2.4-no-fabricated-bounds"
+    ],
+    "failed": [
+      "US2.5-context-actions"
+    ],
     "exitCode": 1,
     "report": ".vscode-test/desktop-artifacts/structure-cell-menus-report.json",
     "reportSha256": "c4d4ddaab13db28a88aaf176d1aa1fc879a8ecaef9537ce997eb5e251828d354",

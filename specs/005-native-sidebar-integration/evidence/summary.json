@@ -1,0 +1,143 @@
+{
+  "feature": "005-native-sidebar-integration",
+  "recordKind": "delivery-summary",
+  "date": "2026-11-02",
+  "candidate": {
+    "commit": "d894776f30099ee155bb8483a59b69fd55a59430",
+    "ciRunId": "41358862062",
+    "ciUrl": "https://github.com/Wald764/RDLC-Code/actions/runs/41358862062",
+    "pullRequest": 1,
+    "mergedAt": "2026-11-02T22:18:42Z"
+  },
+  "status": "validated-with-scope-exclusions",
+  "ciConclusion": "success",
+  "checks": {
+    "total": 36,
+    "passed": 36
+  },
+  "matrix": {
+    "source": "CI log of run 41358862062; each functional and packaged e2e run counted separately, probe separate; figures apply to both VS Code versions",
+    "ubuntu-24.04": {
+      "vscodeVersions": [
+        "1.142.0",
+        "stable"
+      ],
+      "coreProbe": {
+        "passed": 3,
+        "skipped": 0
+      },
+      "coreRuns": {
+        "passed": 31,
+        "skipped": 0
+      },
+      "authoringRuns": {
+        "passed": 29,
+        "skipped": 0
+      },
+      "contextRuns": {
+        "passed": 17,
+        "skipped": 0
+      }
+    },
+    "windows-2022": {
+      "vscodeVersions": [
+        "1.142.0",
+        "stable"
+      ],
+      "coreProbe": {
+        "passed": 2,
+        "skipped": 1,
+        "skippedCases": [
+          "security-observer"
+        ]
+      },
+      "coreRuns": {
+        "passed": 31,
+        "skipped": 0
+      },
+      "authoringRuns": {
+        "passed": 24,
+        "skipped": 5,
+        "skippedCases": [
+          "offline host-observer cases"
+        ]
+      },
+      "contextRuns": {
+        "passed": 17,
+        "skipped": 0
+      }
+    },
+    "macos-15": {
+      "vscodeVersions": [
+        "1.142.0",
+        "stable"
+      ],
+      "coreProbe": {
+        "passed": 2,
+        "skipped": 1,
+        "skippedCases": [
+          "security-observer"
+        ]
+      },
+      "coreRuns": {
+        "passed": 30,
+        "skipped": 1,
+        "skippedCases": [
+          "SC-003-timing"
+        ]
+      },
+      "authoringRuns": {
+        "passed": 24,
+        "skipped": 5,
+        "skippedCases": [
+          "offline host-observer cases"
+        ]
+      },
+      "contextRuns": {
+        "passed": 14,
+        "skipped": 3,
+        "skippedCases": [
+          "US5.1-switches",
+          "US5.3-two-views",
+          "SC-005-switch-races"
+        ]
+      }
+    },
+    "pinnedVisualReferences": {
+      "command": "pnpm test:visual",
+      "passed": 8,
+      "skipped": 0
+    }
+  },
+  "matrixNote": "Counts come from the CI log of run 41358862062. Skipped cases stay UNVALIDATED on those platforms, not passed.",
+  "outOfScope": [
+    {
+      "id": "a",
+      "scope": "Native host observation and host outbound blocking on Windows and macOS; security/offline/inertness assertions are required on Linux only",
+      "reason": "product owner decision"
+    },
+    {
+      "id": "b",
+      "scope": "macOS-only cases US5.1-switches, US5.3-two-views, SC-005-switch-races, SC-003-timing (known, undiagnosed macOS limitations; pass on Linux and Windows)",
+      "reason": "product owner decision"
+    },
+    {
+      "id": "c",
+      "scope": "Pixel references beyond pnpm test:visual (bootstrap + 4 themes x activitybar/sidebar/designer); designer-area sizes and 200% scaling covered by layout/geometry assertions",
+      "reason": "product owner decision"
+    },
+    {
+      "id": "d",
+      "scope": "CI uses macos-15 instead of macOS 14",
+      "reason": "product owner decision"
+    },
+    {
+      "id": "e",
+      "scope": "No separate regression artifact digests beyond what CI records",
+      "reason": "product owner decision"
+    }
+  ],
+  "nativeDrag": "unavailable-with-evidence",
+  "nativeDragEvidence": "evidence/native-drag.json",
+  "scopeDecision": "specs/005-native-sidebar-integration/automated-validation.md#delivery-scope-decision-2026-11-02"
+}
