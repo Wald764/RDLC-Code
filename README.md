@@ -9,7 +9,7 @@ release acceptance and publishing credentials are not yet verified.
 Build a local VSIX using [CONTRIBUTING.md](CONTRIBUTING.md), then install it:
 
 ```sh
-code --install-extension dist/rdlc-code-0.2.0.vsix
+code --install-extension dist/rdlc-code-0.3.0.vsix
 ```
 
 VS Code 1.142.0 or newer is required. Windows has local automated evidence;
