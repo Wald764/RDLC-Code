@@ -83,6 +83,10 @@ export class DocumentSession {
     new vscode.EventEmitter<AcceptedSelectionMessage>();
   private readonly outcomeEmitter =
     new vscode.EventEmitter<ActionOutcomeMessage>();
+  private readonly chooserEmitter = new vscode.EventEmitter<{
+    readonly requestId: string;
+    readonly open: boolean;
+  }>();
   private readonly reportedOutcomes = new Set<string>();
   private readonly nativeAuthority = new Map<
     string,
@@ -104,6 +108,11 @@ export class DocumentSession {
   readonly onSelection = this.selectionEmitter.event;
   /** Terminal native-action outcomes, including host-side invalidation. */
   readonly onActionOutcome = this.outcomeEmitter.event;
+  /**
+   * An authorized native image creation entering (`open`) and leaving the host file
+   * chooser, so the native action timeout never runs while the author is choosing.
+   */
+  readonly onImageChooser = this.chooserEmitter.event;
   get currentSelection(): AcceptedSelectionMessage | null {
     return this.selection ?? null;
   }
@@ -765,11 +774,15 @@ export class DocumentSession {
         const creation = {
           textbox: 'createTextbox',
           table: 'createTable',
+          image: 'createImage',
           dataset: 'createDataset',
         }[action.create];
         matches =
           message.payload.action === creation &&
-          message.targetId === this.evaluation.syntax.root?.id;
+          message.targetId === this.evaluation.syntax.root?.id &&
+          // A native insert never carries an existing embedded definition.
+          (message.payload.action !== 'createImage' ||
+            message.payload.definition === undefined);
       } else if (action.action === 'author') {
         matches =
           message.targetId === action.targetIds[0] &&
@@ -951,7 +964,16 @@ export class DocumentSession {
       await settle({ reason: 'DOCUMENT_READ_ONLY' });
       return;
     }
-    const imported = await runImport(this.imageSource, sha256);
+    const chooserId = message.nativeRequestId;
+    if (chooserId)
+      this.chooserEmitter.fire({ requestId: chooserId, open: true });
+    let imported: Awaited<ReturnType<typeof runImport>>;
+    try {
+      imported = await runImport(this.imageSource, sha256);
+    } finally {
+      if (chooserId)
+        this.chooserEmitter.fire({ requestId: chooserId, open: false });
+    }
     if (this.disposed || this.document.isClosed) return;
     if (imported.state === 'cancelled') {
       await settle({ reason: 'CANCELLED', cancelled: true });
@@ -1172,5 +1194,6 @@ export class DocumentSession {
     this.evaluationEmitter.dispose();
     this.selectionEmitter.dispose();
     this.outcomeEmitter.dispose();
+    this.chooserEmitter.dispose();
   }
 }

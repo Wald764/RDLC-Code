@@ -15,6 +15,7 @@ import {
 } from '@rdlc/report-model/protocol';
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 import type { EditIntent, TargetMapping } from '@rdlc/report-model/editing';
+import { imageChooserClosedReason } from '@rdlc/report-model/navigation';
 import type { DesignScene } from '@rdlc/report-model/scene';
 import type { Selection } from './selection';
 import {
@@ -76,6 +77,8 @@ export interface EditOutcome {
   readonly inserted?: readonly string[];
   /** The item an accepted creation produced, named by the host. */
   readonly created?: { readonly id: string; readonly name: string };
+  /** The author closed the host file chooser: not a refusal, nothing to explain. */
+  readonly cancelled?: true;
 }
 export type ClipboardRequest = Omit<
   ClipboardRequestMessage,
@@ -353,6 +356,9 @@ export class HostAdapter {
         diagnostics: message.diagnostics,
         ...(clipboard ? { inserted: message.inserted } : {}),
         ...(!clipboard && message.created ? { created: message.created } : {}),
+        ...(!clipboard && message.cancelled
+          ? { cancelled: true as const }
+          : {}),
       };
       if (pending && pending.requestId !== message.requestId) return;
       this.outcome.set(result);
@@ -635,6 +641,8 @@ export class HostAdapter {
     )
       return;
     if (outcome.accepted) this.settleNativeAction('accepted');
+    else if (outcome.cancelled)
+      this.settleNativeAction('cancelled', imageChooserClosedReason);
     else
       this.settleNativeAction(
         'refused',

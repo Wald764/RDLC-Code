@@ -1,4 +1,4 @@
-export type CreationKind = 'textbox' | 'table' | 'dataset';
+export type CreationKind = 'textbox' | 'table' | 'image' | 'dataset';
 export interface ComponentEntry {
   readonly kind: string;
   readonly label: string;
@@ -23,8 +23,8 @@ export const componentCatalog: readonly ComponentCategory[] = [
   entries: category.entries.map((label) => ({
     kind: label.toLowerCase(),
     label,
-    creatable: ['Textbox', 'Table', 'Dataset'].includes(label),
-    reason: ['Textbox', 'Table', 'Dataset'].includes(label)
+    creatable: ['Textbox', 'Table', 'Image', 'Dataset'].includes(label),
+    reason: ['Textbox', 'Table', 'Image', 'Dataset'].includes(label)
       ? null
       : `${label} authoring is unavailable. Existing content is preserved; use Code XML.`,
   })),

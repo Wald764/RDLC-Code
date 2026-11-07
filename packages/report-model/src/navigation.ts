@@ -243,7 +243,7 @@ export const nativeOperations = [
   'author',
 ] as const;
 export type NativeOperation = (typeof nativeOperations)[number];
-export const createKinds = ['textbox', 'table', 'dataset'] as const;
+export const createKinds = ['textbox', 'table', 'image', 'dataset'] as const;
 export type CreateKind = (typeof createKinds)[number];
 
 interface NativeActionBase {
@@ -279,6 +279,13 @@ export type NativeActionMessage = NativeActionBase &
         readonly payload: AuthoringIntent['payload'];
       }
   );
+
+/**
+ * The reason of a `cancelled` outcome for a closed host image chooser: a no-op, so
+ * the native views treat it as silent. Every other cancellation keeps its warning.
+ */
+export const imageChooserClosedReason =
+  'The image chooser was closed; the report is unchanged.';
 
 export const actionStatuses = ['accepted', 'cancelled', 'refused'] as const;
 export type ActionStatus = (typeof actionStatuses)[number];

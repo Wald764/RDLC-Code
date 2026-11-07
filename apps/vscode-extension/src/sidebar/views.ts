@@ -5,7 +5,10 @@ import {
   type ComponentEntry,
   type CreationKind,
 } from '@rdlc/report-model/components';
-import type { NavigationNode } from '@rdlc/report-model/navigation';
+import {
+  imageChooserClosedReason,
+  type NavigationNode,
+} from '@rdlc/report-model/navigation';
 import { SidebarHostContext, isDroppedOutcome } from './host-context.js';
 import type { ContextState } from './context.js';
 import {
@@ -72,7 +75,7 @@ export function stateMessage(
             ? 'Source-only report. Inspection and Code XML are available.'
             : '';
   return kind === 'components'
-    ? `${text} Native drag is unavailable. Activate Textbox, Table or Dataset to insert; use the compact designer fallback for drag.`.trim()
+    ? `${text} Native drag is unavailable. Activate Textbox, Table, Image or Dataset to insert; use the compact designer fallback for drag.`.trim()
     : text;
 }
 
@@ -273,6 +276,13 @@ export class SidebarViews implements vscode.Disposable {
         [],
         { beforeDispatch: this.stillCurrent(row) },
       );
+      // Only a closed image chooser is a silent no-op; every other cancel still warns.
+      if (
+        outcome.status === 'cancelled' &&
+        row.component.kind === 'image' &&
+        outcome.reason === imageChooserClosedReason
+      )
+        return;
       if (outcome.status !== 'accepted')
         throw new Error(outcome.reason ?? 'Insertion was cancelled.');
     } else if (row.node) {

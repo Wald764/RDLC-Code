@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GESTURE_FOCUS_WINDOW_MS, HostAdapter } from './host-adapter';
 import { emptySelection, selectItem } from './selection';
 import type { ActionOutcomeMessage } from '@rdlc/report-model/protocol';
+import { imageChooserClosedReason } from '@rdlc/report-model/navigation';
 import type { DesignSceneItem } from '@rdlc/report-model/scene';
 
 function snapshot(version: number) {
@@ -506,6 +507,107 @@ describe('view binding and correlated native edits', () => {
     });
     expect(host.nativeAction()).toBeNull();
     expect(host.settleNativeAction('accepted')).toBe(false);
+  });
+  it('settles a cancelled file chooser as a cancelled native action, not a refusal', () => {
+    const host = setup();
+    host.ingest({
+      protocol: 2,
+      kind: 'nativeAction',
+      requestId: 'native-img',
+      documentLifetimeId: 'life-1',
+      uri: 'file:///a.rdlc',
+      baseVersion: 2,
+      viewId: 'view-1',
+      contextGeneration: 0,
+      capability: 'create',
+      targetIds: [],
+      action: 'create',
+      create: 'image',
+    });
+    host.sendEdit(
+      {
+        requestId: 'edit-img',
+        baseVersion: 2,
+        targetId: '2:1',
+        operation: 'author',
+        payload: { action: 'createImage', placement: 'default' },
+      },
+      'native-img',
+    );
+    host.ingest({
+      protocol: 2,
+      kind: 'editResult',
+      requestId: 'edit-img',
+      baseVersion: 2,
+      version: 2,
+      accepted: false,
+      changed: false,
+      cancelled: true,
+      mappings: [],
+      reason: 'CANCELLED',
+      diagnostics: [],
+    });
+    expect(host.outcome()).toMatchObject({ cancelled: true, accepted: false });
+    expect(host.notice()).toBe('');
+    expect(host.sent().at(-1)).toMatchObject({
+      kind: 'actionOutcome',
+      requestId: 'native-img',
+      status: 'cancelled',
+      resultVersion: 2,
+      reason: imageChooserClosedReason,
+    });
+    expect(host.nativeAction()).toBeNull();
+  });
+
+  it('only a closed chooser carries the silent reason; other cancels and refusals keep theirs', () => {
+    const host = setup();
+    const action = {
+      protocol: 2,
+      kind: 'nativeAction',
+      requestId: 'native-draft',
+      documentLifetimeId: 'life-1',
+      uri: 'file:///a.rdlc',
+      baseVersion: 2,
+      viewId: 'view-1',
+      contextGeneration: 0,
+      capability: 'create',
+      targetIds: [],
+      action: 'create',
+      create: 'textbox',
+    };
+    host.ingest(action);
+    expect(host.settleNativeAction('cancelled', 'Draft kept')).toBe(true);
+    expect(host.sent().at(-1)).toMatchObject({
+      status: 'cancelled',
+      reason: 'Draft kept',
+    });
+    host.ingest({ ...action, requestId: 'native-refused' });
+    host.sendEdit(
+      {
+        requestId: 'edit-refused',
+        baseVersion: 2,
+        targetId: '2:1',
+        operation: 'author',
+        payload: { action: 'createImage', placement: 'default' },
+      },
+      'native-refused',
+    );
+    host.ingest({
+      protocol: 2,
+      kind: 'editResult',
+      requestId: 'edit-refused',
+      baseVersion: 2,
+      version: 2,
+      accepted: false,
+      changed: false,
+      mappings: [],
+      reason: 'IMAGE_FORMAT_UNSUPPORTED',
+      diagnostics: [],
+    });
+    const last = host.sent().at(-1) as { status: string; reason: string };
+    expect(last.status).toBe('refused');
+    expect(last.reason).toBe('IMAGE_FORMAT_UNSUPPORTED');
+    expect(last.reason).not.toBe(imageChooserClosedReason);
   });
   const authorAction = {
     protocol: 2,

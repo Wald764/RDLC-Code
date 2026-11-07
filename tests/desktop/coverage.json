@@ -257,9 +257,9 @@
       "requires": ["FR-015"],
       "areas": ["AT-05"],
       "fixtures": ["local-blank"],
-      "oracle": "Components shows exactly eleven unique canonical kinds in Report items/Containers/Data with coherent icons and concise unavailable reasons; only Textbox, Table and Dataset are creatable.",
+      "oracle": "Components shows exactly eleven unique canonical kinds in Report items/Containers/Data with coherent icons and concise unavailable reasons; only Textbox, Table, Image and Dataset are creatable.",
       "tests": [
-        "packages/report-model/src/components.test.ts::one inert catalog has exactly eleven unique kinds and three creators",
+        "packages/report-model/src/components.test.ts::one inert catalog has exactly eleven unique kinds and four creators",
         "apps/designer/src/app/editor/components-catalog.component.spec.ts::has eleven unique honest cards with category-preserving case-insensitive search and recovery"
       ]
     },
@@ -657,7 +657,7 @@
       "fixtures": ["local-blank"],
       "oracle": "The catalog exposes exactly eleven canonical unique kinds in Report items/Containers/Data with compact icon-label rows, case-insensitive filtering, truthful unavailable matches, Clear Filter on no results and complete action capability facts.",
       "tests": [
-        "packages/report-model/src/components.test.ts::one inert catalog has exactly eleven unique kinds and three creators"
+        "packages/report-model/src/components.test.ts::one inert catalog has exactly eleven unique kinds and four creators"
       ]
     },
     {
@@ -1081,7 +1081,7 @@
       "requires": ["FR-015", "FR-016", "FR-024"],
       "areas": ["AT-05", "AT-06"],
       "fixtures": ["local-blank", "unbound-table-two-datasets"],
-      "oracle": "Textbox, unbound Table and Dataset are inserted exactly once per activation without a form; each accepted insertion is one Undo/Redo; every unsupported/refused/cancelled insertion changes zero report text.",
+      "oracle": "Textbox, unbound Table, Image and Dataset are inserted exactly once per activation without a form; each accepted insertion is one Undo/Redo; every unsupported/refused/cancelled insertion changes zero report text.",
       "tests": ["tests/desktop/components.spec.ts::SC-004-insert-history"]
     },
     {

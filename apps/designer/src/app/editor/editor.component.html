@@ -36,7 +36,7 @@
       <p>{{ gestureNotice() }}</p>
     }
     @if (host.outcome(); as outcome) {
-      @if (!outcome.accepted) {
+      @if (!outcome.accepted && !outcome.cancelled) {
         <p
           id="report-refusal"
           class="outcome"
@@ -844,7 +844,7 @@
               [expanded]="view().inspectorExpanded"
               (expand)="expandSection($event.section, $event.open)"
               [refusal]="
-                host.outcome()?.accepted === false
+                host.outcome()?.accepted === false && !host.outcome()?.cancelled
                   ? (host.outcome()?.reason ?? '')
                   : ''
               "

@@ -982,9 +982,9 @@ async function journeyDataset(env: JourneyContext): Promise<void> {
 /** Refused activation must write nothing: the guard, not a skip. */
 async function journeyUnavailableGuard(env: JourneyContext): Promise<void> {
   const { driver } = env;
-  await filterComponents(driver, 'Image');
+  await filterComponents(driver, 'Line');
   const row = driver.page.getByRole('treeitem', {
-    name: /^Image, Unavailable\./,
+    name: /^Line, Unavailable\./,
   });
   await expect(row).toBeVisible();
   await row.click();

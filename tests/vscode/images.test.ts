@@ -164,6 +164,7 @@ export async function run(): Promise<void> {
   await gating();
   await staleSnapshot();
   await disposedDuringChooser();
+  await nativeCreateAuthorization();
 }
 
 async function insertPngThenJpeg(): Promise<void> {
@@ -507,5 +508,135 @@ async function staleSnapshot(): Promise<void> {
     assert.equal(result.created!.id, project(document).images[0]!.node.id);
   } finally {
     designer.dispose();
+  }
+}
+
+/**
+ * A native `create` authorizes exactly its own creation: `image` only a `createImage`
+ * without an existing definition, and no other kind may reuse a `createImage` payload.
+ */
+async function nativeCreateAuthorization(): Promise<void> {
+  const refusal = 'The native action no longer authorizes this operation.';
+  const cases: {
+    label: string;
+    create: 'image' | 'textbox';
+    payload: Record<string, string>;
+    accepted: boolean;
+  }[] = [
+    {
+      label: 'create:image with a createImage payload',
+      create: 'image',
+      payload: { action: 'createImage', placement: 'default' },
+      accepted: true,
+    },
+    {
+      label: 'create:image with a createTextbox payload',
+      create: 'image',
+      payload: { action: 'createTextbox', left: '20pt', top: '20pt' },
+      accepted: false,
+    },
+    {
+      label: 'create:textbox with a createImage payload',
+      create: 'textbox',
+      payload: { action: 'createImage', placement: 'default' },
+      accepted: false,
+    },
+    {
+      label: 'create:image with an existing definition',
+      create: 'image',
+      payload: {
+        action: 'createImage',
+        placement: 'default',
+        definition: 'logo',
+      },
+      accepted: false,
+    },
+  ];
+  for (const [index, entry] of cases.entries()) {
+    const document = await open();
+    const original = document.getText();
+    const source = new FakeImageSource();
+    const session = new DocumentSession(
+      document,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      source,
+    );
+    const messages: HostMessage[] = [];
+    const chooser: boolean[] = [];
+    const subscriptions = [
+      session.onMessage((message) => messages.push(message)),
+      session.onImageChooser((event) => chooser.push(event.open)),
+    ];
+    try {
+      assert.ok(
+        session.setViewIdentity({
+          viewId: 'view-native',
+          documentLifetimeId: 'life-native',
+          contextGeneration: 0,
+        }),
+      );
+      session.receive({ protocol: 2, kind: 'ready' });
+      await until(() => session.isReady, entry.label + ': handshake');
+      const nativeRequestId = `native-image-${index}`;
+      const delivery = await session.dispatchNativeAction(
+        {
+          protocol: 2,
+          kind: 'nativeAction',
+          requestId: nativeRequestId,
+          documentLifetimeId: 'life-native',
+          uri: document.uri.toString(),
+          baseVersion: document.version,
+          viewId: 'view-native',
+          contextGeneration: 0,
+          capability: 'create',
+          action: 'create',
+          create: entry.create,
+          targetIds: [],
+        },
+        () => true,
+        async () => true,
+      );
+      assert.equal(delivery.delivered, true, entry.label);
+      if (entry.accepted)
+        source.enqueue({ fileName: 'logo.png', bytes: picture('logo.png') });
+      const requestId = `edit-${nativeRequestId}`;
+      session.receive({
+        protocol: 2,
+        kind: 'edit',
+        requestId,
+        nativeRequestId,
+        baseVersion: document.version,
+        targetId: session.evaluation.syntax.root!.id,
+        operation: 'author',
+        payload: entry.payload,
+      } as never);
+      await until(
+        () =>
+          messages.some(
+            (m) => m.kind === 'editResult' && m.requestId === requestId,
+          ),
+        entry.label + ': settles',
+      );
+      const result = messages.find(
+        (m): m is Result =>
+          m.kind === 'editResult' && m.requestId === requestId,
+      )!;
+      assert.equal(result.accepted, entry.accepted, entry.label);
+      if (entry.accepted) {
+        assert.equal(result.reason, 'APPLIED', entry.label);
+        assert.deepEqual(chooser, [true, false], 'chooser enter and leave');
+        assert.equal(source.count('pick'), 1);
+      } else {
+        assert.equal(result.reason, refusal, entry.label);
+        assert.deepEqual(chooser, [], entry.label + ': chooser never opens');
+        assert.equal(document.getText(), original, entry.label);
+      }
+    } finally {
+      for (const subscription of subscriptions) subscription.dispose();
+      session.dispose();
+    }
   }
 }

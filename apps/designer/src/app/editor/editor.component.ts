@@ -93,9 +93,20 @@ const arrows: Readonly<Record<string, readonly [number, number]>> = {
   ArrowUp: [0, -1],
   ArrowDown: [0, 1],
 };
-/** Creation footprints in points: Textbox 1in × 0.25in, Table two 1in columns × 0.5in. */
+/**
+ * Creation footprints in points: Textbox 1in × 0.25in, Table two 1in columns × 0.5in.
+ * Image is a nominal 1in square for snapping and the drop preview; the host sizes the
+ * item from the chosen picture.
+ */
 const creationSizes: Readonly<Record<CreationKind, readonly [number, number]>> =
-  { textbox: [72, 18], table: [144, 36], dataset: [0, 0] };
+  { textbox: [72, 18], table: [144, 36], image: [72, 72], dataset: [0, 0] };
+/** The authoring action each creation kind sends. */
+const creationActions = {
+  textbox: 'createTextbox',
+  table: 'createTable',
+  image: 'createImage',
+  dataset: 'createDataset',
+} as const satisfies Readonly<Record<CreationKind, string>>;
 export const dragTypePrefix = 'application/x-rdlc-';
 const ptBounds = (b: Bounds): Bounds => ({
   left: pixelsToPoints(b.left),
@@ -2730,11 +2741,19 @@ export class EditorComponent {
         targetId: authoring.id,
         payload: !spot
           ? { action: 'createDataset' }
-          : {
-              action: kind === 'table' ? 'createTable' : 'createTextbox',
-              left: size(spot.left),
-              top: size(spot.top),
-            },
+          : kind === 'image'
+            ? {
+                action: 'createImage',
+                // A drop is explicit; a click sends the textbox default spot.
+                placement: at ? 'drop' : 'default',
+                left: size(spot.left),
+                top: size(spot.top),
+              }
+            : {
+                action: kind === 'table' ? 'createTable' : 'createTextbox',
+                left: size(spot.left),
+                top: size(spot.top),
+              },
       },
       nativeRequestId,
     );
@@ -2805,7 +2824,10 @@ export class EditorComponent {
       t.startsWith(dragTypePrefix),
     );
     const kind = type?.slice(dragTypePrefix.length);
-    return kind === 'textbox' || kind === 'table' || kind === 'dataset'
+    return kind === 'textbox' ||
+      kind === 'table' ||
+      kind === 'image' ||
+      kind === 'dataset'
       ? kind
       : null;
   }
@@ -3043,22 +3065,15 @@ export class EditorComponent {
       },
       nativeRequestId,
     );
-    if (
-      accepted &&
-      ['createTextbox', 'createTable', 'createDataset'].includes(
-        request.payload.action,
-      )
-    ) {
+    const created = (Object.keys(creationActions) as CreationKind[]).find(
+      (kind) => creationActions[kind] === request.payload.action,
+    );
+    if (accepted && created) {
       this.creating = {
         requestId,
         baseVersion: snapshot.version,
         focusName: this.keyboardCreation,
-        kind:
-          request.payload.action === 'createTextbox'
-            ? 'textbox'
-            : request.payload.action === 'createTable'
-              ? 'table'
-              : 'dataset',
+        kind: created,
       };
     }
     this.keyboardCreation = false;

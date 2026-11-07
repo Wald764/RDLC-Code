@@ -118,7 +118,10 @@ export class SidebarHostContext implements vscode.Disposable {
   >();
   private readonly subscriptions: vscode.Disposable[] = [];
 
-  constructor() {
+  constructor(
+    /** How long a delivered native action may wait for the designer to settle it. */
+    private readonly settleTimeoutMs = 30_000,
+  ) {
     this.subscriptions.push(
       vscode.window.onDidChangeActiveTextEditor(() => this.refreshFocus()),
       vscode.window.tabGroups.onDidChangeTabs(() => this.refreshFocus()),
@@ -351,6 +354,7 @@ export class SidebarHostContext implements vscode.Disposable {
   ): Promise<ActionOutcomeMessage> {
     let capture = initial;
     let outcomeSubscription: vscode.Disposable | undefined;
+    let chooserSubscription: vscode.Disposable | undefined;
     let termination: (() => void) | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let session: DocumentSession | undefined;
@@ -404,11 +408,24 @@ export class SidebarHostContext implements vscode.Disposable {
           if (event.capture.requestId === capture.requestId)
             reject(new Error(`Report action ended: ${event.reason}.`));
         });
-        timer = setTimeout(
-          () =>
-            reject(new Error('The report designer did not settle the action.')),
-          30_000,
-        );
+        const arm = () => {
+          clearTimeout(timer);
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error('The report designer did not settle the action.'),
+              ),
+            this.settleTimeoutMs,
+          );
+        };
+        arm();
+        // The settle timer never runs while the host file chooser is open: the
+        // author may take as long as they need to pick a picture.
+        chooserSubscription = boundView.session.onImageChooser((event) => {
+          if (event.requestId !== capture.requestId) return;
+          if (event.open) clearTimeout(timer);
+          else arm();
+        });
       });
       // Attach a rejection handler before delivery can yield to disposal/timeout.
       void result.catch(() => {});
@@ -450,6 +467,7 @@ export class SidebarHostContext implements vscode.Disposable {
     } finally {
       if (timer) clearTimeout(timer);
       outcomeSubscription?.dispose();
+      chooserSubscription?.dispose();
       termination?.();
       this.registry.settle(capture);
       this.actions.delete(capture.requestId);

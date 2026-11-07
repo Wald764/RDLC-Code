@@ -320,28 +320,28 @@ placeholder), and nothing can be authored yet.
 
 ### Batch B5: Toolbox insertion
 
-- [ ] T037 [P] [US1] Update the tests first.
+- [X] T037 [P] [US1] Update the tests first.
   - In `packages/report-model/src/components.test.ts:24`, Image becomes `creatable === true`
     with no reason.
   - In `apps/designer/src/app/editor/components-catalog.component.spec.ts`, Image is
     draggable and its click emits `createImage`.
-- [ ] T038 [US1] In `packages/report-model/src/components.ts`, add `'image'` to
+- [X] T038 [US1] In `packages/report-model/src/components.ts`, add `'image'` to
   `CreationKind` and mark Image creatable (lines 1 and 26-29). Remove the "unavailable"
   reason.
-- [ ] T039 [US1] In `packages/report-model/src/navigation.ts`, add `'image'` to `CreateKind`
+- [X] T039 [US1] In `packages/report-model/src/navigation.ts`, add `'image'` to `CreateKind`
   and accept it in `validateNativeAction`.
-- [ ] T040 [US1] Route Image insertion in the designer, in
+- [X] T040 [US1] Route Image insertion in the designer, in
   `apps/designer/src/app/editor/components-catalog.component.ts` and `editor.component.ts`,
   reusing the existing textbox creation path:
   - a click sends `createImage {placement:'default'}`;
   - a drop onto the body sends `createImage {placement:'drop', left, top}`.
-- [ ] T041 [US1] In `apps/vscode-extension/src/sidebar/views.ts` (around lines 190-200), map
+- [X] T041 [US1] In `apps/vscode-extension/src/sidebar/views.ts` (around lines 190-200), map
   the native Components activation of Image to `createImage {placement:'default'}`.
-- [ ] T042 [US1] Update `tests/desktop/components.spec.ts`.
+- [X] T042 [US1] Update `tests/desktop/components.spec.ts`.
   - Remove Image from the unavailable-kind lists and from `US4.5-unavailable-kinds`
     (around lines 55, 66 and 1372).
   - Keep every other unavailable kind unchanged (SC-008).
-- [ ] T043 [US1] **Gate B5**. Run `pnpm qa:integration`. Then run the review. Then commit
+- [X] T043 [US1] **Gate B5**. Run `pnpm qa:integration`. Then run the review. Then commit
   `:sparkles: feat(designer): enable Image insertion from the Components toolbox`.
 
 **Checkpoint**: MVP. Images can be inserted, displayed and undone.

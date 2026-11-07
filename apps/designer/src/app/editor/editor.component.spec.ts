@@ -1534,6 +1534,147 @@ describe('editor surface', () => {
     expect(fixture.componentInstance.selected()).toBeNull();
     expect(host.sent()).toHaveLength(1);
   });
+  it('sends an Image click as a default placement at the textbox default spot', async () => {
+    const { fixture, host, settle } = mount();
+    const blank = directSnapshot();
+    host.ingest({ ...blank, scene: { ...blank.scene, items: [] } });
+    await settle();
+    const component = fixture.componentInstance;
+    component.create('image');
+    const first = host.sent().at(-1) as {
+      requestId: string;
+      targetId: string;
+      operation: string;
+    };
+    expect(first).toMatchObject({
+      operation: 'author',
+      targetId: '2:0',
+      payload: {
+        action: 'createImage',
+        placement: 'default',
+        left: '20pt',
+        top: '20pt',
+      },
+    });
+    host.ingest({
+      protocol: 2,
+      kind: 'editResult',
+      requestId: first.requestId,
+      baseVersion: 2,
+      version: 2,
+      changed: false,
+      accepted: false,
+      mappings: [],
+      reason: 'Refused',
+      diagnostics: [],
+    });
+    // The textbox occupied check applies: a taken corner moves the spot one grid step.
+    host.ingest({
+      ...blank,
+      version: 3,
+      navigation: { ...blank.navigation, version: 3 },
+      scene: {
+        ...blank.scene,
+        version: 3,
+        items: [
+          {
+            ...blank.scene.items[0]!,
+            id: '3:3',
+            bounds: { left: 26.6667, top: 26.6667, width: 96, height: 24 },
+          },
+        ],
+      },
+    });
+    await settle();
+    component.create('image');
+    expect(host.sent().at(-1)).toMatchObject({
+      payload: {
+        action: 'createImage',
+        placement: 'default',
+        left: '30pt',
+        top: '30pt',
+      },
+    });
+  });
+  it('selects the host-named image after an accepted createImage like a textbox', async () => {
+    const { fixture, host, settle } = mount();
+    const blank = directSnapshot();
+    host.ingest({ ...blank, scene: { ...blank.scene, items: [] } });
+    await settle();
+    fixture.componentInstance.create('image');
+    const request = host.sent().at(-1) as { requestId: string };
+    expect(fixture.componentInstance.selected()).toBeNull();
+    host.ingest({
+      protocol: 2,
+      kind: 'editResult',
+      requestId: request.requestId,
+      baseVersion: 2,
+      version: 3,
+      changed: true,
+      accepted: true,
+      mappings: [],
+      reason: 'APPLIED',
+      diagnostics: [],
+      created: { id: '3:4', name: 'Image1' },
+    });
+    await settle();
+    host.ingest(directSnapshot(3, '3:4'));
+    await settle();
+    expect(fixture.componentInstance.selected()?.id).toBe('3:4');
+    expect(fixture.componentInstance.gestureNotice()).toBe('Created Image1.');
+    expect(host.sent()).toHaveLength(1);
+  });
+  it('treats a cancelled file chooser as no refusal, no error and a clean state', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest(directSnapshot());
+    await settle();
+    fixture.componentInstance.create('image');
+    const request = host.sent().at(-1) as { requestId: string };
+    host.ingest({
+      protocol: 2,
+      kind: 'editResult',
+      requestId: request.requestId,
+      baseVersion: 2,
+      version: 2,
+      changed: false,
+      accepted: false,
+      cancelled: true,
+      mappings: [],
+      reason: 'CANCELLED',
+      diagnostics: [],
+    });
+    await settle();
+    expect(host.pending()).toBeNull();
+    expect(element.querySelector('#report-refusal')).toBeNull();
+    expect(element.textContent).not.toContain('Not applied');
+    expect(element.textContent).not.toContain('CANCELLED');
+    expect(fixture.componentInstance.gestureNotice()).toBe('');
+    expect(fixture.componentInstance.selected()).toBeNull();
+    // The author can try again: nothing is retained or blocked.
+    fixture.componentInstance.create('image');
+    expect(host.sent()).toHaveLength(2);
+  });
+  it('keeps showing a real refusal of createImage', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest(directSnapshot());
+    await settle();
+    fixture.componentInstance.create('image');
+    const request = host.sent().at(-1) as { requestId: string };
+    host.ingest({
+      protocol: 2,
+      kind: 'editResult',
+      requestId: request.requestId,
+      baseVersion: 2,
+      version: 2,
+      changed: false,
+      accepted: false,
+      mappings: [],
+      reason: 'IMAGE_UNSUPPORTED_FORMAT',
+      diagnostics: [],
+    });
+    await settle();
+    expect(element.querySelector('#report-refusal')).not.toBeNull();
+  });
   it('keeps local input history native and guards Code XML behind Apply/Discard/Cancel', async () => {
     const { fixture, host, element, settle } = mount();
     host.ingest(directSnapshot());
@@ -3399,6 +3540,36 @@ describe('drag-and-drop creation', () => {
       operation: 'author',
       payload: { action: 'createTextbox', left: '75pt', top: '37.5pt' },
     });
+  });
+
+  it('sends an Image drop as a drop placement at the unsnapped drop point', async () => {
+    const m = await mounted();
+    const over = drag('image', 100, 50, true);
+    m.component.canvasDragOver(over.event);
+    expect(over.prevented()).toBe(true);
+    expect(over.raw.dataTransfer.dropEffect).toBe('copy');
+    expect(m.component.dropPreview()?.valid).toBe(true);
+    m.component.canvasDrop(drag('image', 100, 50, true).event);
+    expect(m.component.dropPreview()).toBeNull();
+    expect(m.edits()).toHaveLength(1);
+    expect(m.edits()[0]).toMatchObject({
+      operation: 'author',
+      payload: {
+        action: 'createImage',
+        placement: 'drop',
+        left: '75pt',
+        top: '37.5pt',
+      },
+    });
+  });
+
+  it('refuses an Image drop outside the body without sending', async () => {
+    const m = await mounted();
+    const outside = drag('image', 2000, 50, true);
+    m.component.canvasDragOver(outside.event);
+    expect(outside.raw.dataTransfer.dropEffect).toBe('none');
+    m.component.canvasDrop(drag('image', 2000, 50, true).event);
+    expect(m.edits()).toHaveLength(0);
   });
 
   it('converts the drop point through zoom and scroll', async () => {

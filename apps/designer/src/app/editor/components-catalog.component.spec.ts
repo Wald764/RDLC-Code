@@ -14,11 +14,17 @@ describe('component catalog', () => {
     ).toBe(11);
     const emitted: string[] = [];
     fixture.componentInstance.create.subscribe((v) => emitted.push(v));
-    const image = root.querySelector<HTMLButtonElement>('[data-card="Image"]')!;
-    expect(image.getAttribute('aria-disabled')).toBe('true');
-    expect(image.getAttribute('aria-describedby')).toBeTruthy();
-    image.click();
+    const chart = root.querySelector<HTMLButtonElement>('[data-card="Chart"]')!;
+    expect(chart.getAttribute('aria-disabled')).toBe('true');
+    expect(chart.getAttribute('aria-describedby')).toBeTruthy();
+    chart.click();
     expect(emitted).toEqual([]);
+    const image = root.querySelector<HTMLButtonElement>('[data-card="Image"]')!;
+    expect(image.getAttribute('aria-disabled')).toBe('false');
+    expect(image.getAttribute('aria-describedby')).toBeNull();
+    image.click();
+    expect(emitted).toEqual(['image']);
+    emitted.length = 0;
     fixture.componentInstance.query.set('tExTbOx');
     fixture.detectChanges();
     expect(root.querySelectorAll('[data-card]').length).toBe(1);
@@ -38,9 +44,9 @@ describe('component catalog', () => {
     const root = fixture.nativeElement as HTMLElement;
     const card = (name: string) =>
       root.querySelector<HTMLButtonElement>(`[data-card="${name}"]`)!;
-    for (const name of ['Textbox', 'Table', 'Dataset'])
+    for (const name of ['Textbox', 'Table', 'Image', 'Dataset'])
       expect(card(name).draggable).toBe(true);
-    for (const name of ['Image', 'Chart', 'Parameter'])
+    for (const name of ['Chart', 'Parameter'])
       expect(card(name).draggable).toBe(false);
     const data = new Map<string, string>();
     const drag = (name: string) => {
@@ -58,7 +64,12 @@ describe('component catalog', () => {
     const textbox = drag('Textbox');
     expect([...data]).toEqual([['application/x-rdlc-textbox', 'textbox']]);
     expect(textbox.event.dataTransfer.effectAllowed).toBe('copy');
-    expect(drag('Image').prevented).toBe(true);
-    expect(data.size).toBe(1);
+    data.clear();
+    const image = drag('Image');
+    expect([...data]).toEqual([['application/x-rdlc-image', 'image']]);
+    expect(image.prevented).toBe(false);
+    data.clear();
+    expect(drag('Chart').prevented).toBe(true);
+    expect(data.size).toBe(0);
   });
 });

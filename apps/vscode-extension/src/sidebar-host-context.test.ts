@@ -162,6 +162,7 @@ function session() {
     currentSelection: null,
     onEvaluation: () => new FakeDisposable(() => {}),
     onSelection: () => new FakeDisposable(() => {}),
+    onImageChooser: () => new FakeDisposable(() => {}),
     setViewIdentity: () => {},
   };
 }
@@ -752,6 +753,113 @@ test('an action stale after its wait is dropped without reaching the designer', 
     await settleNext();
     assert.equal((await next).status, 'accepted');
     assert.equal(log.overlaps, 0);
+  } finally {
+    host.dispose();
+  }
+});
+
+/** A designer that settles only when told to, with a scriptable host file chooser. */
+function chooserSetup(settleTimeoutMs: number) {
+  document.version = 1;
+  fakeVscode.workspace.textDocuments = [document];
+  document.getText = () => editableReport;
+  const outcomes = new Set<(outcome: unknown) => void>();
+  const choosers = new Set<(event: unknown) => void>();
+  let requestId = '';
+  const designer = {
+    ...session(),
+    isReady: true,
+    onActionOutcome: (listener: (outcome: unknown) => void) => {
+      outcomes.add(listener);
+      return new FakeDisposable(() => outcomes.delete(listener));
+    },
+    onImageChooser: (listener: (event: unknown) => void) => {
+      choosers.add(listener);
+      return new FakeDisposable(() => choosers.delete(listener));
+    },
+    cancelNativeAction: () => {},
+    dispatchNativeAction: async (message: { requestId: string }) => {
+      requestId = message.requestId;
+      return { delivered: true };
+    },
+  };
+  const host: HostContext = new SidebarHostContext(settleTimeoutMs);
+  host.register(
+    document as never,
+    panel(1) as never,
+    designer as unknown as DocumentSession,
+  );
+  group.viewColumn = 1;
+  group.activeTab = { input: new TabInputCustom(uri, 'rdlcCode.designer') };
+  host.refreshFocus();
+  const wait = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+  return {
+    host,
+    wait,
+    chooser: (open: boolean, id = requestId) => {
+      for (const listener of choosers) listener({ requestId: id, open });
+    },
+    settle: (status: 'accepted' | 'cancelled', reason?: string) => {
+      for (const listener of outcomes)
+        listener({ requestId, status, ...(reason ? { reason } : {}) });
+    },
+    delivered: () => requestId !== '',
+  };
+}
+
+test('a native action the designer never settles times out', async () => {
+  const { host } = chooserSetup(40);
+  try {
+    await assert.rejects(
+      host.dispatch({ action: 'create', create: 'textbox' }),
+      /did not settle the action/,
+    );
+  } finally {
+    host.dispose();
+  }
+});
+
+test('the settle timeout does not run while the image chooser is open', async () => {
+  const { host, wait, chooser, settle, delivered } = chooserSetup(40);
+  try {
+    const create = host.dispatch({ action: 'create', create: 'image' });
+    while (!delivered()) await wait(5);
+    chooser(true);
+    // Several timeouts elapse inside the chooser without ending the action.
+    await wait(200);
+    chooser(false);
+    await wait(10);
+    settle('accepted');
+    assert.equal((await create).status, 'accepted');
+  } finally {
+    host.dispose();
+  }
+});
+
+test('the settle timeout restarts once the image chooser closes', async () => {
+  const { host, wait, chooser, delivered } = chooserSetup(40);
+  try {
+    const create = host.dispatch({ action: 'create', create: 'image' });
+    const timedOut = assert.rejects(create, /did not settle the action/);
+    while (!delivered()) await wait(5);
+    chooser(true);
+    await wait(100);
+    chooser(false);
+    await timedOut;
+  } finally {
+    host.dispose();
+  }
+});
+
+test("another action's chooser events never pause this action's timeout", async () => {
+  const { host, wait, chooser, delivered } = chooserSetup(40);
+  try {
+    const create = host.dispatch({ action: 'create', create: 'image' });
+    const timedOut = assert.rejects(create, /did not settle the action/);
+    while (!delivered()) await wait(5);
+    chooser(true, 'native-someone-else');
+    await timedOut;
   } finally {
     host.dispose();
   }
