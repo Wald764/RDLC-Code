@@ -6,11 +6,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  acceptedFailures,
+  isCriticalEvidence,
+  nonCriticalEvidence,
+  parseReadiness,
+  type Readiness,
+  requiredEvidence,
+  resolveRelease,
   stableVersion,
   validateEvidence,
-  resolveRelease,
-  requiredEvidence,
+  validateQaExceptions,
 } from '../../scripts/validate-release.js';
+import { exceptionAllowed } from '../desktop/qa-classification.js';
 
 test('only canonical stable release tags and equal root/extension versions are accepted', () => {
   assert.equal(stableVersion('v1.2.3', '1.2.3', '1.2.3'), '1.2.3');
@@ -261,4 +268,229 @@ test('mandatory evidence is complete, candidate-bound, tool-bound and allows onl
       { ...context, openvsx: 'oidc' },
     ),
   );
+});
+
+const issue = 'https://github.com/Wald764/RDLC-Code/issues/12';
+
+function tiered() {
+  const candidate = 'a'.repeat(40);
+  const path = 'docs/validation/check.md';
+  const tools = {
+    node: '24.22.0',
+    pnpm: '11.28.2',
+    typescript: '6.0.3',
+    angular: '22.2.3',
+    vsce: '3.7.1',
+  };
+  const evidence = Object.fromEntries(
+    requiredEvidence.map((id) => [id, { status: 'passed', path, candidate }]),
+  ) as Readiness['evidence'];
+  const record: Readiness = {
+    candidate,
+    version: '1.2.3',
+    tools,
+    openvsx: 'not-configured',
+    permittedEvidenceChanges: [path],
+    evidence,
+  };
+  const context = {
+    version: '1.2.3',
+    candidate,
+    tools,
+    openvsx: 'not-configured',
+    changedPaths: [] as string[],
+    read: () => Buffer.from('Evidence'),
+  };
+  return { record, context, path, candidate };
+}
+
+test('evidence tiers: only cross-platform, matrix and budget evidence may be an accepted failure', () => {
+  assert.deepEqual([...nonCriticalEvidence].sort(), ['cross-os', 'v2', 'v7']);
+  for (const id of [
+    'preservation',
+    'compatibility',
+    'lifecycle',
+    'isolation',
+    'keyboard',
+    'licenses',
+    'github-auth',
+    'marketplace-auth',
+    'recovery',
+    'github-actions',
+    'v1',
+    'v3',
+    'v4',
+    'v5',
+    'v6',
+    'v8',
+    'openvsx-pat-auth',
+    'openvsx-recovery',
+  ])
+    assert.ok(isCriticalEvidence(id), id);
+  for (const id of nonCriticalEvidence)
+    assert.ok(requiredEvidence.some((r) => r === id));
+  const { record, context, path, candidate } = tiered();
+  const accept = (id: string, extra: Record<string, string> = {}) => ({
+    ...record,
+    evidence: {
+      ...record.evidence,
+      [id]: {
+        status: 'accepted-failure',
+        path,
+        candidate,
+        issue,
+        reason: 'macOS runner capacity',
+        ...extra,
+      },
+    },
+  });
+  for (const id of nonCriticalEvidence)
+    assert.doesNotThrow(() => validateEvidence(accept(id), context), id);
+  assert.deepEqual(acceptedFailures(accept('cross-os')), [
+    { id: 'cross-os', issue, reason: 'macOS runner capacity' },
+  ]);
+  // Critical evidence never tolerates a failure, with or without paperwork.
+  for (const id of ['isolation', 'keyboard', 'github-actions', 'v3', 'v8'])
+    assert.throws(() => validateEvidence(accept(id), context), /Critical/, id);
+  assert.throws(
+    () => validateEvidence(accept('v7', { issue: 'not-an-issue' }), context),
+    /issue/,
+  );
+  assert.throws(
+    () =>
+      validateEvidence(
+        accept('v7', { issue: 'https://example.com/issues/3' }),
+        context,
+      ),
+    /issue/,
+  );
+  assert.throws(
+    () => validateEvidence(accept('v7', { reason: ' ' }), context),
+    /reason/,
+  );
+  assert.throws(
+    () => validateEvidence(accept('v7', { status: 'failed' }), context),
+    /not passed/,
+  );
+});
+
+test('qaExceptions: schema, informational targets only, no duplicates', () => {
+  const valid = {
+    id: 'visual.spec.ts::US6.2-themes',
+    scope: 'ubuntu-24.04/1.142.0',
+    issue,
+    reason: 'Known rendering difference',
+    acceptedBy: 'Wald764',
+    acceptedOn: '2026-11-07',
+  };
+  assert.deepEqual(validateQaExceptions(undefined), []);
+  assert.deepEqual(validateQaExceptions([]), []);
+  assert.deepEqual(validateQaExceptions([valid], exceptionAllowed), [valid]);
+  const unscoped: Record<string, unknown> = { ...valid };
+  delete unscoped['scope'];
+  assert.equal(validateQaExceptions([unscoped])[0]!.scope, undefined);
+  assert.throws(() => validateQaExceptions({}));
+  assert.throws(() => validateQaExceptions(['x']));
+  assert.throws(
+    () => validateQaExceptions([{ ...valid, extra: 1 }]),
+    /unknown/,
+  );
+  for (const key of ['id', 'issue', 'reason', 'acceptedBy', 'acceptedOn'])
+    assert.throws(
+      () => validateQaExceptions([{ ...valid, [key]: '' }]),
+      new RegExp(key === 'id' ? 'id' : key),
+      key,
+    );
+  assert.throws(
+    () => validateQaExceptions([{ ...valid, scope: 'linux' }]),
+    /scope/,
+  );
+  assert.throws(
+    () => validateQaExceptions([{ ...valid, acceptedOn: '07/11/2026' }]),
+    /acceptedOn/,
+  );
+  assert.throws(() => validateQaExceptions([valid, valid]), /Duplicate/);
+  // An exception on a critical check or evidence id is an error.
+  for (const id of [
+    'isolation',
+    'keyboard',
+    'job:quality',
+    'job:canonical',
+    'components.spec.ts::US4.2-insert-once',
+    'accessibility.spec.ts::US6.1-keyboard-journey',
+  ])
+    assert.throws(
+      () => validateQaExceptions([{ ...valid, id }], exceptionAllowed),
+      /critical|id must/,
+      id,
+    );
+  assert.throws(
+    () => validateQaExceptions([{ ...valid, id: 'isolation' }]),
+    /id must/,
+  );
+});
+
+test('the readiness record is validated for qaExceptions and one JSON block is required', () => {
+  const { record, context } = tiered();
+  assert.doesNotThrow(() =>
+    validateEvidence(
+      {
+        ...record,
+        qaExceptions: [
+          {
+            id: 'job:visual',
+            issue,
+            reason: 'Known',
+            acceptedBy: 'Wald764',
+            acceptedOn: '2026-11-07',
+          },
+        ],
+      },
+      context,
+    ),
+  );
+  assert.throws(() =>
+    validateEvidence(
+      { ...record, qaExceptions: [{ id: 'job:visual' }] } as never,
+      context,
+    ),
+  );
+  assert.deepEqual(
+    parseReadiness('text\n```json\n{"candidate":"x"}\n```\n').candidate,
+    'x',
+  );
+  assert.throws(() => parseReadiness('none'));
+  assert.throws(() => parseReadiness('```json\n{}\n```\n```json\n{}\n```'));
+});
+
+test('a release tag whose commit is not reachable from main is rejected', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'rdlc-release-main-'));
+  const git = (...args: string[]) =>
+    execFileSync('git', args, {
+      cwd: directory,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  try {
+    git('init', '-b', 'main');
+    git('config', 'user.name', 'Test');
+    git('config', 'user.email', 'test@example.invalid');
+    writeFileSync(join(directory, 'a.txt'), 'a');
+    git('add', '.');
+    git('commit', '-m', 'main');
+    git('checkout', '-b', 'feature');
+    writeFileSync(join(directory, 'b.txt'), 'b');
+    git('add', '.');
+    git('commit', '-m', 'feature only');
+    git('tag', 'v3.0.0');
+    assert.throws(() => resolveRelease('v3.0.0', 'main', directory));
+    git('checkout', 'main');
+    git('merge', '--ff-only', 'feature');
+    assert.equal(
+      resolveRelease('v3.0.0', 'main', directory),
+      git('rev-parse', 'HEAD'),
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

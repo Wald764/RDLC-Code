@@ -176,7 +176,12 @@ Reading the report:
 
 Every pull request runs the **Stability gate** of `ci.yml`: each `tests/desktop/*.spec.ts`
 file that the pull request adds or modifies is repeated 5 times, with retries disabled,
-on the whole Desktop matrix. A single failure in any repeat blocks the pull request.
+on the whole Desktop matrix. A single failure in any repeat fails the `stability` job.
+Under the [QA policy](qa-policy.md) (since 2026-11-07) the repeat results are
+classified per test: a critical test that fails or flakes blocks the merge, while a
+failure that is informational under the policy is reported in the QA summary without
+blocking. The `changed-specs` job itself is critical, since its failure means missing
+stability evidence.
 
 - `changed-specs` lists the files on a full-depth checkout
   (`scripts/desktop-matrix.ts changed`; it fetches the base if it is missing) with
@@ -205,9 +210,20 @@ on the whole Desktop matrix. A single failure in any repeat blocks the pull requ
   `DESKTOP_GROUPS` entry fails planning, since CI would never run it. `visual.spec.ts`
   is the exception: it only runs in the pinned `visual` job (reference environment),
   which every pull request already runs once, so it is not repeated.
-- Required check: `required` ("Required checks") now needs `changed-specs` and
-  `stability` and fails unless both succeeded. Branch protection already requires
-  "Required checks"; no new status check has to be added.
+- Required check: `required` ("Required checks") is the only status check the
+  target `main` ruleset requires (configuration, not an observed claim). Under the
+  [QA policy](qa-policy.md) it runs `qa-gate` over the evidence of every job and
+  blocks only on critical failures or missing critical evidence. `changed-specs`
+  is critical: its failure means missing stability evidence. `stability` results
+  are classified per test: a critical test that fails or flakes under the strict 5x
+  repeat blocks the merge, while a failure that is informational under the QA
+  policy does not. All of them stay visible in the QA summary
+  (`qa-summary-<sha>`). The gate also blocks on an unexplained derived-job failure,
+  a runner exit code that is non-zero without a failing test, an incomplete report
+  and any skip not allowed by `tests/desktop/host-observer-scope.ts`. The earlier
+  rule that the check fails unless `changed-specs` and `stability` both succeeded
+  is replaced by this per-test classification as of 2026-11-07. No new status
+  check has to be added.
 - The flake hunt also accepts `specs` when run manually, for example
   `gh workflow run flake-hunt.yml -f specs=data.spec.ts`.
 

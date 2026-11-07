@@ -85,6 +85,8 @@ Timing requires 100 real input-to-visible selection samples, ≥95 within 200ms,
 
 Root/CI checks must produce same-candidate assertion/evidence records, actual/expected/diff PNGs, traces/accessibility/focus records, timing/frame samples, current-range/race/history checks and sanitized network-attempt logs. Reference images are committed and never auto-accepted in CI. Missing/failed required evidence blocks validation.
 
+**Validation policy change (2026-11-07):** merge, publication and feature validation are now separate outcomes (MERGEABLE, PUBLISHABLE, FULLY VALIDATED), and local QA is targeted while the full Desktop matrix runs in GitHub Actions. Missing/failed mandatory evidence still prevents FULLY VALIDATED. See the [QA policy](../../docs/validation/qa-policy.md).
+
 Current CI schedules the installed bootstrap on the existing minimum/stable OS
 matrix and uploads probe artifacts. These working-tree changes have not run in
 GitHub Actions. The final CI contract additionally requires every implemented

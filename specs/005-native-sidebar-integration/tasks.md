@@ -552,6 +552,12 @@ checks green), with the scope exclusions recorded in the Delivery Scope Decision
 of `automated-validation.md`. The earlier "remain open" statements above are
 historical.
 
+**Validation policy change — 2026-11-07**: quality outcomes are now tiered
+(MERGEABLE, PUBLISHABLE, FULLY VALIDATED) under constitution 2.0.0 and the
+[QA policy](../../docs/validation/qa-policy.md). No task status or acceptance
+criterion changes; wording above that a missing or failed mandatory result
+"blocks" completion means the feature cannot be declared FULLY VALIDATED.
+
 ## Dependencies & Execution Order
 
 ### Phase and story graph

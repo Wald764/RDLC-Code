@@ -89,7 +89,7 @@ function ordered(
   }
 }
 
-test('the required aggregate depends on quality, the desktop matrix, the visual job and the stability gate', () => {
+test('the required aggregate keeps its name, always runs and delegates the decision to the QA gate', () => {
   const blocks = jobs(CI);
   const required = job(blocks, 'required');
   assert.deepEqual(needs(required), [
@@ -100,16 +100,13 @@ test('the required aggregate depends on quality, the desktop matrix, the visual 
     'stability',
   ]);
   assert.equal(field(required, 'if'), 'always()');
-  const gate = steps(required);
-  assert.equal(gate.length, 1, 'one explicit aggregate gate');
-  for (const name of ['QUALITY', 'DESKTOP', 'VISUAL', 'CHANGED', 'STABILITY']) {
-    assert.equal(
-      nested(gate[0]!, name),
-      `\${{ needs.${name === 'CHANGED' ? 'changed-specs' : name.toLowerCase()}.result }}`,
-      `${name} reads a real result`,
-    );
-    assert.ok(gate[0]!.includes(`test "$${name}" = success`), name);
-  }
+  assert.equal(field(required, 'name'), 'Required checks');
+  const gate = steps(required).find((step) =>
+    RUN('node dist/scripts/qa-gate\\.js pr').test(step),
+  );
+  assert.ok(gate, 'the gate step evaluates the uploaded evidence');
+  assert.equal(nested(gate, 'QA_NEEDS'), '${{ toJSON(needs) }}');
+  assert.equal(nested(gate, 'QA_CANDIDATE'), '${{ github.sha }}');
   const inherited = field(job(jobs(RELEASE), 'quality'), 'uses');
   assert.equal(inherited, './.github/workflows/ci.yml');
 });
@@ -194,7 +191,7 @@ test('every Linux provisioning step creates the host-blocking cgroup before any 
   for (const [where, source, id] of [
     ['ci.yml', CI, 'desktop'],
     ['flake-hunt.yml', FLAKE, 'desktop'],
-    ['release.yml', RELEASE, 'canonical'],
+    ['release.yml', RELEASE, 'candidate-qa'],
   ] as const) {
     const list = steps(job(jobs(source), id));
     const prepare = list.find((step) => /apt-get install/.test(step));
@@ -230,14 +227,33 @@ test('every matrix entry runs the functional and installed journeys fail-closed'
   for (const [label, group] of Object.entries(groups)) {
     assert.equal(group.length, 2, `${label} must run on both OS families`);
     // The capability probe runs once per OS/version, in the core slice.
-    const only = label === 'probe' ? " && matrix.group == 'core'" : '';
-    const linux = group.find(
-      (s) => stepField(s, 'if') === `runner.os == 'Linux'${only}`,
+    const core = "matrix.group == 'core'";
+    const linux = group.find((s) =>
+      (stepField(s, 'if') ?? '').includes("runner.os == 'Linux'"),
     );
-    const other = group.find(
-      (s) => stepField(s, 'if') === `runner.os != 'Linux'${only}`,
+    const other = group.find((s) =>
+      (stepField(s, 'if') ?? '').includes("runner.os != 'Linux'"),
     );
     assert.ok(linux && other, `${label} must branch on the operating system`);
+    for (const step of [linux, other]) {
+      const condition = stepField(step, 'if') ?? '';
+      // Independent suites: they run unless cancelled, on their own prerequisites.
+      assert.ok(condition.includes('!cancelled()'), `${label} is independent`);
+      assert.ok(
+        condition.includes("steps.download-vscode.outcome == 'success'"),
+        `${label} needs VS Code`,
+      );
+      assert.ok(
+        condition.includes("steps.environment.outcome == 'success'"),
+        `${label} needs the Desktop environment`,
+      );
+      assert.equal(
+        condition.includes(core),
+        label === 'probe',
+        `${label} group scope`,
+      );
+      assert.ok(stepField(step, 'id'), `${label} step has an id`);
+    }
     assert.ok(
       RUN(XVFB).test(linux),
       `${label} on Linux uses the fixed display`,
@@ -258,7 +274,11 @@ test('the visual job compares only the minimum binary on the fixed display', () 
   assert.equal(env(block, 'TZ'), 'UTC');
   assert.match(env(block, 'LANG')!, /^en_US/);
   assert.equal(comparison.length, 1, 'one pinned comparison step');
-  assert.equal(stepField(comparison[0]!, 'if'), null, 'cannot be skipped');
+  assert.match(
+    stepField(comparison[0]!, 'if') ?? '',
+    /^\$\{\{ !cancelled\(\) && steps\.build\.outcome == 'success' && steps\.provision\.outcome == 'success' \}\}$/,
+    'runs on its own prerequisites, never silently skipped',
+  );
   assert.ok(
     RUN(`${XVFB} pnpm test:visual$`).test(comparison[0]!),
     'runs on the 1440x1000 display',
@@ -309,6 +329,7 @@ test('both workflows keep least permissions and the pinned action revisions', ()
     'actions/checkout': '34e114876b0b11c390a56381ad16ebd13914f8d5',
     'actions/setup-node': '49933ea5288caeca8642d1e84afbd3f7d6820020',
     'actions/upload-artifact': 'ea165f8d65b6e75b540449e92b4886f43607fa02',
+    'actions/download-artifact': 'd3f86a106a0bac45b974a628896c90dbdf5c8093',
     'pnpm/action-setup': '9fd676a19091d4595eefd76e4bd31c97133911f1',
   };
   for (const source of [CI, RELEASE]) {
@@ -326,40 +347,64 @@ test('both workflows keep least permissions and the pinned action revisions', ()
   }
 });
 
-test('the canonical job certifies its own packaged bytes before release-artifact.js', () => {
+test('the canonical job packages and verifies without depending on informational jobs', () => {
   const block = job(jobs(RELEASE), 'canonical');
   const all = steps(block);
-  assert.equal(env(block, 'VSCODE_VERSION'), '1.142.0', 'exact pinned binary');
-  assert.equal(env(block, 'TZ'), 'UTC');
-  assert.equal(env(block, 'LANG'), 'en_US.UTF-8');
-  assert.equal(needs(block).length, 2, 'validation and quality gates');
+  assert.deepEqual(needs(block), ['validation'], 'only validation gates it');
   assert.equal(has(block, /^ {4}strategy:/m), false, 'not a matrix entry');
   ordered('canonical', all, [
     ['frozen install', RUN('pnpm install --frozen-lockfile')],
     ['build', RUN('pnpm build')],
     ['package', RUN('pnpm package')],
     ['host tests', RUN('pnpm test:package')],
-    ['provisioning', /apt-get install/],
-    ['installed', RUN('pnpm test:e2e --packaged$')],
-    ['security', RUN('pnpm test:e2e --probe --packaged')],
-    ['visual', RUN('pnpm test:visual --packaged')],
     ['binding', RUN('release-artifact\\.js')],
     ['manifest', RUN('publish-release\\.js manifest')],
     ['canonical upload', /dist\/canonical\/\*/],
   ]);
+  assert.ok(
+    !all.some((step) => RUN('pnpm test:(e2e|visual)').test(step)),
+    'Desktop certification belongs to candidate-qa',
+  );
+  assert.ok(
+    !has(block, /actions\/download-artifact@/),
+    'no substitute artifact',
+  );
+});
+
+test('candidate-qa certifies the exact canonical bytes, each suite on its own prerequisites', () => {
+  const block = job(jobs(RELEASE), 'candidate-qa');
+  const all = steps(block);
+  assert.deepEqual(needs(block), ['canonical']);
+  assert.equal(env(block, 'VSCODE_VERSION'), '1.142.0', 'exact pinned binary');
+  assert.equal(env(block, 'TZ'), 'UTC');
+  assert.equal(env(block, 'LANG'), 'en_US.UTF-8');
+  assert.equal(has(block, /^ {4}strategy:/m), false, 'not a matrix entry');
+  ordered('candidate-qa', all, [
+    ['frozen install', RUN('pnpm install --frozen-lockfile')],
+    ['compile only', RUN('node scripts/compile\\.ts')],
+    ['download canonical', /actions\/download-artifact@/],
+    ['digest verification', /node dist\/scripts\/publish-release\.js verify/],
+    ['provisioning', /apt-get install/],
+    ['installed', RUN('pnpm test:e2e --packaged$')],
+    ['security', RUN('pnpm test:e2e --probe --packaged')],
+    ['visual', RUN('pnpm test:visual --packaged')],
+    ['evidence', RUN('node scripts/qa-collect\\.ts')],
+    ['evidence upload', UPLOAD],
+  ]);
+  assert.ok(!all.some((step) => RUN('pnpm (build|package)$').test(step)));
   const certify = all.filter((step) =>
     RUN('pnpm test:(e2e|visual)').test(step),
   );
   assert.equal(certify.length, 3, 'installed, security and visual all certify');
   for (const step of certify) {
     assert.ok(RUN('--packaged').test(step), 'must install the canonical VSIX');
-    assert.equal(stepField(step, 'if'), null, 'cannot be skipped');
+    assert.match(stepField(step, 'if') ?? '', /^\$\{\{ !cancelled\(\) && /);
+    assert.ok(
+      (stepField(step, 'if') ?? '').includes("steps.bind.outcome == 'success'"),
+      'only after the canonical bytes were verified',
+    );
     assert.ok(RUN(`${XVFB} pnpm`).test(step), 'fixed display');
   }
-  assert.ok(
-    !has(block, /actions\/download-artifact@/),
-    'no substitute artifact',
-  );
 });
 
 test('the canonical handoff stays exact while diagnostics upload separately', () => {
@@ -396,13 +441,14 @@ test('the canonical handoff stays exact while diagnostics upload separately', ()
     'archive-digest': 'steps.canonical.outputs.artifact-digest',
     node: 'steps.manifest.outputs.node',
     vsce: 'steps.manifest.outputs.vsce',
+    vsix: 'steps.manifest.outputs.vsix',
   }))
     assert.ok(block.includes(`${key}: \${{ ${source} }}`), `output ${key}`);
   const release = jobs(RELEASE);
   const publish = job(release, 'publish');
   assert.deepEqual(needs(job(release, 'validation')), []);
   assert.deepEqual(needs(job(release, 'quality')), ['validation']);
-  assert.deepEqual(needs(publish), ['canonical']);
+  assert.deepEqual(needs(publish), ['canonical', 'release-gate']);
   assert.equal(field(publish, 'uses'), './.github/workflows/publish.yml');
   for (const key of ['artifact-id', 'archive-digest', 'node', 'vsce'])
     assert.ok(
@@ -434,11 +480,20 @@ test('both workflows install frozen and never weaken a required gate', () => {
       );
     for (const [id, block] of Object.entries(blocks)) {
       const aggregate = path === 'ci.yml' && id === 'required';
-      assert.equal(
-        field(block, 'if'),
-        aggregate ? 'always()' : null,
-        `${path} ${id}`,
-      );
+      const gated =
+        path === 'release.yml' && ['release-gate', 'publish'].includes(id);
+      if (gated)
+        assert.match(
+          field(block, 'if') ?? '',
+          /^\$\{\{ !cancelled\(\) && /,
+          `${path} ${id}`,
+        );
+      else
+        assert.equal(
+          field(block, 'if'),
+          aggregate ? 'always()' : null,
+          `${path} ${id}`,
+        );
     }
   }
   for (const step of steps(job(jobs(RELEASE), 'canonical')))

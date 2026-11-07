@@ -15,6 +15,15 @@ Instructions:
 - Determine the appropriate existing validation commands.
 - Execute relevant builds, tests, linting and type checks.
 - Prefer targeted tests before broader test suites.
+- Select tests proportionately to the scope of the change.
+- Default to `pnpm qa:quick`; run `pnpm qa:integration` only for a coherent batch
+  of changes or when the brief asks for it. It runs at most one extension-host
+  VS Code run (when the extension or a package it depends on is affected) and
+  never Desktop E2E, visual tests or packaging.
+- Never run `pnpm qa:full`, Desktop E2E, `pnpm test:visual`, `pnpm test:package`
+  or VSIX packaging unless the brief explicitly requests it.
+- Report which QA level ran and state that comprehensive coverage is pending CI.
+- Policy: `docs/validation/qa-policy.md`.
 - Capture exact command results and failure messages.
 - Investigate failures sufficiently to identify likely causes.
 - Distinguish regressions from pre-existing failures.

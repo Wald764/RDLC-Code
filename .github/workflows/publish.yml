@@ -15,6 +15,13 @@ on:
       vsce:
         type: string
         required: true
+      qa-status:
+        description: >-
+          QA gate outcome, enforced before any credential is used. release.yml passes
+          PUBLISHABLE or FULLY VALIDATED; publishing-auth-test.yml passes AUTH-TEST,
+          accepted only on the reserved v0.0.4-publishing-test tag.
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -26,8 +33,39 @@ env:
   OPENVSX_AUTH_MODE: ${{ vars.OPENVSX_AUTH_MODE }}
 
 jobs:
+  # First job, no environment and no credential: every other job depends on it
+  # (preflight directly, the publishing jobs through preflight), so a run whose
+  # QA outcome is not publishable never reaches an environment approval or a
+  # secret. Inputs reach the script through env, never inline.
+  qa-status:
+    name: QA gate outcome
+    runs-on: ubuntu-24.04
+    permissions: {}
+    env:
+      QA_STATUS: ${{ inputs.qa-status }}
+    steps:
+      - name: Require a publishable QA outcome
+        run: |
+          case "$QA_STATUS" in
+            'PUBLISHABLE' | 'FULLY VALIDATED') ;;
+            'AUTH-TEST')
+              # The inert authentication probe has no QA gate; it may only run
+              # for the reserved test tag.
+              if [ "$GITHUB_REF" != 'refs/tags/v0.0.4-publishing-test' ]; then
+                echo "::error::QA status AUTH-TEST is only accepted for refs/tags/v0.0.4-publishing-test, not $GITHUB_REF"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Refusing to publish: QA status must be PUBLISHABLE or FULLY VALIDATED, got '${QA_STATUS}'"
+              exit 1
+              ;;
+          esac
+          echo "QA status accepted: $QA_STATUS" >> "$GITHUB_STEP_SUMMARY"
+
   preflight:
     name: Publication preflight
+    needs: qa-status
     runs-on: ubuntu-24.04
     environment: marketplace
     permissions:
@@ -263,12 +301,14 @@ jobs:
   summary:
     name: Publication state
     if: always()
-    needs: [preflight, openvsx-preflight, github, marketplace, openvsx]
+    needs:
+      [qa-status, preflight, openvsx-preflight, github, marketplace, openvsx]
     runs-on: ubuntu-24.04
     permissions: {}
     steps:
       - name: Summarize every stage and destination
         env:
+          QA_CHECK: ${{ needs.qa-status.result }}
           PREFLIGHT: ${{ needs.preflight.result }}
           OPENVSX_PREFLIGHT: ${{ needs.openvsx-preflight.result }}
           GITHUB: ${{ needs.github.result }}
@@ -280,12 +320,16 @@ jobs:
           CURRENT_GITHUB: ${{ needs.github.outputs.state }}
           CURRENT_MARKETPLACE: ${{ needs.marketplace.outputs.state }}
           CURRENT_OPENVSX: ${{ needs.openvsx.outputs.state }}
+          QA_STATUS: ${{ inputs.qa-status }}
         run: |
           {
             echo "## ${GITHUB_REF_NAME} publication state"
             echo
+            echo "QA gate outcome: $QA_STATUS"
+            echo
             echo "| Stage | Result |"
             echo "| --- | --- |"
+            echo "| QA outcome check | $QA_CHECK |"
             echo "| authentication preflight | $PREFLIGHT |"
             echo "| Open VSX authentication preflight | $OPENVSX_PREFLIGHT |"
             echo "| GitHub release | $GITHUB (observed before this attempt: ${CURRENT_GITHUB:-unavailable}) |"

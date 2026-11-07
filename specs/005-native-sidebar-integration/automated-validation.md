@@ -95,6 +95,10 @@ Record each requirement/scenario/edge/SC with test identifier, fixture IDs, expe
 
 Any absent or failed mandatory assertion means **not validated** and blocks the feature's completion. The only conditional scope is native-to-webview drag: a proven limitation yields an explicitly unavailable capability with passing activation/fallback assertions, not a claim that native drag passed. Functional acceptance cannot be inferred from specification review, task checkboxes, successful compilation or historical manual evidence.
 
+## Validation policy change (2026-11-07)
+
+Constitution v2.0.0 and the [QA policy](../../docs/validation/qa-policy.md) split quality outcomes into MERGEABLE, PUBLISHABLE and FULLY VALIDATED. Where this document says a missing or failed mandatory assertion "blocks delivery" or "blocks completion", read it as blocking the feature from being declared FULLY VALIDATED; critical checks additionally block merge and publication, while checks classified informational (for example `visual.spec.ts`, `layout.spec.ts`, theme-contrast accessibility, `native-drag.spec.ts` and hosted-timing-only budgets) stay visible and may be accepted through a documented exception. Publishing with accepted warnings never implies FULLY VALIDATED. No acceptance criterion is removed, and the Delivery Scope Decision below remains a historical precedent for scope exclusions that stay UNVALIDATED.
+
 ## Delivery Scope Decision (2026-11-02)
 
 **Decision owner**: product owner. **Candidate**: commit `d894776` (PR #1, merged 2026-11-02), CI run [41358862062](https://github.com/Wald764/RDLC-Code/actions/runs/41358862062), concluded `success` on all 36 checks (`quality`; Desktop matrix Ubuntu 24.04 / Windows 2022 / macOS 15 x VS Code 1.142.0 / stable x groups core, authoring, context; `Pinned visual references` with 8 passed; stability gate; `Required checks`). Status: **validated with scope exclusions**.

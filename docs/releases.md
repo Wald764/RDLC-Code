@@ -38,11 +38,11 @@ are checked before packaging and handoff. Existing `0.0.1` probe versions are re
 
 ## GitHub setup before the first release
 
-1. In the owner-approved solo-maintainer mode, permit direct pushes to `main` but
-   block force pushes and deletion. CI runs after each push; it is not a pre-push
-   gate. The maintainer reviews changes locally, and release CI still blocks
-   publication on failure. Protect `v*` tag creation, updates and deletion. Grant release authority
-   only to maintainers; review the version-preparation PR before tagging.
+1. Protect `main` (target configuration since 2026-11-07, see the rulesets below):
+   changes land through pull requests that pass the `Required checks` status; force
+   pushes and deletion are blocked. Release CI still blocks publication on any
+   critical failure. Protect `v*` tag creation, updates and deletion. Grant release
+   authority only to maintainers; review the version-preparation PR before tagging.
 2. Create isolated publisher environments restricted to protected release tags.
    Normal tag delivery has no manual environment approval gate. Build jobs use
    read-only tokens, no publication secrets and no persisted checkout credentials.
@@ -92,10 +92,13 @@ the tools, controlled publisher, run and canonical VSIX digest without tokens.
 
 In repository Settings > Rules > Rulesets, create these active rulesets:
 
-- **main** (branch ruleset, target `main`, no bypass): block force pushes and
-  restrict deletions. Direct fast-forward pushes are allowed. Do not require PRs
-  or pre-existing status checks in this solo mode: CI runs on the pushed commit.
-  Release validation and the full CI matrix remain mandatory before publication.
+- **protect-main** (branch ruleset, target `main`, no bypass actors): block force
+  pushes, restrict deletions, require a pull request (0 required approvals, solo
+  maintainer) and require the status check `Required checks` (source GitHub
+  Actions). This describes the target configuration; confirm it with a settings
+  readback rather than assuming it. It replaces the earlier solo mode that allowed
+  direct pushes. Pull request validation is MERGEABLE-level; release validation and
+  the critical release gates remain mandatory before publication.
 - **release-tag-creation** (tag ruleset, target `v*`): restrict creations and grant
   only Repository admin an Always bypass. This permits the maintainer to create
   release tags while preventing other writers from doing so.
@@ -107,13 +110,23 @@ Use Active enforcement, not Evaluate or Disabled. Keep publisher environments
 restricted to tags `v*`. Repository administrators can still edit rulesets;
 these rules prevent normal ref writes, not administrative policy changes.
 
-Stable job layout: `validation` (accepted evidence) → `quality` (reused CI matrix) →
-`canonical` (build, package, manifest, immutable artifact) → `preflight` (artifact
+Stable job layout: `validation` (accepted evidence) → `canonical` (build, package,
+manifest, immutable artifact; needs `validation` only). `quality` (the reused
+`ci.yml` matrix, which also needs `validation`) runs in parallel with `canonical`.
+`candidate-qa` (needs `canonical`; packaged probe and critical packaged E2E against
+the exact canonical VSIX, with its digest verified) → `release-gate` (needs
+`validation`, `canonical`, `quality` and `candidate-qa`; QA gate on the tagged
+commit, outputs `PUBLISHABLE` or `FULLY VALIDATED`) → `preflight` (artifact
 binding, destination inventory, federated publisher check in the `marketplace`
 environment) → `openvsx-preflight` (namespace credential or trusted-publisher check
 in the `openvsx` environment) → `github` (the only job with `contents: write`) → `marketplace`
 (`id-token: write` in the `marketplace` environment) → `openvsx` (`openvsx`
-environment) → `summary` (always runs). Publication cannot start without the
+environment) → `summary` (always runs). `publish` runs only when `canonical` and
+`release-gate` both succeeded. Inside `publish.yml`, the first job `qa-status` has no
+environment, secrets or permissions. It refuses to publish unless the release-gate
+status is `PUBLISHABLE` or `FULLY VALIDATED`; `AUTH-TEST` is accepted only for
+`refs/tags/v0.0.4-publishing-test` from `publishing-auth-test.yml`. Every credentialed
+job depends on it through `preflight`. Publication cannot start without the
 accepted `github-auth`, `marketplace-auth`, `recovery` and `github-actions`
 records, because the evidence validator runs before the build. Open VSX credentials
 are confined to its authentication preflight and publisher jobs in that environment.
@@ -135,7 +148,9 @@ Optional tests not performed must remain recorded as unrun, not passed.
 
 Prepare a reviewed commit synchronizing only root and extension stable SemVer
 versions (and lockfile when needed). Private packages keep independent versions.
-On that candidate, run the complete automated and mandatory manual acceptance.
+On that candidate, run the complete automated acceptance (in CI) and record any
+documented manual or hosted evidence; manual validation is never a mandatory
+condition of delivery (constitution principle VII).
 Record results in validation Markdown, including the tested candidate, versions,
 tool pins, applicable auth mode and every required evidence category. Use one
 JSON block in `docs/validation/release-readiness.md` with these keys:
@@ -149,20 +164,52 @@ JSON block in `docs/validation/release-readiness.md` with these keys:
   `status: passed`, `path` and the same `candidate`. Configured Open VSX additionally
   needs `openvsx-pat-auth` or `openvsx-oidc-auth`, plus `openvsx-recovery`.
 
+- `qaExceptions` (optional): accepted informational failures, each with `id`
+  (check or test), optional `scope` (`<os>/<vscode>`), `issue` (GitHub issue URL),
+  `reason`, `acceptedBy` (login) and `acceptedOn` (`YYYY-MM-DD`). An exception that
+  targets a critical check is rejected. See the [QA policy](validation/qa-policy.md).
+
 Commit only explicitly listed evidence Markdown after testing. Any code, version,
-lockfile, workflow or tool change invalidates that candidate. Missing/failed/
-unrun results block release; never convert a procedure into a passed result.
+lockfile, workflow or tool change invalidates that candidate. Missing, failed or
+unrun results are handled by tier: critical checks and critical evidence always
+block release; a non-critical failure blocks unless it is covered by an
+`accepted-failure` record or a `qaExceptions` entry with an issue and a reason.
+Never convert a failure or a procedure into a passed result.
 The validator reads tagged Git objects and hashes accepted records, not arbitrary
 working-tree files. After building tooling, validate the intended detached tag
 using `pnpm validate:release vMAJOR.MINOR.PATCH origin/main`. This command is
 read-only. It checks peeled tag/main ancestry, identity, tools and the full diff;
 it does not prove actual GitHub protection settings, which require T080 inspection.
 
+## Release flow and outcomes
+
+1. Work on a feature branch and open a pull request into `main`. Local QA is
+   targeted (`pnpm qa:quick`, `pnpm qa:integration`); CI runs the full matrix.
+2. The `Required checks` status must pass. That makes the change MERGEABLE;
+   informational failures stay visible in the QA summary.
+3. Merge, prepare the version commit through a pull request, then tag the merge
+   commit on `main`.
+4. `release.yml` runs `validation`, `canonical`, `quality`, `candidate-qa`,
+   `release-gate` and `publish`.
+5. The release is PUBLISHABLE when `release-gate` passes on the exact tag commit
+   (critical gates and evidence passed, every informational failure covered by an
+   exception). It is FULLY VALIDATED only with zero failures, zero applied
+   exceptions, zero `accepted-failure` evidence and no UNVALIDATED platform skip.
+   Publishing with accepted warnings never implies FULLY VALIDATED.
+
+Tags are immutable. If a release run shows an unexpected informational failure,
+investigate and classify it first. A confirmed flake is handled with **Re-run failed
+jobs**. Otherwise add the exception in a pull request and publish a new patch tag;
+never move or reuse the tag. Classification and exceptions are defined in the
+[QA policy](validation/qa-policy.md).
+
 ## Canonical artifact and recovery contract
 
-After the release workflow's complete quality/evidence matrix,
-build one canonical universal VSIX and verify package contents and installed
-offline behavior. Bind its explicit SHA-256 to tag/commit, candidate, toolchain,
+Once `validation` has passed, the `canonical` job builds one canonical universal VSIX
+and verifies package contents. It does not wait for the quality matrix: `quality`
+(`ci.yml`) runs in parallel, `candidate-qa` then tests the exact canonical bytes
+(including installed offline behavior), and `release-gate` decides. `publish` needs
+both `canonical` and `release-gate`. Bind its explicit SHA-256 to tag/commit, candidate, toolchain,
 lockfile, original workflow run and evidence hashes in an immutable manifest.
 Retrieve handoffs by original run and immutable artifact ID, never a latest name.
 An archive digest is not the VSIX digest; a mismatch must fail explicitly. The

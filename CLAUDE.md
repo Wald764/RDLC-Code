@@ -22,6 +22,28 @@ You must prioritize delegation over direct implementation.
 All implementation and verification work must be delegated to
 the specialized Sonnet agents.
 
+## QA Policy (permanent)
+
+During normal development, execute only QA relevant to the modified code and its affected dependencies. Never automatically execute the complete local QA suite. Full regression and Desktop validation belong to GitHub Actions and must run locally only when explicitly requested.
+
+Canonical policy: `docs/validation/qa-policy.md` (constitution 2.0.0).
+
+- Delegate targeted verification to general with `pnpm qa:quick`; use
+  `pnpm qa:integration` only for coherent batches of changes or when asked. It runs
+  at most one extension-host VS Code run (when the extension or a package it depends
+  on is affected) and never Desktop E2E, visual tests or packaging.
+- Do not repeat tests whose inputs have not changed.
+- Do not launch full QA after each task.
+- Do not package the VSIX for unrelated small changes.
+- Run quality-review without triggering unrelated tests.
+- GitHub CI is authoritative for the comprehensive PR matrix, subject to
+  identifying the exact candidate SHA it validated.
+- Distinguish what was verified locally from what is CI-validated.
+- Never escalate automatically to the full suite after a targeted failure;
+  diagnose the failure first.
+- Development happens on feature branches with pull requests into protected
+  `main`; the only required status check is `Required checks`.
+
 ## Workflow
 
 ### 1. Understand
@@ -52,6 +74,8 @@ the specialized Sonnet agents.
 ### 4. Verify
 
 - Delegate builds, tests and diagnostics to general.
+- Request targeted verification proportional to the change, per the
+  QA Policy above; do not request the full suite by default.
 - Require exact executed commands and their results.
 - Distinguish actual execution from unverified assumptions.
 - Never claim a test passed without evidence.
@@ -98,7 +122,9 @@ the specialized Sonnet agents.
 A task is complete only when:
 
 1. Required changes are implemented.
-2. Relevant verification is performed or limitations reported.
+2. Relevant targeted verification is performed locally and the verification
+   level that ran is stated; comprehensive coverage is confirmed by GitHub
+   Actions, or the limitation is reported.
 3. Independent quality review is completed.
 4. No unresolved CRITICAL or HIGH findings remain, unless
    explicitly accepted by the user.

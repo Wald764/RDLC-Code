@@ -24,7 +24,11 @@
     "test:vscode": "node dist/tests/vscode/run-tests.js",
     "test:e2e": "node dist/tests/desktop/run-tests.js",
     "test:visual": "node dist/tests/desktop/run-tests.js --visual",
-    "test:package": "node --test dist/tests/package/*.test.js && node dist/tests/vscode/run-tests.js --packaged"
+    "test:package": "node --test dist/tests/package/*.test.js && node dist/tests/vscode/run-tests.js --packaged",
+    "qa:quick": "node scripts/qa.ts quick",
+    "qa:integration": "node scripts/qa.ts integration",
+    "qa:full": "node scripts/qa.ts full",
+    "qa:release": "node scripts/qa.ts release"
   },
   "devDependencies": {
     "@rdlc/report-model": "workspace:*",
