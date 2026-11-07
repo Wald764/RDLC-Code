@@ -460,6 +460,107 @@
         "packages/renderer/src/structure.test.ts",
         "packages/renderer/src/navigation.test.ts"
       ]
+    },
+    {
+      "id": "images-blank",
+      "path": "images/blank.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.12-image.md",
+        "vendor/02-structures/2.305-embeddedimages.md",
+        "vendor/02-structures/2.306-embeddedimage.md"
+      ],
+      "operation": "Import a picture into a report without EmbeddedImages: create the collection, add one definition and one Image item",
+      "editFootprint": [
+        "Insertion of Report.EmbeddedImages and one Body.ReportItems Image only"
+      ],
+      "expectedDiagnostics": [],
+      "preservation": "Existing Body, page settings and lexical surroundings stay byte-exact outside the inserted spans",
+      "consumerEvidence": null
+    },
+    {
+      "id": "images-authored",
+      "path": "images/authored.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.12-image.md",
+        "vendor/02-structures/2.305-embeddedimages.md",
+        "vendor/02-structures/2.306-embeddedimage.md"
+      ],
+      "operation": "Edit authored Embedded images: sizing, reuse, remove, replace and cleanup of definitions",
+      "editFootprint": [
+        "Selected Image Sizing/Value/Name properties and EmbeddedImage definitions only"
+      ],
+      "expectedDiagnostics": [],
+      "preservation": "Image items with unknown children and foreign-namespace attributes, unused definitions and untouched definitions stay byte-exact",
+      "consumerEvidence": null
+    },
+    {
+      "id": "images-preserved",
+      "path": "images/preserved.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.12-image.md",
+        "vendor/02-structures/2.305-embeddedimages.md",
+        "vendor/02-structures/2.306-embeddedimage.md"
+      ],
+      "operation": "none; preservation-only oracle for External, Database and expression-valued images, GIF/BMP/image/x-png definitions, malformed base64, a missing definition and an Image inside a Tablix cell",
+      "editFootprint": [],
+      "expectedDiagnostics": [],
+      "preservation": "External, Database and expression-valued items, non-PNG/JPEG definitions, malformed base64, missing-definition references and nested Tablix images are never rewritten",
+      "consumerEvidence": null
+    },
+    {
+      "id": "images-collision",
+      "path": "images/collision.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.12-image.md",
+        "vendor/02-structures/2.305-embeddedimages.md",
+        "vendor/02-structures/2.306-embeddedimage.md"
+      ],
+      "operation": "Import a picture whose suggested definition name collides with an existing definition of different content",
+      "editFootprint": [
+        "Insertion of one uniquely named EmbeddedImage and one Image item only"
+      ],
+      "expectedDiagnostics": [],
+      "preservation": "The existing logo definition keeps its name and content byte-exact",
+      "consumerEvidence": null
+    },
+    {
+      "id": "images-many",
+      "path": "images/many.rdlc",
+      "provenance": "Synthetic, authored by RDLC Code contributors",
+      "redistribution": "MIT",
+      "namespace": "http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition",
+      "status": "supported",
+      "capabilities": ["source", "projection"],
+      "citations": [
+        "vendor/02-structures/2.12-image.md",
+        "vendor/02-structures/2.305-embeddedimages.md",
+        "vendor/02-structures/2.306-embeddedimage.md"
+      ],
+      "operation": "none; bounded-structure oracle with 50 definitions and 50 Embedded image items emitted by scripts/fixtures/generate-images.ts",
+      "editFootprint": [],
+      "expectedDiagnostics": [],
+      "preservation": "All definitions and items stay in source order and byte-exact",
+      "consumerEvidence": null
     }
   ]
 }

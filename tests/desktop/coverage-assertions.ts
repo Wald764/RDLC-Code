@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 import ts from 'typescript';
 import type { CoverageRef } from './evidence.js';
@@ -108,6 +108,100 @@ export function coverageAssertionReasons(
         );
       }
     }
+  }
+  return reasons;
+}
+
+const COVERAGE_DIR = 'tests/desktop';
+const COVERAGE_FILE = /^coverage.*\.json$/;
+
+/** Names of every `coverage*.json` in the directory, sorted for stable reports. */
+export function coverageFiles(
+  root: string,
+  directory: string = COVERAGE_DIR,
+): string[] {
+  return readdirSync(resolve(root, directory))
+    .filter((name) => COVERAGE_FILE.test(name))
+    .sort();
+}
+
+function inside(base: string, path: string): boolean {
+  const local = relative(base, path);
+  return !(
+    isAbsolute(local) ||
+    local === '..' ||
+    local.startsWith('../') ||
+    local.startsWith('..\\')
+  );
+}
+
+/** Each authority path (a string or a record of strings) must exist inside the candidate. */
+function authorityReasons(base: string, authority: unknown): string[] {
+  const paths =
+    typeof authority === 'string'
+      ? [authority]
+      : authority && typeof authority === 'object'
+        ? Object.values(authority)
+        : [];
+  if (
+    !paths.length ||
+    paths.some((entry) => typeof entry !== 'string' || !entry)
+  )
+    return ['authority is missing or not made of paths'];
+  const reasons: string[] = [];
+  for (const entry of paths as string[]) {
+    try {
+      if (!inside(base, realpathSync(resolve(base, entry))))
+        reasons.push(`authority ${entry} escapes the candidate`);
+    } catch (error) {
+      reasons.push(
+        `authority ${entry} cannot resolve: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return reasons;
+}
+
+/**
+ * Checks every `coverage*.json`: each file is judged by its own `authority`
+ * and its own rows, and every reason is prefixed with the file it came from.
+ * No coverage file at all is a reason, never a silent pass.
+ */
+export function coverageFileReasons(
+  root: string,
+  directory: string = COVERAGE_DIR,
+): string[] {
+  const base = realpathSync(root);
+  let names: string[];
+  try {
+    names = coverageFiles(root, directory);
+  } catch (error) {
+    return [
+      `cannot list ${directory}: ${error instanceof Error ? error.message : String(error)}`,
+    ];
+  }
+  if (!names.length) return [`${directory}: no coverage*.json file found`];
+  const reasons: string[] = [];
+  for (const name of names) {
+    let coverage: CoverageRef & { authority?: unknown };
+    try {
+      coverage = JSON.parse(
+        readFileSync(resolve(root, directory, name), 'utf8'),
+      ) as CoverageRef & { authority?: unknown };
+      if (!coverage || !Array.isArray(coverage.rows))
+        throw new Error('rows must be an array');
+    } catch (error) {
+      reasons.push(
+        `${name}: cannot load: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      continue;
+    }
+    reasons.push(
+      ...[
+        ...authorityReasons(base, coverage.authority),
+        ...coverageAssertionReasons(root, coverage),
+      ].map((reason) => `${name}: ${reason}`),
+    );
   }
   return reasons;
 }

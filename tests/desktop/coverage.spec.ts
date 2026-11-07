@@ -1,15 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { test, expect } from 'playwright/test';
-import { coverageAssertionReasons } from './coverage-assertions.js';
-import type { CoverageRef } from './evidence.js';
+import { coverageFileReasons } from './coverage-assertions.js';
 
 test('coverage: every requirement names an executable assertion in the current candidate', async () => {
   const root = process.env.RDLC_DESKTOP_ROOT ?? process.cwd();
-  const coverage = JSON.parse(
-    readFileSync(resolve(root, 'tests/desktop/coverage.json'), 'utf8'),
-  ) as CoverageRef;
-  const reasons = coverageAssertionReasons(root, coverage);
+  const reasons = coverageFileReasons(root);
   await test.info().attach('coverage-assertion-resolution', {
     body: JSON.stringify({ reasons }, null, 2),
     contentType: 'application/json',

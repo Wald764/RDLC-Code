@@ -1,2 +1,3 @@
 # Byte-exact assets: never convert line endings on checkout.
 *.svg -text
+tests/fixtures/images/pictures/* binary
