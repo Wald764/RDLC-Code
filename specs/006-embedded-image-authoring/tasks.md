@@ -136,24 +136,28 @@ US5 all depend on them. ⚠️ No story work starts until T027 is done.
     `digest` is injected, so this package stays free of `node:crypto`.
   - `decodeImageData` and `allocateDefinitionName(fileName, existingDefinitionNames)`,
     which normalizes to an ASCII CLS identifier and appends the suffixes `_1`, `_2`… (research R8).
+  - Note (B2): the byte walkers (`sniffFormat`, `crc32`, `walkPng`, `walkJpeg`,
+    `decodeImageData`) live in `packages/report-model/src/image-data.ts` and are re-exported
+    by `packages/validation/src/images.ts`, because `xml-parser` must not import validation
+    (see the `no-restricted-imports` rule in `eslint.config.ts`).
 - [X] T010 **Gate B1**. Run `pnpm qa:quick`. Then run the review. Then commit
   `:sparkles: feat(validation): add PNG and JPEG content validation and image limits`.
 
 ### Batch B2: Projection
 
-- [ ] T011 [P] Write the failing tests first in `packages/xml-parser/src/project-images.test.ts`.
+- [X] T011 [P] Write the failing tests first in `packages/xml-parser/src/project-images.test.ts`.
   They assert the capability state table in [data-model.md](data-model.md#capability-state-rules):
   - **editable**: `image`, `name`, the geometry keys, `sizing`, `value`, `toolTip`;
   - **geometry-only**: the geometry keys plus `name`;
   - **preservation-only**: `[]`.
   For each item in `authored.rdlc` and `preserved.rdlc`, they also check `reason`,
   `references` counts and `encodedSize`, and that `Sizing` defaults to `AutoSize` when absent.
-- [ ] T012 [P] Write the failing tests first in `tests/roundtrip/images.test.ts` and
+- [X] T012 [P] Write the failing tests first in `tests/roundtrip/images.test.ts` and
   `tests/compatibility/images.test.ts`.
   - Roundtrip: open and save with no edit produces byte-identical text for every
     `tests/fixtures/images/*.rdlc`.
   - Compatibility: the projection status and per-item state match the manifest capabilities.
-- [ ] T013 Extend `packages/report-model/src/report.ts`.
+- [X] T013 Extend `packages/report-model/src/report.ts`.
   - Add `EmbeddedImageDefinition` with the fields `node`, `name`, `nameRange`, `mime`,
     `format`, `encodedSize`, `byteSize`, `pixels`, `hash`, `displayable`, `reason` and
     `references`, as defined in data-model.md.
@@ -162,18 +166,18 @@ US5 all depend on them. ⚠️ No story work starts until T027 is done.
     `capabilities` and `reason`.
   - Add `ReportProjection.images: ImageItem[]` and
     `ReportProjection.embeddedImages: EmbeddedImageDefinition[]`.
-- [ ] T014 Implement `projectImages(root, options?: {digest?})` in
+- [X] T014 Implement `projectImages(root, options?: {digest?})` in
   `packages/xml-parser/src/project-images.ts`.
   - Mirror `project-textboxes.ts` for names, bounds and ranges.
   - Use `child`/`children` from `names.ts`.
   - Validate the definition data with `decodeImageData` plus `walkPng`/`walkJpeg` from T009.
   - When `digest` is absent, `hash` is `null`.
-- [ ] T015 Wire `projectImages` into `packages/xml-parser/src/project-report.ts`.
+- [X] T015 Wire `projectImages` into `packages/xml-parser/src/project-report.ts`.
   - Body `Image` items that are editable or geometry-only leave `preserved`.
   - Items in a table cell and items that are preservation-only stay preserved.
   - The host passes a SHA-256 `digest` (`node:crypto`) when it projects in
     `apps/vscode-extension/src/document-session.ts`.
-- [ ] T016 **Gate B2**. Run `pnpm qa:quick`, which adds the roundtrip and compatibility
+- [X] T016 **Gate B2**. Run `pnpm qa:quick`, which adds the roundtrip and compatibility
   suites. Then run the review. Then commit
   `:sparkles: feat(parser): project embedded images and image items`.
 

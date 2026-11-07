@@ -106,9 +106,11 @@ packages/report-model/src/
   components.ts        EDIT  Image creatable; CreationKind 'image'
   navigation.ts        EDIT  CreateKind 'image'; embedded-image node metadata
   clipboard.ts         EDIT  Capture.images
+  image-data.ts        NEW   platform-neutral byte walkers (sniffFormat, crc32, walkPng,
+                             walkJpeg, decodeImageData), shared by validation and xml-parser
 packages/validation/src/
-  images.ts            NEW   validatePicture, PNG/JPEG structural walk, CRC32, name allocator,
-                             validateImageProperty, validateDefinitionMutation
+  images.ts            NEW   validatePicture, name allocator, validateImageProperty,
+                             validateDefinitionMutation; re-exports the image-data walkers
   clipboard.ts         EDIT  image requirement reconciliation
 packages/xml-parser/src/
   project-images.ts    NEW   projectImages(root) → definitions, items, capabilities

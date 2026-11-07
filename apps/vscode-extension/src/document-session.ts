@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { createHash } from 'node:crypto';
 import type {
   AcceptedSelectionMessage,
   ActionOutcomeMessage,
@@ -24,6 +25,10 @@ import {
 
 /** One retained capture per extension host, i.e. per VS Code window. */
 export const windowClipboard = new WindowClipboard(vscode.env.clipboard);
+
+/** SHA-256 of decoded image bytes; the projection itself stays Node-free. */
+const sha256 = (bytes: Uint8Array): string =>
+  createHash('sha256').update(bytes).digest('hex');
 
 /** Locate the host-named creation in the accepted result so the designer can select it. */
 function createdIn(
@@ -136,7 +141,9 @@ export class DocumentSession {
       this.accepted.snapshot.uri === this.document.uri.toString()
     )
       return this.accepted;
-    const current = evaluateReport(snapshotOf(this.document));
+    const current = evaluateReport(snapshotOf(this.document), {
+      digest: sha256,
+    });
     const previous = this.accepted;
     this.accepted = current;
     if (

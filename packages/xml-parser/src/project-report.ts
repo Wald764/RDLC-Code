@@ -1,5 +1,7 @@
 import type { XmlNode, XmlSyntaxDocument } from '@rdlc/report-model/syntax';
 import type {
+  EmbeddedImageDefinition,
+  ImageItem,
   PreservedRegion,
   ReportProjection,
   ReportSection,
@@ -9,14 +11,25 @@ import { children, RDL_2016 } from './names.js';
 import { projectTextboxes } from './project-textboxes.js';
 import { projectDatasets } from './project-datasets.js';
 import { projectTables } from './project-tables.js';
+import { projectImages } from './project-images.js';
 
 export { children, RDL_2016 } from './names.js';
 
-export function projectReport(document: XmlSyntaxDocument): ReportProjection {
+export interface ProjectReportOptions {
+  /** Host-supplied SHA-256 of decoded image bytes; image hashes are `null` without it. */
+  readonly digest?: (bytes: Uint8Array) => string;
+}
+
+export function projectReport(
+  document: XmlSyntaxDocument,
+  options: ProjectReportOptions = {},
+): ReportProjection {
   const root = document.root;
   const diagnostics: Diagnostic[] = [...document.diagnostics];
   const preserved: PreservedRegion[] = [];
   let section: ReportSection | null = null;
+  let images: readonly ImageItem[] = [];
+  let embeddedImages: readonly EmbeddedImageDefinition[] = [];
   let editable =
     document.status === 'valid' &&
     root?.expandedName.namespaceUri === RDL_2016 &&
@@ -86,7 +99,16 @@ export function projectReport(document: XmlSyntaxDocument): ReportProjection {
       'BottomMargin',
       'LeftMargin',
     ]);
+    // Authorable body images (editable or geometry-only) are no longer opaque regions.
+    const authorable = new Set<XmlNode>();
+    ({ images, embeddedImages } = projectImages(root, {
+      ...options,
+      editable,
+    }));
+    for (const image of images)
+      if (image.capabilities.length > 0) authorable.add(image.node);
     const visit = (node: XmlNode) => {
+      if (authorable.has(node)) return;
       if (
         node.expandedName.namespaceUri !== RDL_2016 ||
         !structural.has(node.expandedName.localName)
@@ -146,6 +168,8 @@ export function projectReport(document: XmlSyntaxDocument): ReportProjection {
     textboxes,
     datasets,
     tables,
+    images,
+    embeddedImages,
     preserved,
     diagnostics,
   };
