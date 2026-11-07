@@ -868,7 +868,7 @@
       "fixtures": ["local-blank"],
       "oracle": "Required suites run from root commands and GitHub Actions including installed-VSIX checks; quality/release gates, minimum/stable matrix, frozen dependencies and same-artifact release guarantees are preserved; missing/failed evidence blocks completion.",
       "tests": [
-        "tests/release/sidebar-gates.test.ts::the required aggregate depends on quality, the desktop matrix, the visual job and the stability gate",
+        "tests/release/sidebar-gates.test.ts::the required aggregate keeps its name, always runs and delegates the decision to the QA gate",
         "tests/release/sidebar-gates.test.ts::the desktop job keeps the six-entry OS and minimum/stable matrix",
         "tests/release/sidebar-gates.test.ts::every matrix entry runs the functional and installed journeys fail-closed",
         "tests/release/sidebar-gates.test.ts::both workflows install frozen and never weaken a required gate"
@@ -1286,7 +1286,8 @@
         "tests/package/contents.test.ts::the actual VSIX contains exactly the reviewed production assets and identity",
         "tests/package/offline.test.ts::packaged webview has nonce-bound local assets and denies network and executable resources",
         "tests/release/sidebar-gates.test.ts::both workflows install frozen and never weaken a required gate",
-        "tests/release/sidebar-gates.test.ts::the canonical job certifies its own packaged bytes before release-artifact.js"
+        "tests/release/sidebar-gates.test.ts::the canonical job packages and verifies without depending on informational jobs",
+        "tests/release/sidebar-gates.test.ts::candidate-qa certifies the exact canonical bytes, each suite on its own prerequisites"
       ]
     }
   ]
