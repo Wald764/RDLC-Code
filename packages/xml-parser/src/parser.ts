@@ -13,12 +13,15 @@ type MutableNode = { -readonly [K in keyof XmlNode]: XmlNode[K] } & {
   children: MutableNode[];
 };
 
+export const sourceStringLengthBudget = 16 * 1024 * 1024;
+export const sourceByteBudget = 16 * 1024 * 1024;
+
 export function parse(snapshot: DocumentSnapshot): XmlSyntaxDocument {
   let tokens: XmlToken[] = [];
   try {
     if (
-      snapshot.source.length > 16 * 1024 * 1024 ||
-      new TextEncoder().encode(snapshot.source).length > 16 * 1024 * 1024
+      snapshot.source.length > sourceStringLengthBudget ||
+      new TextEncoder().encode(snapshot.source).length > sourceByteBudget
     )
       throw new SourceOnlyError(
         'Visual parsing exceeds the proposed 16 MiB source budget.',

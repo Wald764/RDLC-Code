@@ -102,7 +102,7 @@ US5 all depend on them. ⚠️ No story work starts until T027 is done.
 
 ### Batch B1: Format, limits and names
 
-- [ ] T006 [P] Write the failing tests first in `packages/validation/src/images.test.ts`.
+- [X] T006 [P] Write the failing tests first in `packages/validation/src/images.test.ts`.
   - Every T001 picture, with its expected result or refusal code:
     - `IMAGE_FORMAT_UNSUPPORTED`: `spoofed.png` is accepted as JPEG; `gif.gif` is refused.
     - `IMAGE_DATA_INVALID`: `truncated.png`, `bad-crc.png`.
@@ -115,7 +115,7 @@ US5 all depend on them. ⚠️ No story work starts until T027 is done.
     - `"2 my logo!.png"` gives a stem starting with a letter;
     - an empty or non-ASCII-only stem gives `Image`;
     - names are case-sensitive.
-- [ ] T007 [P] Create `packages/report-model/src/images.ts` and export it from the package
+- [X] T007 [P] Create `packages/report-model/src/images.ts` and export it from the package
   index. It contains:
   - the limit constants (see shared conventions);
   - `ImageReason = 'format-unsupported' | 'data-invalid' | 'too-large' | 'pixels-exceeded' | 'mime-mismatch' | 'value-expression'`;
@@ -124,9 +124,9 @@ US5 all depend on them. ⚠️ No story work starts until T027 is done.
   - `ImageRefusal = { code, limit?, actual?, fileName }`;
   - `ImageAsset = { key, mime: 'image/png'|'image/jpeg', data }`;
   - the refusal code constants listed in [data-model.md](data-model.md#validation-rules-summary).
-- [ ] T008 [P] In `packages/xml-parser/src/parser.ts`, export the 16 MiB string-length and
+- [X] T008 [P] In `packages/xml-parser/src/parser.ts`, export the 16 MiB string-length and
   UTF-8 byte budget constants (lines 20-24) under named exports. This changes no behavior.
-- [ ] T009 Implement `packages/validation/src/images.ts` so that T006 passes. It provides:
+- [X] T009 Implement `packages/validation/src/images.ts` so that T006 passes. It provides:
   - `sniffFormat`, `crc32`, `walkPng` and `walkJpeg`, which together do the following:
     - PNG: `IHDR` first, `IEND` last, every CRC valid.
     - JPEG: walk the markers to SOF0–SOF15, excluding `C4`, `C8` and `CC`; read the
@@ -136,7 +136,7 @@ US5 all depend on them. ⚠️ No story work starts until T027 is done.
     `digest` is injected, so this package stays free of `node:crypto`.
   - `decodeImageData` and `allocateDefinitionName(fileName, existingDefinitionNames)`,
     which normalizes to an ASCII CLS identifier and appends the suffixes `_1`, `_2`… (research R8).
-- [ ] T010 **Gate B1**. Run `pnpm qa:quick`. Then run the review. Then commit
+- [X] T010 **Gate B1**. Run `pnpm qa:quick`. Then run the review. Then commit
   `:sparkles: feat(validation): add PNG and JPEG content validation and image limits`.
 
 ### Batch B2: Projection
