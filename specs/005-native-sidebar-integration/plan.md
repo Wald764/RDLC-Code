@@ -26,6 +26,8 @@ visual, cross-platform, same-candidate or release requirement is waived. Do not
 declare a story or the feature validated while its mandatory checks are missing,
 failed or unrun. Earlier execution notes describe their historical checkpoints.
 
+**Validation policy change (2026-11-07):** quality outcomes are tiered (MERGEABLE, PUBLISHABLE, FULLY VALIDATED) and development runs targeted local QA, with the full regression and Desktop matrix in GitHub Actions. No acceptance criterion changes; the feature is still not FULLY VALIDATED while mandatory checks are missing, failed or unrun. See the [QA policy](../../docs/validation/qa-policy.md).
+
 **Language/Version**: TypeScript 6.0.3; Node `>=24.15.0 <25` (`.node-version` 24.22.0); pnpm 11.28.2; Angular 22.2.3.
 
 **Primary Dependencies**: Existing VS Code public APIs/types 1.110.0, Angular/RxJS 7.8.2 and workspace report-model/parser/validation/serializer/renderer. No new runtime dependency. Exact test-only `playwright@1.64.1` is the selected Electron-driver candidate, subject to mandatory capability bootstrap; retain `@vscode/test-electron@3.1.0` provisioning and host integration. Check required declarations against minimum runtime without broadening compatibility claims.

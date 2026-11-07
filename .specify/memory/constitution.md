@@ -1,3 +1,17 @@
+<!--
+Sync Impact Report
+Version change: 1.2.0 -> 2.0.0 (MAJOR: principle VI and workflow items 6-7 redefine the
+"all required checks pass before any publication" obligation as tiered quality gates).
+Amendment approved by the project maintainer's explicit request in this change (2026-11-07).
+Modified principles: VI (Reproducible, Automated Releases); VII unchanged.
+Modified sections: Development Workflow and Quality Gates (items 6 and 7 amended; items 8 and 9 added); Governance.
+Dependent guidance updated: CLAUDE.md, .claude/agents/general.md, CONTRIBUTING.md,
+docs/releases.md, docs/validation/qa-policy.md (new), docs/validation/github-actions.md,
+specs/005-native-sidebar-integration/{quickstart,automated-validation,plan,tasks}.md and
+contracts/desktop-validation.md.
+Follow-up: repository rulesets and workflows implement the policy; see docs/validation/qa-policy.md.
+-->
+
 # RDLC Code Constitution
 
 ## Core Principles
@@ -80,8 +94,17 @@ step after tag creation. Release automation MUST verify that the tag version equ
 extension package version and MUST fail before publication if they differ.
 
 Release builds MUST use the exact commit identified by the tag and install dependencies from
-the committed pnpm lockfile with frozen-lockfile enforcement. All required quality checks MUST
-pass for that commit before any artifact is published. The pipeline MUST produce a versioned
+the committed pnpm lockfile with frozen-lockfile enforcement. All critical quality gates MUST
+pass on that exact tagged commit before any artifact is published. Critical gates are: build;
+VSIX validity and packaging; XML corruption or unauthorized mutation, including cross-document
+mutation; essential authoring and editing workflows; data loss and native undo/redo; critical
+protocol, validation and synchronization defects; security and unsafe execution; offline and
+security isolation; the canonical artifact; digest and provenance; version consistency; and
+required critical release evidence. A release with failing non-critical checks MAY be
+published only when each failure is visible, classified, linked to a tracked issue or documented
+exception, and explicitly accepted for that release. Unclassified checks are critical. Publishing
+with accepted warnings MUST NEVER be presented as fully validated (see Quality Outcomes). The
+pipeline MUST produce a versioned
 VSIX and automatically create a GitHub Release with a generated changelog and that VSIX attached.
 It MUST publish the same VSIX to the Visual Studio Marketplace and MUST also publish that same
 VSIX to Open VSX when the required credentials are configured in GitHub Actions.
@@ -142,11 +165,27 @@ presented as validated.
     limitations in the change summary; limitations MUST NOT contradict mandatory principles.
 6. Every pull request and every push to `main` MUST trigger lint, typecheck, tests, and build
    checks in GitHub Actions. Dependency installation MUST be reproducible from the committed
-   pnpm lockfile using frozen-lockfile enforcement. Failed quality checks MUST block all
-   artifact publication.
-7. Every release-tag push MUST run the same quality gates for the tagged commit before
+   pnpm lockfile using frozen-lockfile enforcement. A failed critical gate MUST block merge and
+   all artifact publication. A failed non-critical check MUST remain visible and classified; it
+   MUST NOT block merge or publication unless accepted as described in principle VI, and it
+   MUST NEVER be converted into a passed result.
+7. Every release-tag push MUST run the complete quality gates for the tagged commit before
    publication and satisfy principle VI, including version consistency, identical VSIX
    distribution, automatic release notes, and protection against overwriting published versions.
+   Critical gates MUST pass on that exact commit; accepted non-critical failures MUST be
+   recorded as release exceptions.
+8. Quality outcomes are distinct and never interchangeable. MERGEABLE: no critical failure or
+   missing critical evidence on the pull request. PUBLISHABLE: critical release gates passed on
+   the exact tagged commit and every non-critical failure is covered by an accepted exception.
+   FULLY VALIDATED: no failure, no applied exception, no accepted-failure evidence, no
+   unvalidated platform skip, and all mandatory acceptance evidence complete. Publishing with
+   accepted warnings MUST NEVER imply FULLY VALIDATED, and principle VII still forbids declaring
+   a feature fully validated while any required test is unexecuted or failed.
+9. During development, local QA MUST be targeted to the modified code and its affected
+   dependencies. The complete regression suite and Desktop end-to-end validation run in GitHub
+   Actions and MUST run locally only on explicit request. The check classification and procedures
+   are defined in `docs/validation/qa-policy.md`; that policy refines, and MUST NOT weaken, this
+   section.
 
 ## Governance
 
@@ -164,4 +203,4 @@ or redefinitions; MINOR for new principles or materially expanded obligations; P
 clarifications that do not change obligations. The ratification date remains the date of
 initial adoption. The initial version is 1.0.0 because the prior file was an unratified scaffold.
 
-**Version**: 1.2.0 | **Ratified**: 2026-10-15 | **Last Amended**: 2026-10-24
+**Version**: 2.0.0 | **Ratified**: 2026-10-15 | **Last Amended**: 2026-11-07

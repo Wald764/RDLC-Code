@@ -8,19 +8,25 @@ No backend, database or external report runtime is required.
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm format:check
-pnpm lint
-pnpm typecheck
-pnpm test:unit
-pnpm test:roundtrip
-pnpm test:compatibility
-pnpm test:acceptance
-pnpm test:release
-pnpm build
-pnpm package
-pnpm test:vscode
-pnpm test:package
+pnpm qa:quick
 ```
+
+Local QA is targeted: run only what is relevant to your change. The canonical
+policy, classification and outcomes are in
+[docs/validation/qa-policy.md](docs/validation/qa-policy.md). Do not run the complete
+suite after every change; GitHub Actions runs the full regression and Desktop matrix
+on every pull request.
+
+| Command                       | Use                                                                                                                                                                                                                                                 |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm qa:quick`               | Default. Affected workspaces only, plus prettier/eslint on changed files. No VS Code, packaging or Desktop E2E.                                                                                                                                     |
+| `pnpm qa:integration`         | Coherent batch of changes: full format, lint, typecheck, all node suites and build; one extension-host VS Code run (`test:vscode`) only if the extension or a package it depends on is affected. Never Desktop E2E, visual tests or packaging.      |
+| `pnpm qa:release`             | Critical release checks: release tests, build, package (verifies the VSIX) and static package tests; `--tag vX.Y.Z` also validates that tag. It does not run `validate-release-config`, which needs the publishing environment and runs in CI only. |
+| `pnpm qa:full --confirm-full` | Complete CI-equivalent regression, including Desktop E2E and visual tests. Only on explicit request; it takes well over an hour.                                                                                                                    |
+
+Every command accepts `--plan` to print what it would run without running it.
+Work on a feature branch and open a pull request: `main` is protected and requires
+the `Required checks` status.
 
 `test:acceptance` tests measurement-record validation; it does not collect or
 claim actual SC-004 timings. `test:release` tests release guards without accounts
@@ -41,8 +47,9 @@ when correcting its test titles; resolving a title is not evidence that it passe
 
 Feature 005 adds `pnpm test:e2e` and `pnpm test:visual`. Build before running them.
 They fail closed for missing mandatory suites, references, observer capabilities
-or same-candidate evidence. A successful targeted test does not certify the full
-feature. Baseline requirements and the six-target matrix are described in the
+or same-candidate evidence; in the QA policy this maps to a feature that cannot be
+declared FULLY VALIDATED, while only critical failures block a merge or release.
+A successful targeted test does not certify the full feature. Baseline requirements and the six-target matrix are described in the
 [native sidebar quickstart](specs/005-native-sidebar-integration/quickstart.md).
 
 For a focused functional reproduction after `pnpm build` and `pnpm package`:
@@ -61,8 +68,9 @@ coalescing. The separate native-drag probe records unavailable custom-MIME
 delivery on Windows; native activation and compact HTML drag remain independent
 functional requirements.
 
-The full installed run takes well over an hour, opens real windows that take
-focus and is timing-sensitive, so avoid using the machine meanwhile. CI splits
+The full installed run is CI-only by default: it takes well over an hour, opens
+real windows that take focus and is timing-sensitive, so run it locally only when
+explicitly requested and avoid using the machine meanwhile. CI splits
 it into parallel jobs: set `RDLC_DESKTOP_GROUP` to `core`, `authoring` or
 `context` to run one disjoint slice locally; unset runs every suite.
 
