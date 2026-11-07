@@ -772,6 +772,96 @@ test('creation intents carry positions only and results may name the created ite
   );
 });
 
+test('createImage accepts only placement, left, top and definition', () => {
+  const author = (payload: Record<string, unknown>) =>
+    validateMessage({ ...edit, operation: 'author', payload });
+  for (const payload of [
+    { action: 'createImage', placement: 'default' },
+    { action: 'createImage', placement: 'drop', left: '1in', top: '0.5in' },
+    { action: 'createImage', placement: 'default', definition: 'logo' },
+    {
+      action: 'createImage',
+      placement: 'drop',
+      left: '0pt',
+      top: '12pt',
+      definition: 'logo',
+    },
+    { action: 'createImage', placement: 'default', left: '1in', top: '1in' },
+  ])
+    assert.ok(author(payload), JSON.stringify(payload));
+  for (const payload of [
+    { action: 'createImage' },
+    { action: 'createImage', placement: 'center' },
+    { action: 'createImage', placement: 1 },
+    { action: 'createImage', placement: 'drop' },
+    { action: 'createImage', placement: 'drop', left: '1in' },
+    { action: 'createImage', placement: 'drop', top: '1in' },
+    { action: 'createImage', placement: 'default', left: '1in' },
+    { action: 'createImage', placement: 'drop', left: 1, top: 2 },
+    { action: 'createImage', placement: 'default', definition: '' },
+    { action: 'createImage', placement: 'default', definition: 7 },
+    {
+      action: 'createImage',
+      placement: 'default',
+      definition: 'x'.repeat(257),
+    },
+  ])
+    assert.equal(author(payload), null, JSON.stringify(payload));
+  for (const extra of [
+    { path: 'C:\\pictures\\logo.png' },
+    { uri: 'file:///pictures/logo.png' },
+    { data: 'iVBORw0KGgo=' },
+    { bytes: [137, 80, 78, 71] },
+    { base64: 'iVBORw0KGgo=' },
+    { mime: 'image/png' },
+    { name: 'Image1' },
+    { xml: '<Image/>' },
+  ])
+    assert.equal(
+      author({ action: 'createImage', placement: 'default', ...extra }),
+      null,
+      JSON.stringify(extra),
+    );
+});
+
+test('an editResult may report a cancelled file chooser without a diagnostic', () => {
+  const result = {
+    protocol: 2,
+    kind: 'editResult',
+    requestId: 'r1',
+    baseVersion: 2,
+    version: 2,
+    accepted: false,
+    changed: false,
+    cancelled: true,
+    mappings: [],
+    reason: 'CANCELLED',
+    diagnostics: [],
+  };
+  assert.ok(validateMessage(result));
+  for (const bad of [
+    { ...result, accepted: true },
+    { ...result, cancelled: false },
+    { ...result, cancelled: 'yes' },
+    { ...result, changed: true, version: 3 },
+    {
+      ...result,
+      diagnostics: [
+        {
+          code: 'X',
+          category: 'unsupported',
+          severity: 'error',
+          range: { start: 0, end: 0 },
+          message: 'm',
+          correctiveAction: 'c',
+          blockedOperations: [],
+        },
+      ],
+    },
+  ])
+    assert.equal(validateMessage(bad), null, JSON.stringify(bad).slice(0, 80));
+});
+
 test('accepted navigation is closed, version-local, parent ordered and budgeted', () => {
   const node = (
     id: string,

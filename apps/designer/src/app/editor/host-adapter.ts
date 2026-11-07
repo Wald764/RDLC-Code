@@ -44,6 +44,8 @@ const hostReasons: Readonly<Record<string, string>> = {
   DOCUMENT_CHANGED_DURING_APPLY:
     'The report changed while the edit was being applied.',
   DOCUMENT_READ_ONLY: 'This report is read-only.',
+  WORKSPACE_UNTRUSTED:
+    'This workspace is not trusted. Trust it to change the report.',
   HOST_EDIT_FAILED: 'VS Code could not apply the edit.',
   REJECTED_BY_HOST: 'VS Code rejected the edit.',
 };

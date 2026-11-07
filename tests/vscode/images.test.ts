@@ -1,0 +1,511 @@
+import * as vscode from 'vscode';
+import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import type { HostMessage } from '@rdlc/report-model/protocol';
+import { validateMessage } from '@rdlc/report-model/protocol';
+import {
+  IMAGE_DATA_INVALID,
+  IMAGE_FORMAT_UNSUPPORTED,
+  IMAGE_PIXELS_EXCEEDED,
+  IMAGE_READ_FAILED,
+  IMAGE_REPORT_BUDGET,
+  IMAGE_TOO_LARGE,
+  rawImageLimit,
+} from '@rdlc/report-model/images';
+import { parse } from '@rdlc/xml-parser/parser';
+import { sourceStringLengthBudget } from '@rdlc/xml-parser/parser';
+import { projectReport } from '@rdlc/xml-parser/project-report';
+import { DocumentSession } from '../../apps/vscode-extension/src/document-session.js';
+import type { ImageSource } from '../../apps/vscode-extension/src/image-import.js';
+import { FailingFileSystem } from './failing-file-system.js';
+import { history, replaceSource, until } from './session-checks.js';
+
+type Result = Extract<HostMessage, { kind: 'editResult' }>;
+
+const fixtures = resolve(__dirname, '../../../tests/fixtures/images');
+const picture = (name: string) =>
+  new Uint8Array(readFileSync(join(fixtures, 'pictures', name)));
+
+interface Step {
+  /** `cancelled`, or the chosen file. */
+  file: 'cancelled' | { fileName: string; bytes: Uint8Array; size?: number };
+  /** Runs while the file chooser is pending, e.g. to change the text. */
+  during?: () => Promise<void>;
+}
+
+/** Scripted file chooser: records every call so gating and stat-before-read are visible. */
+class FakeImageSource implements ImageSource {
+  readonly calls: string[] = [];
+  private readonly script: Step[] = [];
+  private current: Exclude<Step['file'], 'cancelled'> | null = null;
+  enqueue(step: Step | Step['file']): void {
+    this.script.push(
+      step === 'cancelled' || 'bytes' in step ? { file: step } : step,
+    );
+  }
+  count(call: string): number {
+    return this.calls.filter((entry) => entry === call).length;
+  }
+  async pick() {
+    this.calls.push('pick');
+    const step = this.script.shift();
+    assert.ok(step, 'a file chooser was opened without a scripted answer');
+    await step.during?.();
+    if (step.file === 'cancelled') return 'cancelled' as const;
+    this.current = step.file;
+    return { uri: { token: step.file.fileName }, fileName: step.file.fileName };
+  }
+  async stat() {
+    this.calls.push('stat');
+    return this.current!.size ?? this.current!.bytes.length;
+  }
+  async read() {
+    this.calls.push('read');
+    return this.current!.bytes;
+  }
+}
+
+async function open(source?: string): Promise<vscode.TextDocument> {
+  const text = source ?? readFileSync(join(fixtures, 'blank.rdlc'), 'utf8');
+  const file = join(mkdtempSync(join(tmpdir(), 'rdlc-image-')), 'report.rdlc');
+  writeFileSync(file, text);
+  return vscode.workspace.openTextDocument(file);
+}
+
+/** A designer view bound to a fake file chooser. */
+function view(
+  document: vscode.TextDocument,
+  source: ImageSource,
+  isTrusted?: () => boolean,
+) {
+  const session = new DocumentSession(
+    document,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    source,
+    isTrusted,
+  );
+  const messages: HostMessage[] = [];
+  const listener = session.onMessage((message) => messages.push(message));
+  session.receive({ protocol: 2, kind: 'ready' });
+  let count = 0;
+  const create = async (
+    payload: Record<string, string> = { placement: 'default' },
+    baseVersion = document.version,
+  ): Promise<Result> => {
+    const requestId = `image-${++count}-${Math.random().toString(36).slice(2, 8)}`;
+    const targetId = parse({
+      uri: document.uri.toString(),
+      version: baseVersion,
+      source: document.getText(),
+      eol: '\n',
+    }).root!.id;
+    session.receive({
+      protocol: 2,
+      kind: 'edit',
+      requestId,
+      baseVersion,
+      targetId,
+      operation: 'author',
+      payload: { action: 'createImage', ...payload },
+    });
+    await until(
+      () =>
+        messages.some(
+          (m) => m.kind === 'editResult' && m.requestId === requestId,
+        ),
+      'createImage settles',
+    );
+    const result = messages.find(
+      (m): m is Result => m.kind === 'editResult' && m.requestId === requestId,
+    )!;
+    assert.ok(validateMessage(result), 'result satisfies the shared protocol');
+    return result;
+  };
+  return {
+    session,
+    messages,
+    create,
+    dispose() {
+      listener.dispose();
+      session.dispose();
+    },
+  };
+}
+
+const project = (document: vscode.TextDocument) =>
+  projectReport(
+    parse({
+      uri: document.uri.toString(),
+      version: document.version,
+      source: document.getText(),
+      eol: '\n',
+    }),
+  );
+
+/** The payload must appear nowhere except in the `imageAssets` message. */
+function assertNoPayload(messages: readonly HostMessage[], bytes: Uint8Array) {
+  const probe = Buffer.from(bytes).toString('base64').slice(0, 64);
+  for (const message of messages.filter((m) => m.kind !== 'imageAssets'))
+    assert.ok(!JSON.stringify(message).includes(probe), message.kind);
+}
+
+export async function run(): Promise<void> {
+  await insertPngThenJpeg();
+  await cancelLeavesNothing();
+  await refusalCorpus();
+  await oversizedFileIsNeverRead();
+  await reportBudget();
+  await deduplication();
+  await gating();
+  await staleSnapshot();
+  await disposedDuringChooser();
+}
+
+async function insertPngThenJpeg(): Promise<void> {
+  const document = await open();
+  const original = document.getText();
+  await vscode.window.showTextDocument(document);
+  const source = new FakeImageSource();
+  const designer = view(document, source);
+  try {
+    assert.equal(document.isDirty, false);
+    source.enqueue({ fileName: 'logo.png', bytes: picture('logo.png') });
+    const first = await designer.create();
+    assert.deepEqual([first.accepted, first.changed], [true, true]);
+    assert.equal(first.reason, 'APPLIED');
+    assert.deepEqual(source.calls, ['pick', 'stat', 'read']);
+    const afterPng = document.getText();
+    assert.equal(document.isDirty, true, 'the document becomes dirty');
+
+    source.enqueue({ fileName: 'photo.jpg', bytes: picture('photo.jpg') });
+    const second = await designer.create();
+    assert.deepEqual([second.accepted, second.changed], [true, true]);
+    const afterJpeg = document.getText();
+    const projection = project(document);
+    assert.equal(projection.status, 'editable');
+    assert.deepEqual(
+      projection.embeddedImages.map((entry) => entry.name),
+      ['logo', 'photo'],
+    );
+    assert.deepEqual(
+      projection.images.map((entry) => [entry.name, entry.definition]),
+      [
+        ['Image1', 'logo'],
+        ['Image2', 'photo'],
+      ],
+    );
+    assert.equal(
+      document.getText().match(/<EmbeddedImages>/g)?.length,
+      1,
+      'one EmbeddedImages collection',
+    );
+    // Unrelated bytes are unchanged: remove the inserted fragments and compare.
+    assert.equal(
+      document
+        .getText()
+        .replace(/<Image Name=.*?<\/Image>/gs, '')
+        .replace(/<EmbeddedImages>.*<\/EmbeddedImages>/s, ''),
+      original,
+    );
+
+    // The created item is named by the host so the designer can select it.
+    const created = second.created!;
+    assert.equal(created.name, 'Image2');
+    const selected = projection.images.find((entry) => entry.name === 'Image2');
+    assert.equal(created.id, selected!.node.id);
+    const snapshot = [...designer.messages]
+      .reverse()
+      .find((m) => m.kind === 'snapshot');
+    assert.ok(
+      snapshot?.kind === 'snapshot' &&
+        snapshot.scene?.items.some(
+          (item) => item.id === created.id && item.kind === 'image',
+        ),
+      'the new image is in the published scene',
+    );
+    assertNoPayload(designer.messages, picture('logo.png'));
+    assertNoPayload(designer.messages, picture('photo.jpg'));
+
+    // One undo per insertion, and one redo per insertion.
+    await history(document, 'undo', afterPng);
+    await history(document, 'undo', original);
+    await history(document, 'redo', afterPng);
+    assert.equal(project(document).images.length, 1);
+    await history(document, 'redo', afterJpeg);
+  } finally {
+    designer.dispose();
+  }
+}
+
+async function cancelLeavesNothing(): Promise<void> {
+  const document = await open();
+  const original = document.getText();
+  await vscode.window.showTextDocument(document);
+  const source = new FakeImageSource();
+  const designer = view(document, source);
+  try {
+    const version = document.version;
+    source.enqueue('cancelled');
+    const result = await designer.create();
+    assert.equal(result.accepted, false);
+    assert.equal(result.cancelled, true);
+    assert.deepEqual(result.diagnostics, []);
+    assert.equal(result.changed, false);
+    assert.equal(document.getText(), original);
+    assert.equal(document.version, version);
+    assert.equal(document.isDirty, false);
+    assert.deepEqual(source.calls, ['pick']);
+    // No history entry: the next insertion is the first and only undo step.
+    source.enqueue({ fileName: 'logo.png', bytes: picture('logo.png') });
+    assert.equal((await designer.create()).accepted, true);
+    await history(document, 'undo', original);
+  } finally {
+    designer.dispose();
+  }
+}
+
+async function refusalCorpus(): Promise<void> {
+  const document = await open();
+  const original = document.getText();
+  const source = new FakeImageSource();
+  const designer = view(document, source);
+  try {
+    const version = document.version;
+    const corpus: [string, string][] = [
+      ['gif.gif', IMAGE_FORMAT_UNSUPPORTED],
+      ['bad-crc.png', IMAGE_DATA_INVALID],
+      ['truncated.png', IMAGE_DATA_INVALID],
+      ['huge-dims.png', IMAGE_PIXELS_EXCEEDED],
+      ['mega-pixels.png', IMAGE_PIXELS_EXCEEDED],
+    ];
+    for (const [name, code] of corpus) {
+      source.enqueue({ fileName: name, bytes: picture(name) });
+      const result = await designer.create();
+      assert.equal(result.accepted, false, name);
+      assert.equal(result.cancelled, undefined, name);
+      assert.equal(result.reason, code, name);
+      assert.equal(result.diagnostics[0]?.code, code, name);
+      assert.ok(result.diagnostics[0]!.message.includes(name), name);
+      assert.equal(document.getText(), original, name);
+      assert.equal(document.version, version, name);
+      assert.equal(document.isDirty, false, name);
+      assertNoPayload(designer.messages, picture(name));
+    }
+    // A read failure names the file only, never the error text.
+    const failing: ImageSource = {
+      pick: async () => ({ uri: 1, fileName: 'gone.png' }),
+      stat: async () => {
+        throw new Error('ENOENT /private/path/gone.png');
+      },
+      read: async () => new Uint8Array(),
+    };
+    const broken = view(document, failing);
+    try {
+      const result = await broken.create();
+      assert.equal(result.reason, IMAGE_READ_FAILED);
+      assert.ok(!JSON.stringify(result).includes('/private/path'));
+      assert.equal(document.getText(), original);
+    } finally {
+      broken.dispose();
+    }
+  } finally {
+    designer.dispose();
+  }
+}
+
+async function oversizedFileIsNeverRead(): Promise<void> {
+  const document = await open();
+  const original = document.getText();
+  const source = new FakeImageSource();
+  const designer = view(document, source);
+  try {
+    // Generated at test time, never committed: a valid JPEG header followed by padding.
+    const overLimit = new Uint8Array(rawImageLimit + 1);
+    overLimit.set(picture('photo.jpg'));
+    source.enqueue({ fileName: 'over-5mib.jpg', bytes: overLimit });
+    const result = await designer.create();
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, IMAGE_TOO_LARGE);
+    assert.match(result.diagnostics[0]!.message, /5\.00 MiB/);
+    assert.deepEqual(source.calls, ['pick', 'stat'], 'readFile is not called');
+    assert.equal(document.getText(), original);
+  } finally {
+    designer.dispose();
+  }
+}
+
+async function reportBudget(): Promise<void> {
+  const base = readFileSync(join(fixtures, 'blank.rdlc'), 'utf8');
+  // Just under the 16 MiB parse budget, so only the new picture can exceed it.
+  const room = 4096;
+  const filler = 'x'.repeat(sourceStringLengthBudget - base.length - room - 7);
+  const padded = base.replace('</Report>', `<!--${filler}--></Report>`);
+  assert.ok(padded.length < sourceStringLengthBudget);
+  const document = await open(padded);
+  const source = new FakeImageSource();
+  const designer = view(document, source);
+  try {
+    const version = document.version;
+    source.enqueue({ fileName: 'logo.png', bytes: picture('logo.png') });
+    const result = await designer.create();
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, IMAGE_REPORT_BUDGET);
+    assert.equal(document.version, version);
+    assert.equal(document.getText().length, padded.length);
+    assertNoPayload(designer.messages, picture('logo.png'));
+  } finally {
+    designer.dispose();
+  }
+}
+
+async function deduplication(): Promise<void> {
+  const document = await open();
+  const original = document.getText();
+  await vscode.window.showTextDocument(document);
+  const source = new FakeImageSource();
+  const designer = view(document, source);
+  try {
+    source.enqueue({ fileName: 'logo.png', bytes: picture('logo.png') });
+    assert.equal((await designer.create()).accepted, true);
+    const afterFirst = document.getText();
+    source.enqueue({ fileName: 'logo.png', bytes: picture('logo.png') });
+    assert.equal((await designer.create()).accepted, true);
+    const projection = project(document);
+    assert.equal(
+      projection.embeddedImages.length,
+      1,
+      'the definition is reused',
+    );
+    assert.deepEqual(
+      projection.images.map((entry) => entry.definition),
+      ['logo', 'logo'],
+    );
+    assert.equal(document.getText().match(/<ImageData>/g)?.length, 1);
+    await history(document, 'undo', afterFirst);
+    await history(document, 'undo', original);
+  } finally {
+    designer.dispose();
+  }
+}
+
+async function gating(): Promise<void> {
+  const base = readFileSync(join(fixtures, 'blank.rdlc'), 'utf8');
+  // A read-only file system never opens the chooser.
+  const volume = new FailingFileSystem(Buffer.from(base));
+  const registration = vscode.workspace.registerFileSystemProvider(
+    'rdlc-image-readonly',
+    volume,
+    { isReadonly: true },
+  );
+  const readonlyDocument = await vscode.workspace.openTextDocument(
+    vscode.Uri.parse('rdlc-image-readonly:/report.rdlc'),
+  );
+  const source = new FakeImageSource();
+  const readonlyView = view(readonlyDocument, source);
+  try {
+    const result = await readonlyView.create();
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, 'DOCUMENT_READ_ONLY');
+    assert.equal(source.count('pick'), 0, 'the file chooser is never invoked');
+    assert.equal(readonlyDocument.getText(), base);
+  } finally {
+    readonlyView.dispose();
+    registration.dispose();
+  }
+
+  // An untrusted workspace is refused the same way, through the injected trust predicate.
+  const document = await open();
+  const untrusted = new FakeImageSource();
+  const designer = view(document, untrusted, () => false);
+  try {
+    const result = await designer.create();
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, 'WORKSPACE_UNTRUSTED');
+    assert.equal(
+      untrusted.count('pick'),
+      0,
+      'the file chooser is never invoked',
+    );
+    assert.equal(document.getText(), base);
+    assert.equal(document.isDirty, false);
+  } finally {
+    designer.dispose();
+  }
+}
+
+async function disposedDuringChooser(): Promise<void> {
+  const document = await open();
+  const original = document.getText();
+  const source = new FakeImageSource();
+  const designer = view(document, source);
+  const version = document.version;
+  source.enqueue({
+    file: { fileName: 'logo.png', bytes: picture('logo.png') },
+    during: async () => designer.session.dispose(),
+  });
+  const targetId = parse({
+    uri: document.uri.toString(),
+    version,
+    source: original,
+    eol: '\n',
+  }).root!.id;
+  designer.session.receive({
+    protocol: 2,
+    kind: 'edit',
+    requestId: 'image-disposed',
+    baseVersion: version,
+    targetId,
+    operation: 'author',
+    payload: { action: 'createImage', placement: 'default' },
+  });
+  await until(() => source.count('read') === 1, 'the import finishes');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(document.getText(), original, 'no edit after dispose');
+  assert.equal(document.version, version);
+  assert.ok(
+    !designer.messages.some(
+      (m) => m.kind === 'editResult' && m.requestId === 'image-disposed',
+    ),
+  );
+  designer.dispose();
+}
+
+async function staleSnapshot(): Promise<void> {
+  const document = await open();
+  const source = new FakeImageSource();
+  const designer = view(document, source);
+  try {
+    const baseVersion = document.version;
+    const changed = document
+      .getText()
+      .replace('No embedded images', 'Edited while the chooser was open');
+    assert.notEqual(changed, document.getText());
+    source.enqueue({
+      file: { fileName: 'logo.png', bytes: picture('logo.png') },
+      during: () => replaceSource(document, changed),
+    });
+    const result = await designer.create({ placement: 'default' }, baseVersion);
+    assert.equal(result.accepted, true);
+    assert.equal(result.baseVersion, baseVersion);
+    assert.ok(
+      result.version > baseVersion + 1,
+      'applied to the latest version',
+    );
+    assert.deepEqual(
+      result.mappings,
+      [],
+      'ids of a stale version are not mapped',
+    );
+    const text = document.getText();
+    assert.ok(text.includes('Edited while the chooser was open'));
+    assert.equal(project(document).images.length, 1);
+    assert.equal(result.created!.id, project(document).images[0]!.node.id);
+  } finally {
+    designer.dispose();
+  }
+}

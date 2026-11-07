@@ -819,6 +819,9 @@ describe('refusal wording', () => {
         diagnostics: [],
       }),
     ).toBe('The report changed while the edit was being applied.');
+    expect(
+      explainRefusal({ reason: 'WORKSPACE_UNTRUSTED', diagnostics: [] }),
+    ).toBe('This workspace is not trusted. Trust it to change the report.');
     expect(explainRefusal({ reason: 'SOMETHING_NEW', diagnostics: [] })).toBe(
       'SOMETHING_NEW',
     );

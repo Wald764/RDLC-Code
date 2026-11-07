@@ -14,7 +14,18 @@ import { projectStructure } from '@rdlc/renderer/structure';
 import { validateMessage } from '@rdlc/report-model/protocol';
 import { DocumentBinding } from './protocol.js';
 import { settleHistoryChange } from './history-settle.js';
-import { planTextboxIntent, correlateTargets } from './edit-controller.js';
+import {
+  checkImageCreation,
+  correlateTargets,
+  planImageCreation,
+  planTextboxIntent,
+} from './edit-controller.js';
+import {
+  refusalDiagnostic,
+  runImport,
+  type ImageSource,
+} from './image-import.js';
+import { vscodeImageSource } from './image-source.js';
 import { ImageAssetCache, sendImageAssets } from './image-assets.js';
 import { PasteCounter, runClipboard, WindowClipboard } from './clipboard.js';
 import {
@@ -119,6 +130,11 @@ export class DocumentSession {
     ) => Promise<boolean>,
     private readonly revealSource = (uri: vscode.Uri): Thenable<unknown> =>
       vscode.commands.executeCommand('vscode.openWith', uri, 'default'),
+    /** The only way a picture enters the host; replaced by a fake in tests. */
+    private readonly imageSource: ImageSource = vscodeImageSource,
+    /** Workspace trust, injectable so the gate before the file chooser is testable. */
+    private readonly isTrusted: () => boolean = () =>
+      vscode.workspace.isTrusted,
   ) {
     const current = this.evaluate();
     this.binding = new DocumentBinding(
@@ -791,6 +807,14 @@ export class DocumentSession {
         return;
       }
     }
+    if (
+      message.operation === 'author' &&
+      message.payload.action === 'createImage' &&
+      message.payload.definition === undefined
+    ) {
+      await this.createImage(message, current);
+      return;
+    }
     const outcome = planTextboxIntent(
       current.snapshot,
       current.syntax,
@@ -859,6 +883,122 @@ export class DocumentSession {
               : [message.targetId],
           )
         : [],
+      version: result.version,
+      requestId: message.requestId,
+      accepted: result.accepted,
+      reason: result.accepted ? 'APPLIED' : result.reason,
+      diagnostics: [],
+      ...(result.accepted && outcome.created
+        ? createdIn(result.syntax.root, outcome.created)
+        : {}),
+    });
+  }
+
+  /**
+   * Picture insertion: gate, file chooser, then a plan against the latest accepted
+   * snapshot (the chooser is asynchronous and the text may have changed). Cancel and
+   * every refusal leave the text and the history untouched.
+   */
+  private async createImage(
+    message: ClientMessage & { kind: 'edit'; operation: 'author' },
+    current: ReportEvaluation,
+  ): Promise<void> {
+    const payload = message.payload as Extract<
+      typeof message.payload,
+      { action: 'createImage' }
+    >;
+    const settle = async (
+      result: Partial<Extract<HostMessage, { kind: 'editResult' }>> & {
+        reason: string;
+      },
+    ) => {
+      this.emitter.fire({
+        protocol: 2,
+        kind: 'editResult',
+        baseVersion: message.baseVersion,
+        changed: false,
+        mappings: [],
+        version: this.document.version,
+        requestId: message.requestId,
+        accepted: false,
+        diagnostics: [],
+        ...result,
+      });
+      await this.publish();
+    };
+    // Same refusals as native history and WorkspaceEdit, before the chooser may open.
+    const unavailable = checkImageCreation(
+      current.snapshot,
+      current.syntax,
+      current.projection,
+      message,
+    );
+    if (unavailable.length) {
+      await settle({
+        reason: unavailable[0]!.code,
+        diagnostics: unavailable,
+      });
+      return;
+    }
+    if (!this.isTrusted()) {
+      await settle({ reason: 'WORKSPACE_UNTRUSTED' });
+      return;
+    }
+    if (
+      vscode.workspace.fs.isWritableFileSystem(this.document.uri.scheme) ===
+      false
+    ) {
+      await settle({ reason: 'DOCUMENT_READ_ONLY' });
+      return;
+    }
+    const imported = await runImport(this.imageSource, sha256);
+    if (this.disposed || this.document.isClosed) return;
+    if (imported.state === 'cancelled') {
+      await settle({ reason: 'CANCELLED', cancelled: true });
+      return;
+    }
+    if (imported.state === 'refused') {
+      await settle({
+        reason: imported.refusal.code,
+        diagnostics: [refusalDiagnostic(imported.refusal)],
+      });
+      return;
+    }
+    // Re-read the latest accepted snapshot: the plan applies to it, not to `current`.
+    this.sync();
+    const latest = this.evaluate();
+    const outcome = planImageCreation(
+      latest.snapshot,
+      latest.syntax,
+      latest.projection,
+      payload,
+      { picture: imported.picture, fileName: imported.fileName },
+    );
+    if (!outcome.ok) {
+      await settle({
+        reason: outcome.diagnostics[0]?.code ?? 'REJECTED',
+        diagnostics: outcome.diagnostics,
+      });
+      return;
+    }
+    const result = await this.commit(
+      outcome.plan,
+      outcome.candidate,
+      latest.snapshot.version,
+      message.nativeRequestId,
+    );
+    this.emitter.fire({
+      protocol: 2,
+      kind: 'editResult',
+      baseVersion: message.baseVersion,
+      changed: result.accepted,
+      // Ids of a version the designer never held cannot be mapped.
+      mappings:
+        result.accepted && latest.snapshot.version === message.baseVersion
+          ? correlateTargets(latest.syntax, result.syntax, outcome.plan, [
+              message.targetId,
+            ])
+          : [],
       version: result.version,
       requestId: message.requestId,
       accepted: result.accepted,

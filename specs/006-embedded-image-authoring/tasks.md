@@ -255,7 +255,7 @@ placeholder), and nothing can be authored yet.
 
 ### Batch B4: Creation plan and host import
 
-- [ ] T028 [P] [US1] Write the failing tests first in `packages/xml-serializer/src/images.test.ts`
+- [X] T028 [P] [US1] Write the failing tests first in `packages/xml-serializer/src/images.test.ts`
   for `planCreateImage`.
   - When `EmbeddedImages` is absent, it is created as the last child of `Report`.
   - When `EmbeddedImages` exists, the new entry is appended and existing entries stay
@@ -266,7 +266,7 @@ placeholder), and nothing can be authored yet.
     `Sizing` = `FitProportional`.
   - `Body/ReportItems` is created when absent.
   - The result is one composed plan, and the text outside the footprint is byte-identical.
-- [ ] T029 [P] [US1] Write the failing tests first in `tests/vscode/images.test.ts`. They use
+- [X] T029 [P] [US1] Write the failing tests first in `tests/vscode/images.test.ts`. They use
   a `FakeImageSource` and the helpers in `tests/vscode/suite.ts` and `session-checks.ts`.
   - Insert PNG, then JPEG.
   - One undo and one redo.
@@ -279,19 +279,19 @@ placeholder), and nothing can be authored yet.
   - A stale snapshot: the text changes during the pending import, and the plan applies to
     the latest version.
   - The new item is selected and the document becomes dirty.
-- [ ] T030 [P] [US1] Write the failing tests first for the protocol in
+- [X] T030 [P] [US1] Write the failing tests first for the protocol in
   `packages/report-model/src/protocol.test.ts` (create the file if it is absent).
   - `createImage` accepts only `placement`, `left`, `top` and `definition`.
   - A `path`, `uri`, `data` or `bytes` field produces a `protocolError`.
-- [ ] T031 [US1] Implement `planCreateImage(root, {definition?: {name, mime, base64}, item: {name, value, top, left, height, width}})`
+- [X] T031 [US1] Implement `planCreateImage(root, {definition?: {name, mime, base64}, item: {name, value, top, left, height, width}})`
   in `packages/xml-serializer/src/images.ts`.
   - Use `element`, `insertChild` and `composePlans` from `structure.ts`.
   - Use `escapeText` and `escapeAttribute` from `textboxes.ts`.
   - Follow the shape of `planCreateTextbox` in `authoring.ts:31-50`.
-- [ ] T032 [US1] Add the `createImage` intent to `packages/report-model/src/editing.ts`
+- [X] T032 [US1] Add the `createImage` intent to `packages/report-model/src/editing.ts`
   (`authoringFields`, `EditIntent`) and validate it in `packages/report-model/src/protocol.ts`
   `validateMessage`.
-- [ ] T033 [US1] Create `apps/vscode-extension/src/image-import.ts`.
+- [X] T033 [US1] Create `apps/vscode-extension/src/image-import.ts`.
   - `interface ImageSource { pick(): Promise<{uri, fileName} | 'cancelled'>; stat(uri): Promise<number>; read(uri): Promise<Uint8Array> }`.
   - A default implementation, which calls `vscode.window.showOpenDialog` with
     `{canSelectMany:false, filters:{Images:['png','jpg','jpeg']}}`, then
@@ -299,11 +299,11 @@ placeholder), and nothing can be authored yet.
   - `runImport(source, digest)`, which follows the state machine in
     [data-model.md](data-model.md#imageimportrequest-host-transient).
   - A read failure produces `IMAGE_READ_FAILED` and carries the file name only.
-- [ ] T034 [US1] Inject `ImageSource` into `apps/vscode-extension/src/document-session.ts`,
+- [X] T034 [US1] Inject `ImageSource` into `apps/vscode-extension/src/document-session.ts`,
   using the same constructor-dependency pattern as `applyWorkspaceEdit` (line 106), with
   the vscode implementation as the default. Apply the existing trust and writability gate
   (lines 558-559) before `pick()` is ever called.
-- [ ] T035 [US1] Add the `createImage` branch to `apps/vscode-extension/src/edit-controller.ts`.
+- [X] T035 [US1] Add the `createImage` branch to `apps/vscode-extension/src/edit-controller.ts`.
   - Run the import; the definition is only used when it is given and displayable.
   - After the await, re-read the latest accepted snapshot.
   - Deduplicate by hash.
@@ -314,7 +314,8 @@ placeholder), and nothing can be authored yet.
     the existing minimum item size.
   - Check the candidate text against the T008 budget, which refuses with `IMAGE_REPORT_BUDGET`.
   - Run `verify`, and set `created = {element:'Image', name}`.
-- [ ] T036 [US1] **Gate B4**. Run `pnpm qa:integration` (one extension-host run). Then run
+  - Default placement: designer sends its textbox default spot; host 0.25in rule is the fallback for coordinate-less requests (sidebar).
+- [X] T036 [US1] **Gate B4**. Run `pnpm qa:integration` (one extension-host run). Then run
   the review. Then commit `:sparkles: feat(extension): import local images as embedded report images`.
 
 ### Batch B5: Toolbox insertion

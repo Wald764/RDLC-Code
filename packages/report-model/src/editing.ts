@@ -55,6 +55,7 @@ export const authoringFields = {
   setFieldType: ['type'],
   setPage: ['property', 'value'],
   createTextbox: ['left', 'top'],
+  createImage: ['placement'],
   deleteTextbox: ['confirm'],
   createTable: ['left', 'top'],
   renameTable: ['name'],
@@ -72,10 +73,24 @@ export const authoringFields = {
   changeTotal: ['field', 'scope', 'column', 'row'],
   removeTotal: ['row'],
 } as const;
+/**
+ * Optional string payload fields per action. `createImage` never carries a file path,
+ * URI or bytes: the host owns the file chooser and the file read.
+ */
+export const authoringOptionalFields = {
+  createImage: ['left', 'top', 'definition'],
+} as const;
+export const imagePlacements = ['default', 'drop'] as const;
 export type AuthoringAction = keyof typeof authoringFields;
+type OptionalFieldsOf<K extends AuthoringAction> =
+  K extends keyof typeof authoringOptionalFields
+    ? (typeof authoringOptionalFields)[K][number]
+    : never;
 type AuthoringPayload = {
   [K in AuthoringAction]: { readonly action: K } & {
     readonly [F in (typeof authoringFields)[K][number]]: string;
+  } & {
+    readonly [F in OptionalFieldsOf<K>]?: string;
   };
 }[AuthoringAction];
 export interface AuthoringIntent {

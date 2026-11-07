@@ -1,5 +1,7 @@
 import {
   authoringFields,
+  authoringOptionalFields,
+  imagePlacements,
   textboxProperties,
   resizeHandles,
   alignModes,
@@ -215,6 +217,8 @@ export type HostMessage =
       readonly diagnostics: readonly Diagnostic[];
       /** Accepted creations only: the item the host created and named in `version`. */
       readonly created?: { readonly id: string; readonly name: string };
+      /** The author closed the file chooser: no edit, no diagnostic, no history entry. */
+      readonly cancelled?: true;
     }
   | {
       readonly protocol: 2;
@@ -697,6 +701,31 @@ function authoring(value: unknown): boolean {
   );
 }
 
+function optionalFields(action: unknown): readonly string[] {
+  return typeof action === 'string' &&
+    Object.hasOwn(authoringOptionalFields, action)
+    ? authoringOptionalFields[action as keyof typeof authoringOptionalFields]
+    : [];
+}
+/**
+ * `createImage`: a known placement, a position given as a pair (required for a drop),
+ * and an optional existing definition name. Never a path, URI or bytes; the closed key
+ * set is enforced by the caller.
+ */
+function createImage(payload: Record<string, unknown>): boolean {
+  const { placement, left, top, definition } = payload;
+  const positioned = left !== undefined || top !== undefined;
+  return (
+    (imagePlacements as readonly unknown[]).includes(placement) &&
+    (placement !== 'drop' || positioned) &&
+    (!positioned || (string(left) && string(top))) &&
+    (definition === undefined ||
+      (string(definition) &&
+        definition.length >= 1 &&
+        definition.length <= 256))
+  );
+}
+
 export function validateMessage(value: unknown): ProtocolMessage | null {
   // Host snapshots carry a full scene and image assets a picture; client intents retain the smaller budget.
   const snapshot = record(value) && value.kind === 'snapshot';
@@ -831,10 +860,13 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
             keys(value.payload, [
               'action',
               ...authoringFields[value.payload.action as AuthoringAction],
+              ...optionalFields(value.payload.action),
             ]) &&
             authoringFields[value.payload.action as AuthoringAction].every(
               (key) => string((value.payload as Record<string, unknown>)[key]),
-            )));
+            ) &&
+            (value.payload.action !== 'createImage' ||
+              createImage(value.payload))));
       break;
     case 'clipboard': {
       const action = value.action as ClipboardAction;
@@ -944,8 +976,16 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
           'changed',
           'mappings',
           'created',
+          'cancelled',
         ]) &&
         version(value.version) &&
+        // A cancelled file chooser is a refusal with no change and no diagnostic.
+        (value.cancelled === undefined ||
+          (value.cancelled === true &&
+            value.accepted === false &&
+            value.changed === false &&
+            Array.isArray(value.diagnostics) &&
+            value.diagnostics.length === 0)) &&
         version(value.baseVersion) &&
         value.version >= value.baseVersion &&
         typeof value.changed === 'boolean' &&

@@ -7,7 +7,23 @@ import type {
   TextboxProperty,
   TargetMapping,
 } from '@rdlc/report-model/editing';
-import type { ReportProjection, Textbox } from '@rdlc/report-model/report';
+import type {
+  EmbeddedImageDefinition,
+  ReportProjection,
+  Textbox,
+} from '@rdlc/report-model/report';
+import {
+  IMAGE_DATA_INVALID,
+  IMAGE_FORMAT_UNSUPPORTED,
+  IMAGE_PIXELS_EXCEEDED,
+  IMAGE_REPORT_BUDGET,
+  IMAGE_TARGET_STALE,
+  IMAGE_TOO_LARGE,
+  type ImageMime,
+  type ImagePixels,
+  type ImageRefusal,
+  type ValidatedPicture,
+} from '@rdlc/report-model/images';
 import type { XmlNode, XmlSyntaxDocument } from '@rdlc/report-model/syntax';
 import { toPoints, resolveGeometry } from '@rdlc/report-model/geometry';
 import { projectReport } from '@rdlc/xml-parser/project-report';
@@ -28,6 +44,13 @@ import {
   type PageProperty,
 } from '@rdlc/xml-serializer/page';
 import { planCreateTextbox } from '@rdlc/xml-serializer/authoring';
+import { planCreateImage } from '@rdlc/xml-serializer/images';
+import { allocateDefinitionName } from '@rdlc/validation/images';
+import {
+  computeImageSize,
+  defaultImagePosition,
+  exceedsParseBudget,
+} from './image-import.js';
 import { patchPlan, sourcePatch } from '@rdlc/xml-serializer/structure';
 import {
   authoringError,
@@ -48,7 +71,7 @@ export type PlanOutcome =
       readonly changed: boolean;
       /** Host-allocated item of an accepted creation, located again in the result. */
       readonly created?: {
-        readonly element: 'Textbox' | 'Tablix' | 'DataSet';
+        readonly element: 'Textbox' | 'Tablix' | 'DataSet' | 'Image';
         readonly name: string;
       };
     }
@@ -253,6 +276,224 @@ export function planTextboxIntent(
   return { ok: true, plan, candidate, changed: candidate !== snapshot.source };
 }
 
+/**
+ * Checks that must pass before the file chooser opens: the request still targets the
+ * current version of an editable report with a body. Returns the refusal, if any.
+ */
+export function checkImageCreation(
+  snapshot: DocumentSnapshot,
+  syntax: XmlSyntaxDocument,
+  report: ReportProjection,
+  intent: AuthoringIntent,
+): readonly Diagnostic[] {
+  const root = syntax.root;
+  if (snapshot.version !== intent.baseVersion)
+    return [
+      diagnostic(
+        'STALE_EDIT',
+        'The document changed; select the item again.',
+        'stale-edit',
+        { start: 0, end: 0 },
+      ),
+    ];
+  if (!root) return syntax.diagnostics;
+  if (report.status !== 'editable')
+    return [
+      diagnostic(
+        'SOURCE_ONLY',
+        'Fix source diagnostics before editing visually.',
+        'unsupported',
+        { start: 0, end: 0 },
+      ),
+    ];
+  if (intent.targetId !== root.id || !report.section)
+    return [authoringError(root, 'Select the report to insert an image.')];
+  const payload = intent.payload;
+  return payload.action === 'createImage' &&
+    payload.left !== undefined &&
+    payload.top !== undefined
+    ? validatePosition(root, payload.left, payload.top)
+    : [];
+}
+
+/** Fixed text for any planning or verification failure; no underlying error text. */
+export const imageFailureMessage =
+  'The image could not be inserted safely; inspect the report source.';
+
+/** A picture the host read and validated; the plan applies to the latest snapshot. */
+export interface ImportedPicture {
+  readonly picture: ValidatedPicture;
+  /** Chosen file name, used to name the definition. */
+  readonly fileName: string;
+}
+
+const reasonCodes: Readonly<
+  Record<NonNullable<EmbeddedImageDefinition['reason']>, ImageRefusal['code']>
+> = {
+  'format-unsupported': IMAGE_FORMAT_UNSUPPORTED,
+  'data-invalid': IMAGE_DATA_INVALID,
+  'mime-mismatch': IMAGE_DATA_INVALID,
+  'value-expression': IMAGE_DATA_INVALID,
+  'too-large': IMAGE_TOO_LARGE,
+  'pixels-exceeded': IMAGE_PIXELS_EXCEEDED,
+};
+
+/**
+ * Plan a body image item, with its definition when the picture is new. Called with the
+ * latest accepted evaluation: after the file chooser resolved (`imported`) or for an
+ * existing displayable definition (`payload.definition`). Dedupes by hash, allocates the
+ * definition and item names, sizes the item, checks the report budget on the candidate
+ * and verifies the result. Payload bytes never appear in a diagnostic.
+ */
+export function planImageCreation(
+  snapshot: DocumentSnapshot,
+  syntax: XmlSyntaxDocument,
+  report: ReportProjection,
+  payload: Extract<AuthoringIntent['payload'], { action: 'createImage' }>,
+  imported?: ImportedPicture,
+): PlanOutcome {
+  const root = syntax.root;
+  if (!root) return { ok: false, diagnostics: syntax.diagnostics };
+  const fail = (message: string, code?: string): PlanOutcome => ({
+    ok: false,
+    diagnostics: [
+      code === undefined
+        ? authoringError(root, message)
+        : diagnostic(
+            code,
+            message,
+            code === IMAGE_TARGET_STALE ? 'stale-edit' : 'unsupported',
+            root.range,
+          ),
+    ],
+  });
+  if (report.status !== 'editable')
+    return fail(
+      'Fix source diagnostics before editing visually.',
+      'SOURCE_ONLY',
+    );
+  if (!report.section)
+    return fail(
+      'The report body is no longer available; retry the insertion.',
+      IMAGE_TARGET_STALE,
+    );
+  if ((payload.definition === undefined) === (imported === undefined))
+    return fail(
+      'An image is inserted from either a chosen file or an existing embedded image.',
+    );
+  let position: { left: string; top: string };
+  if (payload.left !== undefined && payload.top !== undefined) {
+    const errors = validatePosition(root, payload.left, payload.top);
+    if (errors.length) return { ok: false, diagnostics: errors };
+    position = { left: payload.left, top: payload.top };
+  } else
+    position = defaultImagePosition(
+      [
+        ...report.textboxes.filter((item) => item.context === 'body'),
+        ...report.images.filter((item) => item.context === 'body'),
+        ...report.tables,
+      ].map((item) => item.bounds),
+    );
+
+  // Resolve the definition: an existing displayable one, a dedupe hit, or a new one.
+  let value: string;
+  let pixels: ImagePixels;
+  let created: { name: string; mime: ImageMime; base64: string } | undefined;
+  if (imported) {
+    const { picture, fileName } = imported;
+    const same = report.embeddedImages.find(
+      (entry) => entry.displayable && entry.hash === picture.hash,
+    );
+    pixels = picture.pixels;
+    if (same) value = same.name;
+    else {
+      value = allocateDefinitionName(
+        fileName,
+        report.embeddedImages.map((entry) => entry.name),
+      );
+      created = {
+        name: value,
+        mime: picture.mime,
+        base64: Buffer.from(picture.bytes).toString('base64'),
+      };
+    }
+  } else {
+    const existing = report.embeddedImages.find(
+      (entry) => entry.name === payload.definition,
+    );
+    if (!existing)
+      return fail(
+        'The embedded image no longer exists; refresh and retry.',
+        IMAGE_TARGET_STALE,
+      );
+    if (!existing.displayable || !existing.pixels)
+      return fail(
+        `Embedded image "${existing.name}" cannot be displayed and cannot be inserted.`,
+        existing.reason ? reasonCodes[existing.reason] : IMAGE_DATA_INVALID,
+      );
+    value = existing.name;
+    pixels = existing.pixels;
+  }
+  const name = nextName('Image', reportItemNames(root));
+  const size = computeImageSize(pixels, position.left, report.section.width);
+  const item = { name, value, ...position, ...size };
+  const label = imported?.fileName || value;
+  try {
+    const plan = planCreateImage(snapshot, root, report.section, {
+      ...(created ? { definition: created } : {}),
+      item,
+    });
+    if (exceedsParseBudget(snapshot.source, plan))
+      return fail(
+        `Inserting "${label}" would exceed the 16 MiB report size limit.`,
+        IMAGE_REPORT_BUDGET,
+      );
+    const candidate = verifyCandidate(snapshot, plan, (syntax) => {
+      const projected = projectReport(syntax);
+      if (
+        projected.status !== 'editable' ||
+        projected.images.length !== report.images.length + 1 ||
+        projected.embeddedImages.length !==
+          report.embeddedImages.length + (created ? 1 : 0)
+      )
+        return false;
+      const definition = projected.embeddedImages.find(
+        (entry) => entry.name === value,
+      );
+      const inserted = projected.images.find(
+        (entry) => entry.name === name && entry.context === 'body',
+      );
+      return (
+        !!definition?.displayable &&
+        (!created ||
+          (definition.mime === created.mime &&
+            definition.pixels?.width === pixels.width &&
+            definition.pixels.height === pixels.height)) &&
+        inserted?.source === 'Embedded' &&
+        inserted.value?.kind === 'constant' &&
+        inserted.value.text === value &&
+        inserted.definition === value &&
+        inserted.sizing === 'FitProportional' &&
+        inserted.bounds.left === item.left &&
+        inserted.bounds.top === item.top &&
+        inserted.bounds.width === item.width &&
+        inserted.bounds.height === item.height
+      );
+    }).source;
+    return {
+      ok: true,
+      plan,
+      candidate,
+      changed: candidate !== snapshot.source,
+      created: { element: 'Image', name },
+    };
+  } catch {
+    // Underlying error text may quote source text, including the picture payload (FR-025),
+    // so it is never surfaced: the message is fixed.
+    return fail(imageFailureMessage);
+  }
+}
+
 export function planAuthoringIntent(
   snapshot: DocumentSnapshot,
   syntax: XmlSyntaxDocument,
@@ -268,6 +509,10 @@ export function planAuthoringIntent(
   if (snapshot.version !== intent.baseVersion || report.status !== 'editable')
     return fail('Stale or unsupported report; refresh and retry.');
   const payload = intent.payload;
+  if (payload.action === 'createImage')
+    return intent.targetId === root.id
+      ? planImageCreation(snapshot, syntax, report, payload)
+      : fail('Select the report to insert an image.');
   const dataset =
     report.datasets.find(
       (dataset) =>
@@ -282,7 +527,7 @@ export function planAuthoringIntent(
   let plan: PatchPlan;
   let verify: (candidate: ReportProjection) => boolean;
   let created:
-    | { element: 'Textbox' | 'Tablix' | 'DataSet'; name: string }
+    | { element: 'Textbox' | 'Tablix' | 'DataSet' | 'Image'; name: string }
     | undefined;
   try {
     if (
