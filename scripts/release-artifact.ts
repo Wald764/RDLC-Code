@@ -60,10 +60,17 @@ export function createManifest(input: {
     ['not-configured', 'pat', 'oidc'].includes(input.openvsx),
     'Invalid manifest Open VSX mode',
   );
-  assert.deepEqual(
-    input.gates,
-    { validation: 'success', quality: 'success' },
-    'Every required workflow must pass before handoff',
+  assert.equal(
+    input.gates.validation,
+    'success',
+    'Release validation must pass before handoff',
+  );
+  // Quality is either already green (success) or, in release.yml, enforced by
+  // the release-gate job that publication depends on ("release-gate"); every
+  // other value (failed, cancelled, skipped, empty) is refused.
+  assert.ok(
+    ['success', 'release-gate'].includes(input.gates.quality),
+    'Quality must pass or be enforced by the release gate before handoff',
   );
   assert.ok(input.bytes.length > 0 && input.lockfile.length > 0);
   assert.ok(

@@ -75,3 +75,6 @@ jobs:
       archive-digest: ${{ needs.package.outputs.archive-digest }}
       node: ${{ needs.package.outputs.node }}
       vsce: ${{ needs.package.outputs.vsce }}
+      # Inert authentication probe, no QA gate: publish.yml accepts this value
+      # only on the reserved v0.0.4-publishing-test tag.
+      qa-status: AUTH-TEST

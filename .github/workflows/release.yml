@@ -35,14 +35,17 @@ jobs:
     needs: validation
     uses: ./.github/workflows/ci.yml
 
+  # Critical, independent of every informational check: validates, builds,
+  # packages and verifies the canonical VSIX and binds it to the validated
+  # source. Desktop certification of these exact bytes is the candidate-qa job;
+  # quality (the CI workflow) is enforced by release-gate before publication.
   canonical:
-    needs: [validation, quality]
+    needs: validation
     runs-on: ubuntu-24.04
     env:
       RELEASE_VALIDATION_RESULT: ${{ needs.validation.result }}
-      RELEASE_QUALITY_RESULT: ${{ needs.quality.result }}
-      # Every applicable check certifies the same minimum binary the pinned
-      # visual reference is recorded against.
+      # Enforced by the release-gate job, which publication depends on.
+      RELEASE_QUALITY_RESULT: release-gate
       VSCODE_VERSION: '1.142.0'
       TZ: UTC
       LANG: en_US.UTF-8
@@ -66,42 +69,6 @@ jobs:
       - run: pnpm build
       - run: pnpm package
       - run: xvfb-run -a pnpm test:package
-      - name: Provision and record the candidate observation environment
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends strace iptables fontconfig fonts-dejavu-core locales
-          sudo locale-gen en_US.UTF-8
-          # The native observer attaches strace to the running Desktop process tree.
-          sudo sysctl -w kernel.yama.ptrace_scope=0
-          # Host blocking rejects traffic of this cgroup v2 only (the Desktop is
-          # launched into it), never of the runner uid: the runner agent shares
-          # that uid and must keep its connection to GitHub.
-          test -f /sys/fs/cgroup/cgroup.controllers || { echo 'cgroup v2 is required for host blocking'; exit 1; }
-          sudo mkdir -p /sys/fs/cgroup/rdlc-desktop
-          cgroup_help="$(iptables -m cgroup -h 2>&1 || true)"
-          grep -qe '--path' <<<"$cgroup_help" || { echo 'iptables lacks the cgroup --path match'; exit 1; }
-          mkdir -p .vscode-test/desktop-artifacts
-          {
-            echo "image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
-            grep -E '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release
-            dpkg-query -W -f='${Package} ${Version}\n' strace iptables fontconfig fonts-dejavu-core locales
-            echo "ptrace_scope: $(sysctl -n kernel.yama.ptrace_scope)"
-            echo "cgroup: $(stat -f -c %T /sys/fs/cgroup) $(ls -d /sys/fs/cgroup/rdlc-desktop)"
-            echo "kernel: $(uname -r)"
-            iptables --version
-            echo "node: $(node --version)"
-            echo "vscode: ${VSCODE_VERSION}"
-            echo "display: 1440x1000 dpr=1"
-            echo "locale: ${LANG} timezone: ${TZ}"
-          } | tee .vscode-test/desktop-artifacts/linux-environment.txt
-      # Applicable installed, security and visual checks below install the exact
-      # bytes built in this job; they certify nothing but those bytes.
-      - name: Certify the canonical bytes with installed Desktop journeys
-        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e --packaged
-      - name: Certify the canonical bytes with security observation
-        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e --probe --packaged
-      - name: Certify the canonical bytes against the pinned visual references
-        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:visual --packaged
       - name: Bind the canonical bytes to source, gates and accepted evidence
         run: node dist/scripts/release-artifact.js
       - name: Include the publishers' verifiers in the handoff
@@ -137,9 +104,207 @@ jobs:
       archive-digest: ${{ steps.canonical.outputs.artifact-digest }}
       node: ${{ steps.manifest.outputs.node }}
       vsce: ${{ steps.manifest.outputs.vsce }}
+      vsix: ${{ steps.manifest.outputs.vsix }}
+
+  # Desktop certification of the exact canonical bytes: the VSIX downloaded
+  # here is verified against the manifest digest and installed by the packaged
+  # runs; nothing is rebuilt. Each suite runs on its own prerequisites so one
+  # failure never hides another; release-gate classifies the reports.
+  candidate-qa:
+    name: Candidate QA on the canonical bytes
+    needs: canonical
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      ARTIFACT_ID: ${{ needs.canonical.outputs.artifact-id }}
+      ARCHIVE_DIGEST: ${{ needs.canonical.outputs.archive-digest }}
+      # Every applicable check certifies the same minimum binary the pinned
+      # visual reference is recorded against.
+      VSCODE_VERSION: '1.142.0'
+      TZ: UTC
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@9fd676a19091d4595eefd76e4bd31c97133911f1 # v4.2.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            .node-version
+            package.json
+      - id: install
+        run: pnpm install --frozen-lockfile
+      # Compile only: the VSIX under test is the canonical artifact, never a rebuild.
+      - id: compile
+        run: node scripts/compile.ts
+      - name: Download the canonical VSIX and manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.canonical.outputs.artifact-id }}
+          path: canonical
+          merge-multiple: true
+      - name: Verify the canonical bytes against the manifest and stage them for the installed runs
+        id: bind
+        run: |
+          node dist/scripts/publish-release.js verify --dir canonical
+          filename="$(node -p "JSON.parse(require('fs').readFileSync('canonical/release-manifest.json','utf8')).filename")"
+          expected="$(node -p "JSON.parse(require('fs').readFileSync('canonical/release-manifest.json','utf8')).vsixSha256")"
+          test "$(sha256sum "canonical/$filename" | cut -d' ' -f1)" = "$expected"
+          mkdir -p dist
+          cp "canonical/$filename" "dist/$filename"
+          test "$(sha256sum "dist/$filename" | cut -d' ' -f1)" = "$expected"
+          echo "vsix=$expected" >> "$GITHUB_OUTPUT"
+      - name: Provision and record the candidate observation environment
+        id: provision
+        if: ${{ !cancelled() }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends strace iptables fontconfig fonts-dejavu-core locales
+          sudo locale-gen en_US.UTF-8
+          # The native observer attaches strace to the running Desktop process tree.
+          sudo sysctl -w kernel.yama.ptrace_scope=0
+          # Host blocking rejects traffic of this cgroup v2 only (the Desktop is
+          # launched into it), never of the runner uid: the runner agent shares
+          # that uid and must keep its connection to GitHub.
+          test -f /sys/fs/cgroup/cgroup.controllers || { echo 'cgroup v2 is required for host blocking'; exit 1; }
+          sudo mkdir -p /sys/fs/cgroup/rdlc-desktop
+          cgroup_help="$(iptables -m cgroup -h 2>&1 || true)"
+          grep -qe '--path' <<<"$cgroup_help" || { echo 'iptables lacks the cgroup --path match'; exit 1; }
+          mkdir -p .vscode-test/desktop-artifacts
+          {
+            echo "image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            grep -E '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release
+            dpkg-query -W -f='${Package} ${Version}\n' strace iptables fontconfig fonts-dejavu-core locales
+            echo "ptrace_scope: $(sysctl -n kernel.yama.ptrace_scope)"
+            echo "cgroup: $(stat -f -c %T /sys/fs/cgroup) $(ls -d /sys/fs/cgroup/rdlc-desktop)"
+            echo "kernel: $(uname -r)"
+            iptables --version
+            echo "node: $(node --version)"
+            echo "vscode: ${VSCODE_VERSION}"
+            echo "display: 1440x1000 dpr=1"
+            echo "locale: ${LANG} timezone: ${TZ}"
+          } | tee .vscode-test/desktop-artifacts/linux-environment.txt
+      - name: Download VS Code 1.142.0
+        id: download-vscode
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
+        timeout-minutes: 10
+        run: node dist/scripts/download-vscode.js
+      # Applicable installed, security and visual checks below install the exact
+      # bytes verified above; they certify nothing but those bytes.
+      - name: Certify the canonical bytes with installed Desktop journeys
+        id: installed
+        if: ${{ !cancelled() && steps.bind.outcome == 'success' && steps.provision.outcome == 'success' && steps.download-vscode.outcome == 'success' }}
+        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e --packaged
+      - name: Certify the canonical bytes with security observation
+        id: probe
+        if: ${{ !cancelled() && steps.bind.outcome == 'success' && steps.provision.outcome == 'success' && steps.download-vscode.outcome == 'success' }}
+        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e --probe --packaged
+      - name: Certify the canonical bytes against the pinned visual references
+        id: visual
+        if: ${{ !cancelled() && steps.bind.outcome == 'success' && steps.provision.outcome == 'success' && steps.download-vscode.outcome == 'success' }}
+        run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:visual --packaged
+      - name: Collect QA evidence for the canonical bytes
+        if: always()
+        shell: bash
+        env:
+          QA_KIND: candidate
+          QA_CANDIDATE: ${{ github.sha }}
+          QA_OS: ubuntu-24.04
+          QA_VSCODE: '1.142.0'
+          QA_VSIX_SHA256: ${{ steps.bind.outputs.vsix }}
+          QA_STEP_INSTALL: ${{ steps.install.outcome }}
+          QA_STEP_COMPILE: ${{ steps.compile.outcome }}
+          QA_STEP_BIND: ${{ steps.bind.outcome }}
+          QA_STEP_PROVISION: ${{ steps.provision.outcome }}
+          QA_STEP_DOWNLOAD_VSCODE: ${{ steps.download-vscode.outcome }}
+          QA_STEP_PROBE: ${{ steps.probe.outcome }}
+          QA_STEP_INSTALLED: ${{ steps.installed.outcome }}
+          QA_STEP_VISUAL: ${{ steps.visual.outcome }}
+        run: node scripts/qa-collect.ts
+      - name: Upload QA evidence for the canonical bytes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qa-candidate-${{ github.ref_name }}-${{ github.run_id }}
+          path: qa-evidence/**
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - name: Upload candidate Desktop diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: candidate-diagnostics-${{ github.ref_name }}-${{ github.run_id }}
+          path: .vscode-test/desktop-artifacts/**
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 7
+
+  # Decides whether the candidate may be published. It runs whenever validation
+  # and the canonical handoff succeeded, even if informational jobs failed: it
+  # needs the CI qa-summary for this exact tag commit (zero blocking), the
+  # candidate-qa reports for the exact canonical bytes and a documented
+  # exception (docs/validation/release-readiness.md qaExceptions) for every
+  # informational failure.
+  release-gate:
+    name: Release QA gate
+    needs: [validation, canonical, quality, candidate-qa]
+    if: ${{ !cancelled() && needs.validation.result == 'success' && needs.canonical.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      status: ${{ steps.gate.outputs.status }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@9fd676a19091d4595eefd76e4bd31c97133911f1 # v4.2.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            .node-version
+            package.json
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/compile.ts
+      # A missing summary is a gate failure below, not a download failure.
+      - name: Download the CI qa-summary of this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: qa-summary-*
+          path: qa-ci
+      - name: Download the candidate QA evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: qa-candidate-*
+          path: qa-candidate
+      - name: Evaluate the release QA gate
+        id: gate
+        env:
+          QA_NEEDS: ${{ toJSON(needs) }}
+          QA_CANDIDATE: ${{ github.sha }}
+          CANONICAL_VSIX: ${{ needs.canonical.outputs.vsix }}
+        run: node dist/scripts/qa-gate.js release --candidate "$QA_CANDIDATE" --evidence qa-candidate --ci-summary qa-ci --readiness docs/validation/release-readiness.md --vsix-sha256 "$CANONICAL_VSIX" --out qa-summary.json
+      - name: Upload the release QA summary
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-qa-${{ github.ref_name }}-${{ github.run_id }}
+          path: qa-summary.json
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 90
 
   publish:
-    needs: canonical
+    needs: [canonical, release-gate]
+    if: ${{ !cancelled() && needs.canonical.result == 'success' && needs.release-gate.result == 'success' }}
     uses: ./.github/workflows/publish.yml
     secrets: inherit
     permissions:
@@ -151,3 +316,4 @@ jobs:
       archive-digest: ${{ needs.canonical.outputs.archive-digest }}
       node: ${{ needs.canonical.outputs.node }}
       vsce: ${{ needs.canonical.outputs.vsce }}
+      qa-status: ${{ needs.release-gate.outputs.status }}

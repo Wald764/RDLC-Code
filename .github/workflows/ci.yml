@@ -61,6 +61,10 @@ jobs:
     env:
       VSCODE_VERSION: ${{ matrix.vscode }}
       RDLC_DESKTOP_GROUP: ${{ matrix.group }}
+    # After build, package and provisioning every suite runs on its own
+    # prerequisites (`!cancelled()`), so one failing suite never hides the
+    # others. The step outcomes and the per-test reports are uploaded as
+    # evidence; `Required checks` (scripts/qa-gate.ts) decides what blocks.
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -74,17 +78,22 @@ jobs:
             pnpm-lock.yaml
             .node-version
             package.json
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: pnpm package
+      - id: install
+        run: pnpm install --frozen-lockfile
+      - id: build
+        run: pnpm build
+      - id: package
+        run: pnpm package
       # A transient network failure on the runner (ETIMEDOUT) must not fail a
       # journey: fetch the matrix VS Code here, with retries. The tests reuse
       # the cached install (stable is resolved once here).
       - name: Download VS Code ${{ matrix.vscode }}
+        id: download-vscode
         timeout-minutes: 10
         run: node dist/scripts/download-vscode.js
       # The default 1024x768 runner desktop cannot hold the 1440x900 workbench.
       - name: Use a 1920x1080 Windows desktop
+        id: display-windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
@@ -93,6 +102,7 @@ jobs:
       # modes. macOS windows are clamped to the display work area, so hide the
       # Dock too and the workbench keeps its height.
       - name: Prepare the macOS display
+        id: display-macos
         if: runner.os == 'macOS'
         timeout-minutes: 5
         run: |
@@ -103,23 +113,29 @@ jobs:
           mkdir -p .vscode-test/desktop-artifacts
           swift scripts/macos-display.swift 2>&1 | tee .vscode-test/desktop-artifacts/macos-display.txt
       # Host suites and the capability probe run once per OS/version, in core.
-      - if: runner.os == 'Linux' && matrix.group == 'core'
+      - id: vscode-linux
+        if: ${{ !cancelled() && runner.os == 'Linux' && matrix.group == 'core' && steps.build.outcome == 'success' && steps.download-vscode.outcome == 'success' }}
         run: xvfb-run -a pnpm test:vscode
-      - if: runner.os != 'Linux' && matrix.group == 'core'
+      - id: vscode-other
+        if: ${{ !cancelled() && runner.os != 'Linux' && matrix.group == 'core' && steps.build.outcome == 'success' && steps.download-vscode.outcome == 'success' }}
         run: pnpm test:vscode
       # Diagnostic: the Linux runner has been shut down during test:package.
       - name: Record Linux resources before package tests
-        if: runner.os == 'Linux' && matrix.group == 'core'
+        id: resources
+        if: ${{ !cancelled() && runner.os == 'Linux' && matrix.group == 'core' }}
         run: |
           free -m
           df -h .
           ps -eo pid,rss,etime,args --sort=-rss | head -25
-      - if: runner.os == 'Linux' && matrix.group == 'core'
+      - id: package-tests-linux
+        if: ${{ !cancelled() && runner.os == 'Linux' && matrix.group == 'core' && steps.package.outcome == 'success' && steps.download-vscode.outcome == 'success' }}
         run: xvfb-run -a pnpm test:package
-      - if: runner.os != 'Linux' && matrix.group == 'core'
+      - id: package-tests-other
+        if: ${{ !cancelled() && runner.os != 'Linux' && matrix.group == 'core' && steps.package.outcome == 'success' && steps.download-vscode.outcome == 'success' }}
         run: pnpm test:package
       - name: Prepare Linux Desktop observation environment
-        if: runner.os == 'Linux'
+        id: prepare-linux
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends strace iptables fontconfig fonts-dejavu-core locales
@@ -144,36 +160,88 @@ jobs:
             iptables --version
             echo "node: $(node --version)"
           } | tee .vscode-test/desktop-artifacts/linux-environment.txt
+      # One prerequisite for the Desktop journeys: the OS-specific display or
+      # observation environment is ready.
+      - name: Desktop environment is ready
+        id: environment
+        if: ${{ !cancelled() && (steps.prepare-linux.outcome == 'success' || steps.display-windows.outcome == 'success' || steps.display-macos.outcome == 'success') }}
+        run: echo "Desktop environment ready on $RUNNER_OS"
       - name: Probe installed Desktop capabilities on Linux
-        if: runner.os == 'Linux' && matrix.group == 'core'
+        id: probe-linux
+        if: ${{ !cancelled() && runner.os == 'Linux' && matrix.group == 'core' && steps.package.outcome == 'success' && steps.download-vscode.outcome == 'success' && steps.environment.outcome == 'success' }}
         env:
           TZ: UTC
           LANG: en_US.UTF-8
           LC_ALL: en_US.UTF-8
         run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e --probe --packaged
       - name: Probe installed Desktop capabilities on Windows and macOS
-        if: runner.os != 'Linux' && matrix.group == 'core'
+        id: probe-other
+        if: ${{ !cancelled() && runner.os != 'Linux' && matrix.group == 'core' && steps.package.outcome == 'success' && steps.download-vscode.outcome == 'success' && steps.environment.outcome == 'success' }}
         run: pnpm test:e2e --probe --packaged
       - name: Run Desktop functional journeys on Linux
-        if: runner.os == 'Linux'
+        id: e2e-linux
+        if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' && steps.download-vscode.outcome == 'success' && steps.environment.outcome == 'success' }}
         env:
           TZ: UTC
           LANG: en_US.UTF-8
           LC_ALL: en_US.UTF-8
         run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e
       - name: Run Desktop functional journeys on Windows and macOS
-        if: runner.os != 'Linux'
+        id: e2e-other
+        if: ${{ !cancelled() && runner.os != 'Linux' && steps.build.outcome == 'success' && steps.download-vscode.outcome == 'success' && steps.environment.outcome == 'success' }}
         run: pnpm test:e2e
       - name: Run installed Desktop journeys on Linux
-        if: runner.os == 'Linux'
+        id: installed-linux
+        if: ${{ !cancelled() && runner.os == 'Linux' && steps.package.outcome == 'success' && steps.download-vscode.outcome == 'success' && steps.environment.outcome == 'success' }}
         env:
           TZ: UTC
           LANG: en_US.UTF-8
           LC_ALL: en_US.UTF-8
         run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e --packaged
       - name: Run installed Desktop journeys on Windows and macOS
-        if: runner.os != 'Linux'
+        id: installed-other
+        if: ${{ !cancelled() && runner.os != 'Linux' && steps.package.outcome == 'success' && steps.download-vscode.outcome == 'success' && steps.environment.outcome == 'success' }}
         run: pnpm test:e2e --packaged
+      # Step outcomes and per-test reports for the required gate. Read from
+      # source: it must work when the build itself failed.
+      - name: Collect QA evidence for this matrix cell
+        if: always()
+        shell: bash
+        env:
+          QA_KIND: desktop
+          QA_CANDIDATE: ${{ github.sha }}
+          QA_OS: ${{ matrix.os }}
+          QA_VSCODE: ${{ matrix.vscode }}
+          QA_GROUP: ${{ matrix.group }}
+          QA_STEP_INSTALL: ${{ steps.install.outcome }}
+          QA_STEP_BUILD: ${{ steps.build.outcome }}
+          QA_STEP_PACKAGE: ${{ steps.package.outcome }}
+          QA_STEP_DOWNLOAD_VSCODE: ${{ steps.download-vscode.outcome }}
+          QA_STEP_DISPLAY_WINDOWS: ${{ steps.display-windows.outcome }}
+          QA_STEP_DISPLAY_MACOS: ${{ steps.display-macos.outcome }}
+          QA_STEP_VSCODE_LINUX: ${{ steps.vscode-linux.outcome }}
+          QA_STEP_VSCODE_OTHER: ${{ steps.vscode-other.outcome }}
+          QA_STEP_RESOURCES: ${{ steps.resources.outcome }}
+          QA_STEP_PACKAGE_TESTS_LINUX: ${{ steps.package-tests-linux.outcome }}
+          QA_STEP_PACKAGE_TESTS_OTHER: ${{ steps.package-tests-other.outcome }}
+          QA_STEP_PREPARE_LINUX: ${{ steps.prepare-linux.outcome }}
+          QA_STEP_PROBE_LINUX: ${{ steps.probe-linux.outcome }}
+          QA_STEP_PROBE_OTHER: ${{ steps.probe-other.outcome }}
+          QA_STEP_E2E_LINUX: ${{ steps.e2e-linux.outcome }}
+          QA_STEP_E2E_OTHER: ${{ steps.e2e-other.outcome }}
+          QA_STEP_INSTALLED_LINUX: ${{ steps.installed-linux.outcome }}
+          QA_STEP_INSTALLED_OTHER: ${{ steps.installed-other.outcome }}
+        run: node scripts/qa-collect.ts
+      - name: Upload QA evidence for this matrix cell
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qa-cell-${{ matrix.os }}-${{ matrix.vscode }}-${{ matrix.group }}
+          path: qa-evidence/**
+          if-no-files-found: error
+          # A re-run of the cell supersedes the evidence of the previous attempt.
+          overwrite: true
+          retention-days: 30
       # Passing tests leave no trace behind (preserveOutput: 'failures-only'), so
       # the evidence holds the traces of failing tests only.
       - name: Upload Desktop run evidence
@@ -195,6 +263,8 @@ jobs:
 
   # Stability gate: added or modified tests/desktop/*.spec.ts files are repeated
   # 5 times, with retries disabled, on the whole Desktop matrix of their groups.
+  # Critical: if the detection fails, the stability evidence is missing and the
+  # required gate blocks. The measurements are judged per test by the gate.
   changed-specs:
     name: Detect changed Desktop specs
     needs: quality
@@ -236,6 +306,9 @@ jobs:
       specs: ${{ needs.changed-specs.outputs.specs }}
       strict: true
 
+  # Informational: rendering differences have no data or security impact. Its
+  # per-test report is still classified by the required gate, so a critical
+  # test failing here would block.
   visual:
     name: Pinned visual references
     needs: quality
@@ -258,9 +331,12 @@ jobs:
             pnpm-lock.yaml
             .node-version
             package.json
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+      - id: install
+        run: pnpm install --frozen-lockfile
+      - id: build
+        run: pnpm build
       - name: Provision and record the reference candidate environment
+        id: provision
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core locales
@@ -277,7 +353,31 @@ jobs:
       # Missing references or a reference-environment mismatch fail this step;
       # CI never refreshes or skips a required comparison.
       - name: Run fixed-environment visual comparisons
+        id: visual
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.provision.outcome == 'success' }}
         run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:visual
+      - name: Collect QA evidence for the visual job
+        if: always()
+        shell: bash
+        env:
+          QA_KIND: visual
+          QA_CANDIDATE: ${{ github.sha }}
+          QA_OS: ubuntu-24.04
+          QA_VSCODE: '1.142.0'
+          QA_STEP_INSTALL: ${{ steps.install.outcome }}
+          QA_STEP_BUILD: ${{ steps.build.outcome }}
+          QA_STEP_PROVISION: ${{ steps.provision.outcome }}
+          QA_STEP_VISUAL: ${{ steps.visual.outcome }}
+        run: node scripts/qa-collect.ts
+      - name: Upload QA evidence for the visual job
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qa-cell-visual
+          path: qa-evidence/**
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
       - name: Upload visual evidence on failure
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -287,22 +387,58 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # The only required status check. It never rewrites a failed job: the jobs
+  # above keep their own results, this gate classifies the uploaded evidence
+  # (tests/desktop/qa-classification.ts, scripts/qa-gate.ts). Critical failures
+  # and missing critical evidence block; informational failures are listed.
   required:
     name: Required checks
     if: always()
     needs: [quality, desktop, visual, changed-specs, stability]
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - name: Require successful quality, every desktop matrix entry, pinned visual and the stability gate
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@9fd676a19091d4595eefd76e4bd31c97133911f1 # v4.2.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            .node-version
+            package.json
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/compile.ts
+      # No cell evidence at all (for example quality failed and every cell was
+      # skipped) is a gate failure below, not a download failure.
+      - name: Download the QA evidence of every cell
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: qa-cell-*
+          path: qa-evidence
+      # Per-test flake-hunt results of the changed-spec stability gate. The gate
+      # classifies them test by test; none at all is fine only when no Desktop
+      # spec changed (the changed-specs output), otherwise a failed stability
+      # job without per-test evidence blocks.
+      - name: Download the stability measurements
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: flake-results-*
+          path: qa-stability
+      - name: Evaluate the QA gate
         env:
-          QUALITY: ${{ needs.quality.result }}
-          DESKTOP: ${{ needs.desktop.result }}
-          VISUAL: ${{ needs.visual.result }}
-          CHANGED: ${{ needs.changed-specs.result }}
-          STABILITY: ${{ needs.stability.result }}
-        run: |
-          test "$QUALITY" = success
-          test "$DESKTOP" = success
-          test "$VISUAL" = success
-          test "$CHANGED" = success
-          test "$STABILITY" = success
+          QA_NEEDS: ${{ toJSON(needs) }}
+          QA_CANDIDATE: ${{ github.sha }}
+        run: node dist/scripts/qa-gate.js pr --candidate "$QA_CANDIDATE" --evidence qa-evidence --stability qa-stability --out qa-summary.json
+      - name: Upload the QA summary
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qa-summary-${{ github.sha }}
+          path: qa-summary.json
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 30
