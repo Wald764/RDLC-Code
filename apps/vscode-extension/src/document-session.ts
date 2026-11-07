@@ -15,6 +15,7 @@ import { validateMessage } from '@rdlc/report-model/protocol';
 import { DocumentBinding } from './protocol.js';
 import { settleHistoryChange } from './history-settle.js';
 import { planTextboxIntent, correlateTargets } from './edit-controller.js';
+import { ImageAssetCache, sendImageAssets } from './image-assets.js';
 import { PasteCounter, runClipboard, WindowClipboard } from './clipboard.js';
 import {
   evaluateReport,
@@ -80,6 +81,8 @@ export class DocumentSession {
   private readonly subscriptions: vscode.Disposable[] = [];
   /** Successful pastes in this destination view, per capture generation. */
   private readonly pastes = new PasteCounter();
+  /** Picture keys this session's webview already holds; one session per webview. */
+  private readonly imageAssets = new ImageAssetCache();
   private accepted?: ReportEvaluation;
   private publishedVersion: number | null = null;
   private selection?: AcceptedSelectionMessage;
@@ -406,8 +409,13 @@ export class DocumentSession {
       };
     }
     this.publishedVersion = snapshot.version;
-    if (validateMessage(message)) this.emitter.fire(message);
-    else
+    if (validateMessage(message)) {
+      this.emitter.fire(message);
+      // Pictures follow the snapshot that references them, and only when not yet held.
+      sendImageAssets(this.imageAssets, projection, (assets) =>
+        this.emitter.fire(assets),
+      );
+    } else
       this.emitter.fire({
         protocol: 2,
         kind: 'snapshot',
@@ -443,6 +451,20 @@ export class DocumentSession {
 
   receive(input: unknown): void {
     if (this.disposed) return;
+    // Host-only kinds can carry megabytes; refuse them before any validation work.
+    const sent =
+      typeof input === 'object' && input !== null
+        ? (input as { kind?: unknown }).kind
+        : undefined;
+    if (sent === 'snapshot' || sent === 'imageAssets') {
+      this.emitter.fire({
+        protocol: 2,
+        kind: 'protocolError',
+        supportedVersion: 2,
+        reason: 'Invalid client envelope or unsupported protocol',
+      });
+      return;
+    }
     const parsed = validateMessage(input);
     const kind = parsed?.kind;
     // Focus probe answers belong to the panel activation awaiting them.
@@ -531,6 +553,8 @@ export class DocumentSession {
     }
     const message = result.message;
     if (message.kind === 'ready') {
+      // The designer (re)loaded and holds no pictures: send them all again.
+      this.imageAssets.clear();
       await this.publish();
       return;
     }
@@ -997,6 +1021,7 @@ export class DocumentSession {
     this.disposed = true;
     this.nativeAuthority.clear();
     this.nativeAcceptedVersions.clear();
+    this.imageAssets.clear();
     for (const outcome of this.binding.invalidateNative(
       'The designer was closed before the action completed.',
       true,

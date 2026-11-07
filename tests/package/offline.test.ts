@@ -47,6 +47,42 @@ test('packaged webview has nonce-bound local assets and denies network and execu
   }
 });
 
+test('webview CSP lets pictures load only from local resources and blob URLs', () => {
+  const cspSource = 'https://local.vscode-resource.test';
+  const html = renderWebviewHtml({
+    index:
+      '<html><head></head><body><script src="main.js"></script></body></html>',
+    assetsBase: `${cspSource}/designer`,
+    nonce: 'test-nonce',
+    cspSource,
+  });
+  const csp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(
+    html,
+  )![1]!;
+  const directives = new Map(
+    csp.split('; ').map((entry) => {
+      const [name, ...sources] = entry.split(' ');
+      return [name, sources.join(' ')] as const;
+    }),
+  );
+  assert.equal(directives.get('img-src'), `${cspSource} blob:`);
+  assert.doesNotMatch(csp, /data:/);
+  // Every other directive keeps its established value.
+  assert.deepEqual(
+    [...directives].filter(([name]) => name !== 'img-src'),
+    [
+      ['default-src', "'none'"],
+      ['style-src', `${cspSource} 'nonce-test-nonce'`],
+      ['script-src', `${cspSource} 'nonce-test-nonce'`],
+      ['font-src', cspSource],
+      ['connect-src', "'none'"],
+      ['object-src', "'none'"],
+      ['base-uri', "'none'"],
+      ['form-action', "'none'"],
+    ],
+  );
+});
+
 test('packaged interactive workflows have no network, storage or code-execution channel', async () => {
   const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
   const entries = await readVsix(`dist/rdlc-code-${version}.vsix`);

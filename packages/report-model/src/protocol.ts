@@ -11,6 +11,8 @@ import type { DesignScene } from './scene.js';
 import type { ReportProjection } from './report.js';
 import { sizeUnits, type SizeUnit } from './geometry.js';
 import { clipboardActions, type ClipboardAction } from './clipboard.js';
+import { decodeImageData, sniffFormat } from './image-data.js';
+import { rawImageLimit, type ImageAsset, type ImageMime } from './images.js';
 import {
   structureKinds,
   validateAcceptedNavigation,
@@ -26,6 +28,7 @@ import {
   type ViewIdentity,
 } from './navigation.js';
 export { structureKinds, validateViewIdentity } from './navigation.js';
+export type { ImageAsset, ImageMime } from './images.js';
 export type {
   AcceptedNavigation,
   AcceptedSelectionMessage,
@@ -149,8 +152,31 @@ export interface ClipboardRequestMessage {
   /** Optional correlation with the native action that requested this clipboard work. */
   readonly nativeRequestId?: string;
 }
+/**
+ * Picture payloads for displayable PNG/JPEG definitions the webview has not yet
+ * received. The only channel that carries image bytes: scenes, diagnostics and
+ * logs never do.
+ */
+export interface ImageAssetsMessage {
+  readonly protocol: 2;
+  readonly kind: 'imageAssets';
+  readonly assets: readonly ImageAsset[];
+}
+/**
+ * Largest accepted host envelope for the messages that carry a full scene
+ * (`snapshot`) or a picture (`imageAssets`); one maximal picture still fits.
+ */
+export const largeMessageLimit = 8 * 1024 * 1024;
+/** Most assets one `imageAssets` message may carry; hosts split larger sets. */
+export const imageAssetsPerMessage = 256;
+/** Hosts split larger sets across messages; one message never exceeds this payload. */
+export const imageAssetsBatchBudget = 6 * 1024 * 1024;
+/** Longest base64 text of a picture of exactly `rawImageLimit` bytes. */
+const imageAssetEncodedLimit = Math.ceil(rawImageLimit / 3) * 4;
+const imageAssetMimes: readonly ImageMime[] = ['image/png', 'image/jpeg'];
 export type HostMessage =
   | HistoryResultMessage
+  | ImageAssetsMessage
   | FocusProbeMessage
   | NativeActionMessage
   | {
@@ -390,6 +416,9 @@ function sceneItem(value: unknown): boolean {
       'zIndex',
       'resolvedGeometry',
       'operations',
+      'sizing',
+      'display',
+      'metadata',
     ]) &&
     id(value.id) &&
     (value.bounds === null ||
@@ -397,7 +426,14 @@ function sceneItem(value: unknown): boolean {
         (value.bounds as Record<string, number>).width! > 0 &&
         (value.bounds as Record<string, number>).height! > 0)) &&
     (value.kind === undefined ||
-      ['textbox', 'table', 'cell', 'preserved'].includes(String(value.kind))) &&
+      ['textbox', 'table', 'cell', 'preserved', 'image'].includes(
+        String(value.kind),
+      )) &&
+    (value.kind === 'image'
+      ? imageFields(value)
+      : value.sizing === undefined &&
+        value.display === undefined &&
+        value.metadata === undefined) &&
     (value.parentTableId === undefined ||
       (value.kind === 'cell' && id(value.parentTableId))) &&
     (value.xmlCellId === undefined ||
@@ -428,6 +464,78 @@ function sceneItem(value: unknown): boolean {
         'color',
         'textAlign',
       ]))
+  );
+}
+const imageSizings = ['AutoSize', 'Fit', 'FitProportional', 'Clip'];
+const imageReasons = [
+  'format-unsupported',
+  'data-invalid',
+  'too-large',
+  'pixels-exceeded',
+  'mime-mismatch',
+  'value-expression',
+  'source-preserved',
+  'reference-missing',
+];
+function pixels(value: unknown): boolean {
+  return (
+    record(value) &&
+    keys(value, ['width', 'height']) &&
+    typeof value.width === 'number' &&
+    Number.isSafeInteger(value.width) &&
+    value.width > 0 &&
+    typeof value.height === 'number' &&
+    Number.isSafeInteger(value.height) &&
+    value.height > 0
+  );
+}
+/** `sizing`, `display` and `metadata` of an image item; none carries a payload or URL. */
+function imageFields(item: Record<string, unknown>): boolean {
+  const display = item.display;
+  const metadata = item.metadata;
+  return (
+    imageSizings.includes(String(item.sizing)) &&
+    record(display) &&
+    (display.state === 'picture'
+      ? keys(display, ['state', 'assetKey', 'pixels']) &&
+        id(display.assetKey) &&
+        pixels(display.pixels)
+      : display.state === 'placeholder' &&
+        keys(display, ['state', 'reason']) &&
+        imageReasons.includes(String(display.reason))) &&
+    record(metadata) &&
+    keys(metadata, ['format', 'pixels', 'encodedSize']) &&
+    (metadata.format === null ||
+      ['png', 'jpeg', 'other'].includes(String(metadata.format))) &&
+    (metadata.pixels === null || pixels(metadata.pixels)) &&
+    (metadata.encodedSize === null || version(metadata.encodedSize))
+  );
+}
+/**
+ * Webview-side check of an `imageAssets` payload: closed fields, PNG/JPEG only, bounded
+ * canonical base64 whose signature agrees with the mime, and unique keys.
+ */
+export function validateImageAssets(value: unknown): value is ImageAsset[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= imageAssetsPerMessage &&
+    new Set(value.map((asset) => (record(asset) ? asset.key : asset))).size ===
+      value.length &&
+    value.every(
+      (asset) =>
+        record(asset) &&
+        keys(asset, ['key', 'mime', 'data']) &&
+        id(asset.key) &&
+        imageAssetMimes.includes(asset.mime as ImageMime) &&
+        string(asset.data) &&
+        asset.data.length > 0 &&
+        asset.data.length <= imageAssetEncodedLimit &&
+        /^[A-Za-z0-9+/]+={0,2}$/.test(asset.data) &&
+        asset.data.length % 4 === 0 &&
+        sniffFormat(
+          decodeImageData(asset.data.slice(0, 16)) ?? new Uint8Array(),
+        ) === (asset.mime === 'image/png' ? 'png' : 'jpeg'),
+    )
   );
 }
 function resolvedGeometry(value: unknown): boolean {
@@ -590,8 +698,9 @@ function authoring(value: unknown): boolean {
 }
 
 export function validateMessage(value: unknown): ProtocolMessage | null {
-  // Host snapshots carry a full scene; client intents retain the smaller budget.
+  // Host snapshots carry a full scene and image assets a picture; client intents retain the smaller budget.
   const snapshot = record(value) && value.kind === 'snapshot';
+  const assets = record(value) && value.kind === 'imageAssets';
   let nodes = 0;
   const plainJson = (input: unknown, depth: number): boolean => {
     if (++nodes > (snapshot ? 131072 : 8192) || depth > 20) return false;
@@ -616,7 +725,7 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
   if (
     !plainJson(value, 0) ||
     new TextEncoder().encode(JSON.stringify(value)).length >
-      (snapshot ? 8 * 1024 * 1024 : 65536) ||
+      (snapshot || assets ? largeMessageLimit : 65536) ||
     !record(value) ||
     value.protocol !== 2
   )
@@ -870,6 +979,11 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
               value.version as number,
             ) &&
             reportName((value.created as Record<string, unknown>).name)));
+      break;
+    case 'imageAssets':
+      valid =
+        keys(value, ['protocol', 'kind', 'assets']) &&
+        validateImageAssets(value.assets);
       break;
     case 'snapshot':
       valid =

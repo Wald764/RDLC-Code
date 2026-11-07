@@ -183,40 +183,40 @@ US5 all depend on them. ⚠️ No story work starts until T027 is done.
 
 ### Batch B3: Display pipeline
 
-- [ ] T017 [P] Write the failing tests first in `packages/renderer/src/render.test.ts`.
+- [X] T017 [P] Write the failing tests first in `packages/renderer/src/render.test.ts`.
   - `authored.rdlc` yields `kind:'image'` items carrying `display.state` `picture` with
     `assetKey`.
   - `preserved.rdlc` yields `placeholder` items with their `reason`.
   - The JSON of the whole scene contains no base64 substring, `data:`, `http`, `file:` or
     `blob:`.
-- [ ] T018 [P] Write the failing tests first for the asset channel and the CSP.
+- [X] T018 [P] Write the failing tests first for the asset channel and the CSP.
   - In `apps/vscode-extension/src/image-assets.test.ts`:
     - each key is sent once per webview;
     - only `image/png` and `image/jpeg` are sent;
     - no asset is sent for non-displayable definitions.
   - In `tests/package/offline.test.ts`: `img-src` equals exactly `${cspSource} blob:`,
     and `data:` is absent.
-- [ ] T019 Add an `image` scene item to `packages/report-model/src/scene.ts`:
+- [X] T019 Add an `image` scene item to `packages/report-model/src/scene.ts`:
   `{ id, name, bounds, sizing, display: {state:'picture', assetKey, pixels} | {state:'placeholder', reason}, metadata: {format, pixels, encodedSize}, capabilities }`.
-- [ ] T020 Add the image branch to `packages/renderer/src/render.ts`, next to the textbox
+- [X] T020 Add the image branch to `packages/renderer/src/render.ts`, next to the textbox
   branch (around lines 95-125). It builds the scene item from `ReportProjection.images`.
-- [ ] T021 Add the host→webview message `imageAssets {assets: ImageAsset[]}` and its webview
+- [X] T021 Add the host→webview message `imageAssets {assets: ImageAsset[]}` and its webview
   validator to `packages/report-model/src/protocol.ts`. Keep protocol version 2.
-- [ ] T022 Implement `ImageAssetCache` in `apps/vscode-extension/src/image-assets.ts`.
+- [X] T022 Implement `ImageAssetCache` in `apps/vscode-extension/src/image-assets.ts`.
   - It is per webview and keyed by hash.
   - `document-session.ts` sends any new assets right after each `snapshot`, and clears the
     cache when the panel is disposed.
-- [ ] T023 Change the CSP in `apps/vscode-extension/src/webview.ts:20` to
+- [X] T023 Change the CSP in `apps/vscode-extension/src/webview.ts:20` to
   `img-src ${cspSource} blob:`. Leave every other directive unchanged.
-- [ ] T024 [P] Update the policy comment in `packages/renderer/src/data.ts:20`. It must say
+- [X] T024 [P] Update the policy comment in `packages/renderer/src/data.ts:20`. It must say
   that only validated displayable payloads reach the webview, and only through the
   `imageAssets` channel.
-- [ ] T025 [P] Create the Blob URL cache in `apps/designer/src/app/editor/image-assets.ts`,
+- [X] T025 [P] Create the Blob URL cache in `apps/designer/src/app/editor/image-assets.ts`,
   with `image-assets.spec.ts`.
   - It turns base64 into a `Blob` and an object URL.
   - It revokes an object URL when no scene item references its key any longer.
   - When `HTMLImageElement.decode()` fails, it marks the key undecodable.
-- [ ] T026 Render image items in `apps/designer/src/app/editor/editor.component.html`,
+- [X] T026 Render image items in `apps/designer/src/app/editor/editor.component.html`,
   `.scss` and `.ts`. Sizing uses the CSS of research R7:
   - `Fit`: `object-fit: fill`.
   - `FitProportional`: `object-fit: contain`.
@@ -226,9 +226,15 @@ US5 all depend on them. ⚠️ No story work starts until T027 is done.
   Placeholders show a reason label from T058. An undecodable picture shows the
   `data-invalid` placeholder. Selection handles and focus stay generic. Add designer
   `editor.component.spec.ts` cases for each sizing class.
-- [ ] T027 **Gate B3**. Run `pnpm qa:quick`, then `pnpm qa:integration`, because the
+- [X] T027 **Gate B3**. Run `pnpm qa:quick`, then `pnpm qa:integration`, because the
   extension is affected. Then run the review. Then commit
   `:sparkles: feat(designer): display embedded images through an isolated asset channel`.
+  - Local result: `qa:quick` passed. In `qa:integration`, every step passed except the
+    extension-host run. Four files fail the shared native `undo` check in
+    `tests/vscode/session-checks.ts` ("undo document sync"): `clipboard`, `lifecycle`,
+    `sidebar-history` and `synchronization`. The other 10 files pass. The same failure
+    reproduces on `main` (3022042) and at B1 (89f82f5), with or without xvfb, so it predates
+    this feature. It stays open for CI and a separate fix.
 
 **Checkpoint**: Existing images are projected and displayed (as a picture or a
 placeholder), and nothing can be authored yet.

@@ -603,11 +603,71 @@
                     [style.color]="item.style?.color"
                     [style.text-align]="item.style?.textAlign"
                     [attr.data-kind]="item.kind ?? 'textbox'"
+                    [attr.data-sizing]="
+                      item.kind === 'image' ? item.sizing : null
+                    "
+                    [attr.data-image-state]="
+                      item.kind === 'image' ? imageView(item).state : null
+                    "
                     [attr.aria-label]="item.label"
+                    [attr.aria-description]="
+                      item.kind === 'image' ? imageDescription(item) : null
+                    "
                     (click)="selectClick($event, $index)"
                     (pointerdown)="startGesture($event, $index)"
                   >
-                    @if (item.kind !== 'table') {
+                    @if (item.kind === 'image') {
+                      @let picture = imageView(item);
+                      @if (picture.state === 'picture') {
+                        @if (item.sizing === 'AutoSize') {
+                          @let layer = autosizeLayer(item)!;
+                          <span
+                            class="image-layer"
+                            [style.left.px]="-layer.left"
+                            [style.top.px]="-layer.top"
+                            [style.width.px]="layer.width"
+                            [style.height.px]="layer.height"
+                          >
+                            <img
+                              class="image image-autosize"
+                              data-sizing="AutoSize"
+                              [style.left.px]="layer.left"
+                              [style.top.px]="layer.top"
+                              [style.width.px]="picture.width"
+                              [style.height.px]="picture.height"
+                              [src]="picture.url"
+                              alt=""
+                              draggable="false"
+                            />
+                          </span>
+                        } @else {
+                          <img
+                            class="image"
+                            [class.image-fit]="item.sizing === 'Fit'"
+                            [class.image-fit-proportional]="
+                              item.sizing === 'FitProportional'
+                            "
+                            [class.image-clip]="item.sizing === 'Clip'"
+                            [attr.data-sizing]="item.sizing"
+                            [src]="picture.url"
+                            alt=""
+                            draggable="false"
+                          />
+                        }
+                      } @else {
+                        <span
+                          class="content image-placeholder"
+                          [attr.data-state]="picture.state"
+                          [attr.data-reason]="
+                            picture.state === 'pending' ? null : picture.reason
+                          "
+                          [attr.data-invalid]="
+                            picture.state === 'undecodable' ? '' : null
+                          "
+                          >{{ picture.label }}</span
+                        >
+                      }
+                    } @else if (item.kind !== 'table') {
                       <span class="content">{{ item.text ?? item.label }}</span>
                     }
                   </button>

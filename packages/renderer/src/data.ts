@@ -18,7 +18,10 @@ import {
  * Everything is derived from accepted syntax and the existing dataset/field
  * projection: the inert metadata allowlist below is the only text carried, so
  * raw XML, expressions, query text, credentials and image payloads never leave
- * this module, and nothing is decoded, evaluated or fetched. Capability facts
+ * this module, and nothing is decoded, evaluated or fetched. Only validated,
+ * displayable PNG/JPEG payloads ever reach the webview, and only through the
+ * host's dedicated `imageAssets` message, never through a projection or scene
+ * built here. Capability facts
  * mirror the existing guards (recognized field type plus the calculated-field
  * refusal of `apps/vscode-extension/src/edit-controller.ts`), the parser's
  * authoring namespace is never broadened, and categories are presentation-only

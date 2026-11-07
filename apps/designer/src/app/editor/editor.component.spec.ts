@@ -7,8 +7,14 @@ import {
   type HostMessage,
   type NavigationNode,
 } from '@rdlc/report-model/protocol';
+import type { DesignScene } from '@rdlc/report-model/scene';
 import { EditorComponent } from './editor.component';
 import { HostAdapter } from './host-adapter';
+import {
+  IMAGE_ASSET_ENVIRONMENT,
+  type ImageAssetEnvironment,
+} from './image-assets';
+import { imagePlaceholderLabels } from './image-placeholder-labels';
 
 const diagnostic: Diagnostic = {
   code: 'PAGE_DIMENSIONS',
@@ -4138,4 +4144,373 @@ describe('clipboard reuse', () => {
       expect(reveal).toHaveBeenCalledTimes(1);
       expect(m.host.pending()).toBeNull();
     });
+});
+
+describe('embedded image items', () => {
+  const payload =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAfbLI3wAAAABJRU5ErkJggg==';
+  const asset = (key: string) => ({
+    key,
+    mime: 'image/png' as const,
+    data: payload,
+  });
+  /** A JPEG: the harness maps every JPEG blob to a URL whose decode() rejects. */
+  const brokenPayload = '/9j/4AAQSkZJRgABAQEASABIAAD/2Q==';
+  const broken = (key: string) => ({
+    key,
+    mime: 'image/jpeg' as const,
+    data: brokenPayload,
+  });
+  type SceneItem = DesignScene['items'][number];
+
+  const imageItem = (
+    id: string,
+    display: NonNullable<SceneItem['display']>,
+    sizing: NonNullable<SceneItem['sizing']> = 'Fit',
+    bounds: SceneItem['bounds'] = { left: 24, top: 24, width: 96, height: 72 },
+  ): SceneItem => ({
+    id: `2:${id}`,
+    kind: 'image',
+    name: `Image${id}`,
+    label: `Image${id}: image`,
+    bounds,
+    placeholder: display.state === 'placeholder',
+    sizing,
+    display,
+    metadata: {
+      format: 'png',
+      pixels: { width: 120, height: 40 },
+      encodedSize: payload.length,
+    },
+    operations: Object.fromEntries(
+      ['moveX', 'moveY', 'resizeX', 'resizeY'].map((key) => [
+        key,
+        { eligible: true, reason: null },
+      ]),
+    ) as NonNullable<SceneItem['operations']>,
+    capabilities: ['left', 'top', 'width', 'height'],
+  });
+  const picture = (assetKey = 'k1') => ({
+    state: 'picture' as const,
+    assetKey,
+    pixels: { width: 120, height: 40 },
+  });
+
+  function snapshotWith(items: readonly SceneItem[], version = 2): HostMessage {
+    const base = snapshotMessage({ version });
+    if (base.kind !== 'snapshot' || !base.scene)
+      throw new Error('Expected scene');
+    return { ...base, scene: { ...base.scene, items } };
+  }
+
+  interface Env {
+    created: string[];
+    revoked: string[];
+    failing: Set<string>;
+  }
+  let env: Env;
+
+  async function mountImages(items: readonly SceneItem[]) {
+    TestBed.resetTestingModule();
+    env = { created: [], revoked: [], failing: new Set(['blob:test/fail']) };
+    const provided: ImageAssetEnvironment = {
+      createObjectURL: (blob) => {
+        const url =
+          blob.type === 'image/jpeg'
+            ? 'blob:test/fail'
+            : `blob:test/${env.created.length + 1}`;
+        env.created.push(url);
+        return url;
+      },
+      revokeObjectURL: (url) => void env.revoked.push(url),
+      decode: (url) =>
+        env.failing.has(url)
+          ? Promise.reject(new Error('EncodingError'))
+          : Promise.resolve(),
+    };
+    TestBed.configureTestingModule({
+      providers: [{ provide: IMAGE_ASSET_ENVIRONMENT, useValue: provided }],
+    });
+    const m = mount();
+    m.host.ingest(snapshotWith(items));
+    await m.settle();
+    return m;
+  }
+  const item = (root: HTMLElement) =>
+    root.querySelector<HTMLElement>('.item[data-kind="image"]')!;
+  const img = (root: HTMLElement) => item(root).querySelector('img');
+  const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  beforeEach(() => TestBed.resetTestingModule());
+  afterEach(() => vi.restoreAllMocks());
+
+  const sizings = [
+    ['Fit', 'fill', 'image-fit'],
+    ['FitProportional', 'contain', 'image-fit-proportional'],
+    ['Clip', 'none', 'image-clip'],
+  ] as const;
+  for (const [sizing, objectFit, className] of sizings)
+    it(`renders ${sizing} as object-fit ${objectFit} anchored at the top-left`, async () => {
+      const m = await mountImages([imageItem('1', picture(), sizing)]);
+      m.host.ingest({
+        protocol: 2,
+        kind: 'imageAssets',
+        assets: [asset('k1')],
+      });
+      await flush();
+      await m.settle();
+      const picture_ = img(m.element)!;
+      expect(picture_).not.toBeNull();
+      expect(picture_.getAttribute('src')).toMatch(/^blob:/);
+      expect(picture_.classList.contains(className)).toBe(true);
+      expect(picture_.getAttribute('data-sizing')).toBe(sizing);
+      expect(picture_.getAttribute('alt')).toBe('');
+      const style = getComputedStyle(picture_);
+      expect(style.objectFit).toBe(objectFit);
+      // jsdom serialises a zero length as `0`, browsers as `0px`.
+      expect(style.objectPosition).toMatch(
+        sizing === 'FitProportional' ? /^50% 50%$/ : /^0(px)? 0(px)?$/,
+      );
+      expect(style.width).toBe('100%');
+      expect(getComputedStyle(item(m.element)).overflow).toBe('hidden');
+      expect(item(m.element).getAttribute('data-image-state')).toBe('picture');
+    });
+
+  it('renders AutoSize at the natural pixel size, anchored top-left, keeping the declared frame', async () => {
+    const m = await mountImages([imageItem('1', picture(), 'AutoSize')]);
+    m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
+    await flush();
+    await m.settle();
+    const picture_ = img(m.element)!;
+    expect(picture_.classList.contains('image-autosize')).toBe(true);
+    // The page layer is scaled by the zoom, so natural pixels x zoom is on screen.
+    expect(picture_.style.width).toBe('120px');
+    expect(picture_.style.height).toBe('40px');
+    expect(getComputedStyle(picture_).objectFit).toBe('none');
+    expect(getComputedStyle(picture_).position).toBe('absolute');
+    expect(picture_.closest<HTMLElement>('.page')!.style.transform).toBe(
+      `scale(${m.fixture.componentInstance.view().zoom})`,
+    );
+    // The declared bounds stay the item frame and are never resized by the picture.
+    const frame = item(m.element);
+    expect(frame.style.width).toBe('96px');
+    expect(frame.style.height).toBe('72px');
+    expect(getComputedStyle(frame).overflow).toBe('visible');
+    expect(getComputedStyle(picture_).pointerEvents).toBe('none');
+    // Clipped to the canvas (the scroll extent), not to the declared frame: a layer
+    // spanning the extent, expressed in the item's coordinates, holds the picture.
+    const layer = picture_.parentElement!;
+    expect(layer.classList.contains('image-layer')).toBe(true);
+    expect(getComputedStyle(layer).overflow).toBe('hidden');
+    expect(getComputedStyle(layer).pointerEvents).toBe('none');
+    expect(getComputedStyle(layer).position).toBe('absolute');
+    // Body origin 0,0; item at 24,24; the 1px frame border puts the origin at 25,25.
+    expect(layer.style.left).toBe('-25px');
+    expect(layer.style.top).toBe('-25px');
+    const extent = m.fixture.componentInstance.extent()!;
+    expect(layer.style.width).toBe(`${extent.width}px`);
+    expect(layer.style.height).toBe(`${extent.height}px`);
+    expect(picture_.style.left).toBe('25px');
+    expect(picture_.style.top).toBe('25px');
+    // Zoom scales the picture with the page layer, never the declared size.
+    m.fixture.componentInstance.zoomTo(2);
+    await m.settle();
+    expect(picture_.closest<HTMLElement>('.page')!.style.transform).toBe(
+      'scale(2)',
+    );
+    expect(picture_.style.width).toBe('120px');
+  });
+
+  for (const sizing of ['AutoSize', 'Fit', 'FitProportional', 'Clip'] as const)
+    it(`puts the ${sizing} picture at the inner edge of the declared frame`, async () => {
+      const m = await mountImages([imageItem('1', picture(), sizing)]);
+      m.host.ingest({
+        protocol: 2,
+        kind: 'imageAssets',
+        assets: [asset('k1')],
+      });
+      await flush();
+      await m.settle();
+      // Same origin for every mode: no padding, so switching sizing never shifts it.
+      const frame = getComputedStyle(item(m.element));
+      expect(frame.padding).toMatch(/^0(px)?( 0(px)?){0,3}$/);
+      expect(frame.borderTopWidth).toBe('1px');
+      const picture_ = img(m.element)!;
+      const style = getComputedStyle(picture_);
+      expect(style.margin).toMatch(/^(0(px)?( 0(px)?){0,3})?$/);
+      if (sizing !== 'AutoSize') expect(picture_.style.left).toBe('');
+    });
+
+  it('names an image by its item name and exposes the reason through aria-description', async () => {
+    const m = await mountImages([
+      imageItem('1', { state: 'placeholder', reason: 'too-large' }),
+      imageItem('2', picture('k1'), 'Fit', {
+        left: 200,
+        top: 24,
+        width: 96,
+        height: 72,
+      }),
+      imageItem('3', picture('bad'), 'Fit', {
+        left: 300,
+        top: 24,
+        width: 96,
+        height: 72,
+      }),
+    ]);
+    const items = [
+      ...m.element.querySelectorAll<HTMLElement>('.item[data-kind="image"]'),
+    ];
+    // Name stays the item name; the reason or pending text is the description.
+    expect(items[0]!.getAttribute('aria-label')).toBe('Image1: image');
+    expect(items[0]!.getAttribute('aria-description')).toBe(
+      imagePlaceholderLabels['too-large'],
+    );
+    expect(items[1]!.getAttribute('aria-description')).toBe('Loading image…');
+    m.host.ingest({
+      protocol: 2,
+      kind: 'imageAssets',
+      assets: [asset('k1'), broken('bad')],
+    });
+    await flush();
+    await m.settle();
+    expect(items[1]!.getAttribute('aria-description')).toBeNull();
+    expect(items[2]!.getAttribute('aria-description')).toBe(
+      imagePlaceholderLabels['data-invalid'],
+    );
+    for (const element of items) {
+      expect(element.getAttribute('aria-label')).toMatch(/^Image\d: image$/);
+      for (const reason of Object.keys(imagePlaceholderLabels))
+        expect(
+          `${element.getAttribute('aria-label')}|${element.getAttribute('aria-description')}`,
+        ).not.toContain(reason);
+    }
+  });
+
+  for (const [reason, label] of Object.entries(imagePlaceholderLabels))
+    it(`shows the ${reason} placeholder label and no picture`, async () => {
+      const m = await mountImages([
+        imageItem('1', {
+          state: 'placeholder',
+          reason: reason as keyof typeof imagePlaceholderLabels,
+        }),
+      ]);
+      expect(label.length).toBeGreaterThan(0);
+      expect(img(m.element)).toBeNull();
+      const note = item(m.element).querySelector('.image-placeholder')!;
+      expect(note.textContent?.trim()).toBe(label);
+      expect(note.getAttribute('data-reason')).toBe(reason);
+      expect(item(m.element).getAttribute('data-image-state')).toBe(
+        'placeholder',
+      );
+      expect(item(m.element).classList.contains('placeholder')).toBe(true);
+    });
+
+  it('shows a pending state, never a broken image, until the asset arrives', async () => {
+    const m = await mountImages([imageItem('1', picture())]);
+    expect(img(m.element)).toBeNull();
+    expect(m.element.querySelector('[src]')).toBeNull();
+    const state = item(m.element);
+    expect(state.getAttribute('data-image-state')).toBe('pending');
+    expect(state.querySelector('.image-placeholder')?.textContent?.trim()).toBe(
+      'Loading image…',
+    );
+    expect(state.hasAttribute('data-invalid')).toBe(false);
+    m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
+    await flush();
+    await m.settle();
+    expect(img(m.element)?.getAttribute('src')).toMatch(/^blob:/);
+    expect(item(m.element).getAttribute('data-image-state')).toBe('picture');
+    expect(item(m.element).querySelector('.image-placeholder')).toBeNull();
+  });
+
+  it('shows the data-invalid placeholder when the picture cannot be decoded', async () => {
+    const m = await mountImages([imageItem('1', picture('bad'))]);
+    m.host.ingest({
+      protocol: 2,
+      kind: 'imageAssets',
+      assets: [broken('bad')],
+    });
+    await flush();
+    await m.settle();
+    expect(img(m.element)).toBeNull();
+    const note = item(m.element).querySelector('.image-placeholder')!;
+    expect(note.hasAttribute('data-invalid')).toBe(true);
+    expect(note.getAttribute('data-reason')).toBe('data-invalid');
+    expect(note.textContent?.trim()).toBe(
+      imagePlaceholderLabels['data-invalid'],
+    );
+    expect(item(m.element).getAttribute('data-image-state')).toBe(
+      'undecodable',
+    );
+    expect(env.revoked).toEqual(['blob:test/fail']);
+  });
+
+  it('keeps the DOM free of base64 payloads, data: URLs and picture titles', async () => {
+    const m = await mountImages([
+      imageItem('1', picture(), 'Fit'),
+      imageItem('2', picture('bad'), 'Clip', {
+        left: 200,
+        top: 24,
+        width: 96,
+        height: 72,
+      }),
+      imageItem('3', { state: 'placeholder', reason: 'too-large' }, 'Fit', {
+        left: 300,
+        top: 24,
+        width: 96,
+        height: 72,
+      }),
+    ]);
+    m.host.ingest({
+      protocol: 2,
+      kind: 'imageAssets',
+      assets: [asset('k1'), broken('bad')],
+    });
+    await flush();
+    await m.settle();
+    const html = m.element.innerHTML;
+    for (const slice of [
+      payload.slice(0, 20),
+      payload.slice(30, 60),
+      brokenPayload.slice(0, 16),
+    ])
+      expect(html).not.toContain(slice);
+    expect(html).not.toContain('data:');
+    const sources = [...m.element.querySelectorAll('[src]')].map((node) =>
+      node.getAttribute('src'),
+    );
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatch(/^blob:/);
+    expect(m.element.querySelectorAll('img[title], .item[title]')).toHaveLength(
+      0,
+    );
+  });
+
+  it('revokes the object URL once a later snapshot no longer references the picture', async () => {
+    const m = await mountImages([imageItem('1', picture())]);
+    m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
+    await flush();
+    await m.settle();
+    expect(env.revoked).toEqual([]);
+    m.host.ingest(snapshotWith([], 3));
+    await m.settle();
+    expect(env.revoked).toEqual(['blob:test/1']);
+    expect(m.element.querySelector('img')).toBeNull();
+  });
+
+  it('keeps selection, handles and focus on the generic item frame', async () => {
+    const m = await mountImages([imageItem('1', picture(), 'AutoSize')]);
+    m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
+    await flush();
+    await m.settle();
+    m.fixture.componentInstance.select(0);
+    await m.settle();
+    expect(item(m.element).tagName).toBe('BUTTON');
+    expect(item(m.element).getAttribute('aria-label')).toBe('Image1: image');
+    expect(item(m.element).getAttribute('aria-pressed')).toBe('true');
+    expect(m.element.querySelector('.selection-frame')).not.toBeNull();
+    expect(m.element.querySelectorAll('.selection-frame .handle').length).toBe(
+      8,
+    );
+  });
 });

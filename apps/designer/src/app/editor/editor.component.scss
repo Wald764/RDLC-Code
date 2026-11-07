@@ -524,6 +524,56 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+// Embedded pictures (research R7). The item box stays the generic frame; the picture
+// fills it and is anchored top-left. The page layer is scaled by the zoom, so a
+// natural-size picture is natural pixels x zoom on screen (96 DPI).
+// Every sizing mode shares one origin: the inner edge of the declared frame's border.
+.item[data-kind='image'] {
+  padding: 0;
+}
+.item .image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-position: 0 0;
+  // Interactions stay on the item frame, never on the picture.
+  pointer-events: none;
+  user-select: none;
+}
+.item .image-fit {
+  object-fit: fill;
+}
+.item .image-fit-proportional {
+  object-fit: contain;
+  object-position: 50% 50%;
+}
+.item .image-clip {
+  object-fit: none;
+}
+.item[data-sizing='AutoSize'] {
+  // The declared bounds stay drawn as the frame; the picture may extend past it.
+  overflow: visible;
+}
+// Spans the scroll extent (in item coordinates, set inline) so the picture is clipped
+// to the canvas without clipping handles or overlays, and never grows the scroll area.
+.item .image-layer {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+}
+.item .image-autosize {
+  position: absolute;
+  max-width: none;
+  max-height: none;
+  object-fit: none;
+}
+.item .image-placeholder {
+  color: #555;
+  font-style: italic;
+}
+.item .image-placeholder[data-invalid] {
+  color: #a1260d;
+}
 .item[data-kind='cell'] {
   border: 1px solid #c8c8c8;
 }

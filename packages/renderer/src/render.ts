@@ -1,8 +1,15 @@
-import type { ReportProjection, Textbox } from '@rdlc/report-model/report';
+import type {
+  EmbeddedImageDefinition,
+  ImageItem,
+  ReportProjection,
+  Textbox,
+} from '@rdlc/report-model/report';
 import { RDL_2016 } from '@rdlc/report-model/report';
 import type {
   DesignScene,
   DesignSceneItem,
+  SceneImageDisplay,
+  SceneImageMetadata,
   SceneTextStyle,
 } from '@rdlc/report-model/scene';
 import type { XmlNode } from '@rdlc/report-model/syntax';
@@ -48,6 +55,39 @@ function preview(textbox: Textbox): string {
   const text = textbox.value.text.replace(/\s+/g, ' ').trim();
   if (text.length === 0) return 'Empty text';
   return text.length > labelLength ? `${text.slice(0, labelLength)}…` : text;
+}
+
+/**
+ * Display state of a body image. A picture needs a displayable definition and the host
+ * digest that keys its asset; anything else is a placeholder with the projection reason.
+ */
+function imageDisplay(
+  image: ImageItem,
+  definition: EmbeddedImageDefinition | null,
+): SceneImageDisplay {
+  if (
+    image.reason === null &&
+    definition?.displayable &&
+    definition.hash !== null &&
+    definition.pixels !== null
+  )
+    return {
+      state: 'picture',
+      assetKey: definition.hash,
+      pixels: definition.pixels,
+    };
+  // A displayable definition without a digest cannot be keyed; treat it as unusable data.
+  return { state: 'placeholder', reason: image.reason ?? 'data-invalid' };
+}
+
+function imageMetadata(
+  definition: EmbeddedImageDefinition | null,
+): SceneImageMetadata {
+  return {
+    format: definition ? definition.format : null,
+    pixels: definition ? definition.pixels : null,
+    encodedSize: definition ? definition.encodedSize : null,
+  };
 }
 
 /**
@@ -121,6 +161,47 @@ export function renderScene(projection: ReportProjection): DesignScene {
         text: textbox.value ? textbox.value.text : null,
         geometry: textbox.bounds,
         style: textboxStyle(textbox),
+        capabilities,
+      });
+      continue;
+    }
+    const image = projection.images.find(
+      (image) => image.node.id === child.id && image.context === 'body',
+    );
+    if (image) {
+      // The first definition owns a name; repeated names never resolve.
+      const definition =
+        projection.embeddedImages.find(
+          (candidate) => candidate.name === image.definition,
+        ) ?? null;
+      const display = imageDisplay(image, definition);
+      const capabilities =
+        projection.status === 'editable' ? image.capabilities : [];
+      const geometry = resolveGeometry(image.bounds, {
+        width: toPoints(section.width),
+        height: toPoints(section.height),
+      });
+      const name = image.name ?? 'Image';
+      items.push({
+        ...metadata,
+        kind: 'image',
+        id: image.node.id,
+        bounds: geometryBounds(geometry),
+        resolvedGeometry: geometry,
+        operations: geometryOperations(
+          geometry,
+          capabilities,
+          projection.status !== 'editable'
+            ? 'Report is source-only; inspect source diagnostics.'
+            : null,
+        ),
+        label: name,
+        placeholder: display.state === 'placeholder',
+        name: image.name,
+        geometry: image.bounds,
+        sizing: image.sizing,
+        display,
+        metadata: imageMetadata(definition),
         capabilities,
       });
       continue;

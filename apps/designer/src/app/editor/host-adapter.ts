@@ -17,6 +17,11 @@ import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 import type { EditIntent, TargetMapping } from '@rdlc/report-model/editing';
 import type { DesignScene } from '@rdlc/report-model/scene';
 import type { Selection } from './selection';
+import {
+  IMAGE_ASSET_ENVIRONMENT,
+  ImageAssetCache,
+  imageAssetKeys,
+} from './image-assets';
 import { restoreViewState, type ViewState } from './viewport';
 
 /** How long a trusted gesture keeps vouching for DOM focus when no blur follows. */
@@ -95,6 +100,8 @@ export class HostAdapter {
   /** The Data projection replaced by the latest snapshot, for data-target reconciliation. */
   readonly previousData = signal<NavigationProjection | null>(null);
   readonly sent = signal<readonly unknown[]>([]);
+  /** Picture payloads from the `imageAssets` channel; never part of the snapshot. */
+  readonly images = new ImageAssetCache(inject(IMAGE_ASSET_ENVIRONMENT));
   readonly notice = signal('');
   readonly pending = signal<{
     readonly requestId: string;
@@ -153,6 +160,7 @@ export class HostAdapter {
       globalThis.removeEventListener('pointerdown', gesture, true);
       globalThis.removeEventListener('keydown', gesture, true);
       globalThis.removeEventListener('blur', blur);
+      this.images.dispose();
     });
     if (this.api) this.post({ protocol: 2, kind: 'ready' });
   }
@@ -186,6 +194,10 @@ export class HostAdapter {
         probeId: message.probeId,
         focused: this.domFocusEvidence(),
       });
+      return;
+    }
+    if (message.kind === 'imageAssets') {
+      this.images.add(message.assets);
       return;
     }
     if (message.kind === 'nativeAction') {
@@ -249,6 +261,7 @@ export class HostAdapter {
         this.notice.update((text) =>
           `${text} Structure is incomplete because a presentation or transport limit was reached. Open Code XML for the complete report.`.trim(),
         );
+      this.images.retain(imageAssetKeys(message.scene));
       this.reconcile();
       const native = this.nativePending;
       if (

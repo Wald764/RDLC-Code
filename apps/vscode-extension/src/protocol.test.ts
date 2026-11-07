@@ -1940,3 +1940,77 @@ test('focus probes are closed, correlated panel messages', () => {
   ])
     assert.equal(validateMessage(invalid), null);
 });
+
+const pngData = Buffer.from(
+  readFileSync('tests/fixtures/images/pictures/logo.png'),
+).toString('base64');
+const jpegData = Buffer.from(
+  readFileSync('tests/fixtures/images/pictures/photo.jpg'),
+).toString('base64');
+const imageAssets = (assets: unknown) => ({
+  protocol: 2,
+  kind: 'imageAssets',
+  assets,
+});
+
+test('imageAssets accepts PNG and JPEG assets keyed by hash', () => {
+  const message = imageAssets([
+    { key: 'a'.repeat(64), mime: 'image/png', data: pngData },
+    { key: 'b'.repeat(64), mime: 'image/jpeg', data: jpegData },
+  ]);
+  assert.deepEqual(validateMessage(message), message);
+  assert.deepEqual(validateMessage(imageAssets([])), imageAssets([]));
+});
+
+test('imageAssets rejects unknown fields, other mimes and malformed data', () => {
+  const asset = { key: 'a'.repeat(64), mime: 'image/png', data: pngData };
+  for (const bad of [
+    { ...imageAssets([asset]), extra: 1 },
+    imageAssets([{ ...asset, url: 'blob:x' }]),
+    imageAssets([{ ...asset, mime: 'image/gif' }]),
+    imageAssets([{ ...asset, mime: 'image/svg+xml' }]),
+    imageAssets([{ ...asset, mime: 'text/html' }]),
+    imageAssets([{ ...asset, data: '' }]),
+    imageAssets([{ ...asset, data: 'data:image/png;base64,' + pngData }]),
+    imageAssets([{ ...asset, data: pngData.slice(1) }]),
+    imageAssets([{ ...asset, data: pngData + '!' }]),
+    imageAssets([{ ...asset, data: 'A'.repeat(64) }]),
+    // The mime must agree with the content signature.
+    imageAssets([{ ...asset, data: jpegData }]),
+    imageAssets([{ ...asset, mime: 'image/jpeg' }]),
+    imageAssets([{ ...asset, key: '' }]),
+    imageAssets([{ ...asset, key: 'a b' }]),
+    imageAssets([{ ...asset, key: 1 }]),
+    imageAssets([asset, asset]),
+    imageAssets([null]),
+    imageAssets('nope'),
+    imageAssets(undefined),
+    { protocol: 1, kind: 'imageAssets', assets: [] },
+  ])
+    assert.equal(validateMessage(bad), null, JSON.stringify(bad).slice(0, 80));
+});
+
+test('imageAssets carries one maximal picture, refuses a larger one and never comes from the webview', () => {
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const encoded = (size: number) => {
+    const bytes = Buffer.alloc(size);
+    bytes.set(signature);
+    return bytes.toString('base64');
+  };
+  const message = (data: string) =>
+    imageAssets([{ key: 'k'.repeat(64), mime: 'image/png', data }]);
+  assert.ok(validateMessage(message(encoded(5 * 1024 * 1024))));
+  assert.equal(validateMessage(message(encoded(5 * 1024 * 1024 + 3))), null);
+  const binding = new DocumentBinding(
+    'file:///a.rdlc',
+    1,
+    ['1:1'],
+    [],
+    ['1:1'],
+  );
+  assert.equal(
+    binding.receive(imageAssets([])).ok,
+    false,
+    'a client cannot post host asset messages',
+  );
+});

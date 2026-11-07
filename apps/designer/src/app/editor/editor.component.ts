@@ -62,6 +62,10 @@ import type { TextboxCommit } from '../properties/textbox-properties.component';
 import { explainRefusal, HostAdapter } from './host-adapter';
 import { IconComponent, type IconName } from './icon.component';
 import {
+  imagePendingLabel,
+  imagePlaceholderLabels,
+} from './image-placeholder-labels';
+import {
   emptySelection,
   selectItem,
   selectAll,
@@ -115,6 +119,22 @@ const union = (all: readonly Bounds[]): Bounds => {
     height: Math.max(...all.map((b) => b.top + b.height)) - top,
   };
 };
+/** Width of an item's frame border in canvas pixels; keep in step with `.item`. */
+const itemBorder = 1;
+/** Display state of an image item; the picture URL is always a `blob:` URL. */
+type ImageItemView =
+  | {
+      readonly state: 'picture';
+      readonly url: string;
+      readonly width: number;
+      readonly height: number;
+    }
+  | { readonly state: 'pending'; readonly label: string }
+  | {
+      readonly state: 'placeholder' | 'undecodable';
+      readonly reason: keyof typeof imagePlaceholderLabels;
+      readonly label: string;
+    };
 const leftTabs = ['components', 'structure'] as const;
 const paperSizes = {
   A3: [297, 420],
@@ -184,6 +204,59 @@ export class EditorComponent {
     },
   ] as const;
   readonly toPx = pointsToPixels;
+  /**
+   * AutoSize pictures sit in a layer spanning the scroll extent, in the item's own
+   * coordinates, so the picture is clipped to the canvas but never to its declared
+   * frame and never grows the scrollable area.
+   */
+  autosizeLayer(item: DesignSceneItem): {
+    readonly left: number;
+    readonly top: number;
+    readonly width: number;
+    readonly height: number;
+  } | null {
+    const scene = this.scene();
+    const extent = this.extent();
+    if (!scene || !extent || !item.bounds) return null;
+    return {
+      left: scene.body.left + item.bounds.left + itemBorder,
+      top: scene.body.top + item.bounds.top + itemBorder,
+      width: extent.width,
+      height: extent.height,
+    };
+  }
+  /** Plain-language state of an image item for its accessible description. */
+  imageDescription(item: DesignSceneItem): string | null {
+    const view = this.imageView(item);
+    return view.state === 'picture' ? null : view.label;
+  }
+  /** What an image item shows: a decoded picture, a pending asset or a labelled placeholder. */
+  imageView(item: DesignSceneItem): ImageItemView {
+    const display = item.display;
+    if (item.kind !== 'image' || !display)
+      return { state: 'placeholder', reason: 'data-invalid', label: '' };
+    if (display.state === 'placeholder')
+      return {
+        state: 'placeholder',
+        reason: display.reason,
+        label: imagePlaceholderLabels[display.reason],
+      };
+    const asset = this.host.images.view(display.assetKey);
+    if (asset.state === 'ready')
+      return {
+        state: 'picture',
+        url: asset.url,
+        width: display.pixels.width,
+        height: display.pixels.height,
+      };
+    return asset.state === 'undecodable'
+      ? {
+          state: 'undecodable',
+          reason: 'data-invalid',
+          label: imagePlaceholderLabels['data-invalid'],
+        }
+      : { state: 'pending', label: imagePendingLabel };
+  }
   readonly explainRefusal = explainRefusal;
   private readonly injector = inject(Injector);
   private readonly viewport = viewChild<ElementRef<HTMLElement>>('viewport');
