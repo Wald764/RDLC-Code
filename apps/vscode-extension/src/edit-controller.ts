@@ -524,6 +524,9 @@ export function planAuthoringIntent(
   const textbox = report.textboxes.find(
     (textbox) => textbox.node.id === intent.targetId,
   );
+  const image = report.images.find(
+    (image) => image.node.id === intent.targetId,
+  );
   let plan: PatchPlan;
   let verify: (candidate: ReportProjection) => boolean;
   let created:
@@ -892,6 +895,32 @@ export function planAuthoringIntent(
             return false;
         }
       };
+    } else if (payload.action === 'deleteImage') {
+      // Editable and geometry-only body images; preservation-only ones have no capabilities.
+      if (
+        !image ||
+        image.context !== 'body' ||
+        image.capabilities.length === 0 ||
+        payload.confirm !== 'delete-contained-content'
+      )
+        return fail(
+          'Explicitly confirm deletion of this supported body image and all its contained XML.',
+        );
+      const errors = validateDataMutation(
+        root,
+        image.node,
+        'report-item',
+        image.name ?? '',
+        snapshot.source,
+      );
+      if (errors.length) return { ok: false, diagnostics: errors };
+      // Only the Image element goes; EmbeddedImages keeps every definition.
+      plan = patchPlan(snapshot, [sourcePatch(snapshot, image.node.range, '')]);
+      verify = (candidate) =>
+        candidate.images.length === report.images.length - 1 &&
+        candidate.embeddedImages.length === report.embeddedImages.length &&
+        (image.name === null ||
+          !candidate.images.some((entry) => entry.name === image.name));
     } else {
       if (
         payload.action !== 'deleteTextbox' ||

@@ -4343,7 +4343,8 @@ describe('embedded image items', () => {
     id: `2:${id}`,
     kind: 'image',
     name: `Image${id}`,
-    label: `Image${id}: image`,
+    // The scene label is the bare item name; the canvas prefixes `Image `.
+    label: `Image${id}`,
     bounds,
     placeholder: display.state === 'placeholder',
     sizing,
@@ -4532,7 +4533,7 @@ describe('embedded image items', () => {
       ...m.element.querySelectorAll<HTMLElement>('.item[data-kind="image"]'),
     ];
     // Name stays the item name; the reason or pending text is the description.
-    expect(items[0]!.getAttribute('aria-label')).toBe('Image1: image');
+    expect(items[0]!.getAttribute('aria-label')).toBe('Image Image1');
     expect(items[0]!.getAttribute('aria-description')).toBe(
       imagePlaceholderLabels['too-large'],
     );
@@ -4549,7 +4550,7 @@ describe('embedded image items', () => {
       imagePlaceholderLabels['data-invalid'],
     );
     for (const element of items) {
-      expect(element.getAttribute('aria-label')).toMatch(/^Image\d: image$/);
+      expect(element.getAttribute('aria-label')).toMatch(/^Image Image\d$/);
       for (const reason of Object.keys(imagePlaceholderLabels))
         expect(
           `${element.getAttribute('aria-label')}|${element.getAttribute('aria-description')}`,
@@ -4677,11 +4678,502 @@ describe('embedded image items', () => {
     m.fixture.componentInstance.select(0);
     await m.settle();
     expect(item(m.element).tagName).toBe('BUTTON');
-    expect(item(m.element).getAttribute('aria-label')).toBe('Image1: image');
+    expect(item(m.element).getAttribute('aria-label')).toBe('Image Image1');
     expect(item(m.element).getAttribute('aria-pressed')).toBe('true');
     expect(m.element.querySelector('.selection-frame')).not.toBeNull();
     expect(m.element.querySelectorAll('.selection-frame .handle').length).toBe(
       8,
     );
+  });
+});
+
+describe('image items among body items', () => {
+  beforeEach(() => TestBed.resetTestingModule());
+  afterEach(() => vi.restoreAllMocks());
+
+  const geometryKeys = ['left', 'top', 'width', 'height'];
+  const imageBase = {
+    kind: 'image' as const,
+    sizing: 'Fit' as const,
+    metadata: {
+      format: 'png',
+      pixels: { width: 120, height: 40 },
+      encodedSize: 10,
+    },
+    text: null,
+    style: null,
+  };
+  /** The draft scene plus three images: editable (4), geometry-only (5), preservation-only (6). */
+  function withImages(version = 2): HostMessage {
+    const base = draftSnapshot(version);
+    if (base.kind !== 'snapshot' || !base.scene)
+      throw new Error('Expected scene');
+    const images = [
+      {
+        ...imageBase,
+        id: `${version}:7`,
+        name: 'Logo',
+        label: 'Logo',
+        placeholder: false,
+        display: {
+          state: 'picture',
+          assetKey: 'k1',
+          pixels: { width: 120, height: 40 },
+        },
+        bounds: { left: 200, top: 140, width: 96, height: 72 },
+        geometry: {
+          left: '150pt',
+          top: '105pt',
+          width: '72pt',
+          height: '54pt',
+        },
+        operations: eligible,
+        capabilities: [
+          'image',
+          'name',
+          'left',
+          'top',
+          'width',
+          'height',
+          'sizing',
+          'value',
+          'toolTip',
+        ],
+      },
+      {
+        ...imageBase,
+        id: `${version}:8`,
+        name: 'Missing',
+        label: 'Missing',
+        placeholder: true,
+        display: { state: 'placeholder', reason: 'reference-missing' },
+        bounds: { left: 320, top: 140, width: 96, height: 72 },
+        geometry: {
+          left: '240pt',
+          top: '105pt',
+          width: '72pt',
+          height: '54pt',
+        },
+        operations: eligible,
+        capabilities: [...geometryKeys, 'name'],
+      },
+      {
+        ...imageBase,
+        id: `${version}:9`,
+        name: null,
+        label: 'Image',
+        placeholder: true,
+        display: { state: 'placeholder', reason: 'source-preserved' },
+        bounds: { left: 440, top: 140, width: 96, height: 72 },
+        geometry: null,
+        operations: locked,
+        capabilities: [],
+      },
+    ];
+    return {
+      ...base,
+      scene: { ...base.scene, items: [...base.scene.items, ...images] },
+    } as unknown as HostMessage;
+  }
+  async function mounted() {
+    const m = mount();
+    m.host.ingest(withImages());
+    await m.settle();
+    const component = m.fixture.componentInstance;
+    component.setView({ gridSnap: false, guidesSnap: false });
+    await m.settle();
+    const viewport = m.element.querySelector<HTMLElement>('.viewport')!;
+    const edits = () =>
+      m.host.sent().filter((s) => (s as { kind: string }).kind === 'edit');
+    const clipboards = () =>
+      m.host.sent().filter((s) => (s as { kind: string }).kind === 'clipboard');
+    return { ...m, component, viewport, edits, clipboards };
+  }
+  type Mounted = Awaited<ReturnType<typeof mounted>>;
+  const pointer = (target: HTMLElement, x: number, y: number) =>
+    ({
+      button: 0,
+      pointerId: 1,
+      currentTarget: target,
+      clientX: x,
+      clientY: y,
+      altKey: false,
+      preventDefault() {},
+      stopPropagation() {},
+    }) as unknown as PointerEvent;
+  function drag(
+    m: Mounted,
+    index: number,
+    dx: number,
+    dy: number,
+    handle?: Parameters<Mounted['component']['startGesture']>[2],
+  ) {
+    const item = m.element.querySelector<HTMLElement>(
+      `button.item[data-item="${index}"]`,
+    )!;
+    item.setPointerCapture = () => {};
+    item.hasPointerCapture = () => false;
+    m.component.startGesture(pointer(item, 0, 0), index, handle);
+    m.component.moveGesture(pointer(item, dx, dy));
+    m.component.finishGesture(pointer(item, dx, dy));
+  }
+  const key = (target: EventTarget, type: 'keydown' | 'keyup', init = {}) =>
+    target.dispatchEvent(
+      new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init }),
+    );
+  const labels = (m: Mounted) =>
+    m.component.menuActions().map((entry) => entry.label);
+  const names = (root: HTMLElement) =>
+    [...root.querySelectorAll<HTMLElement>('button.item')].map((element) =>
+      element.getAttribute('aria-label'),
+    );
+
+  it('names an image "Image {name}" and keeps the other items on their label', async () => {
+    const m = await mounted();
+    expect(names(m.element)).toEqual([
+      'Title: Hello',
+      'Other: Second',
+      'Rectangle (unsupported)',
+      'Image Logo',
+      'Image Missing',
+      'Image',
+    ]);
+    m.component.select(4);
+    await m.settle();
+    expect(
+      m.element
+        .querySelector('.selection-frame .handle[data-handle="se"]')
+        ?.getAttribute('aria-label'),
+    ).toBe('Resize Image Logo se');
+  });
+
+  it('selects an image, extends the selection with a textbox and selects all', async () => {
+    const m = await mounted();
+    m.component.select(4);
+    await m.settle();
+    expect(m.component.selectedIds()).toEqual(['2:7']);
+    expect(m.component.primary()?.id).toBe('2:7');
+    expect(
+      m.element
+        .querySelector('button.item[data-item="4"]')!
+        .classList.contains('selected'),
+    ).toBe(true);
+    m.component.select(0, true);
+    await m.settle();
+    expect(m.component.selectedIds()).toEqual(['2:7', '2:3']);
+    expect(m.component.primary()?.id).toBe('2:3');
+    m.component.select(4, true);
+    expect(m.component.selectedIds()).toEqual(['2:3']);
+    m.component.selectAll();
+    expect(m.component.selectedIds()).toEqual([
+      '2:3',
+      '2:4',
+      '2:5',
+      '2:6',
+      '2:7',
+      '2:8',
+      '2:9',
+    ]);
+  });
+
+  it('marquee-selects images together with textboxes', async () => {
+    const m = await mounted();
+    const body = m.element.querySelector<HTMLElement>('.body')!;
+    let captured = false;
+    body.setPointerCapture = () => (captured = true);
+    body.hasPointerCapture = () => captured;
+    body.releasePointerCapture = () => (captured = false);
+    const event = (type: string, x: number, y: number) => {
+      const e = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: type === 'pointerup' ? 0 : 1,
+        clientX: x,
+        clientY: y,
+      });
+      Object.defineProperty(e, 'pointerId', { value: 1 });
+      return e;
+    };
+    body.dispatchEvent(event('pointerdown', 190, 130));
+    window.dispatchEvent(event('pointermove', 600, 300));
+    window.dispatchEvent(event('pointerup', 600, 300));
+    window.dispatchEvent(event('lostpointercapture', 600, 300));
+    await m.settle();
+    // Only the three images lie completely inside the rectangle.
+    expect(m.component.selectedIds()).toEqual(['2:7', '2:8', '2:9']);
+    expect(m.edits()).toHaveLength(0);
+  });
+
+  it('moves an image with the keyboard, alone and with a textbox', async () => {
+    const m = await mounted();
+    m.component.select(4);
+    await m.settle();
+    m.viewport.focus();
+    key(m.viewport, 'keydown', { key: 'ArrowRight' });
+    key(m.viewport, 'keyup', { key: 'ArrowRight' });
+    expect(m.edits()).toHaveLength(1);
+    expect(m.edits()[0]).toMatchObject({
+      operation: 'layout',
+      payload: { action: 'move', targetIds: ['2:7'], dxPt: 1, dyPt: 0 },
+    });
+    TestBed.resetTestingModule();
+    const big = await mounted();
+    big.component.select(4);
+    await big.settle();
+    big.viewport.focus();
+    key(big.viewport, 'keydown', { key: 'ArrowDown', shiftKey: true });
+    key(big.viewport, 'keyup', { key: 'ArrowDown' });
+    expect(big.edits()[0]).toMatchObject({
+      payload: { action: 'move', targetIds: ['2:7'], dxPt: 0, dyPt: 10 },
+    });
+    TestBed.resetTestingModule();
+    const both = await mounted();
+    both.component.select(4);
+    both.component.select(0, true);
+    await both.settle();
+    both.viewport.focus();
+    key(both.viewport, 'keydown', { key: 'ArrowLeft' });
+    key(both.viewport, 'keyup', { key: 'ArrowLeft' });
+    expect(both.edits()[0]).toMatchObject({
+      payload: { action: 'move', targetIds: ['2:7', '2:3'], dxPt: -1, dyPt: 0 },
+    });
+  });
+
+  it('moves and resizes an image with the pointer', async () => {
+    const m = await mounted();
+    drag(m, 4, 8, 4);
+    expect(m.edits()[0]).toMatchObject({
+      payload: { action: 'move', targetIds: ['2:7'], dxPt: 6, dyPt: 3 },
+    });
+    TestBed.resetTestingModule();
+    const resize = await mounted();
+    resize.component.select(4);
+    await resize.settle();
+    expect(
+      resize.element.querySelectorAll('.selection-frame .handle').length,
+    ).toBe(8);
+    drag(resize, 4, 8, 4, 'se');
+    // Logo is 150,105 72×54pt; +6pt/+3pt on the south-east corner.
+    expect(resize.edits()[0]).toMatchObject({
+      payload: { action: 'resize', handle: 'se', xPt: 228, yPt: 162 },
+    });
+  });
+
+  it('snaps an image to the grid, and to other items, and uses it as a guide target', async () => {
+    const m = await mounted();
+    m.component.setView({ gridSnap: true, guidesSnap: false, gridSpacing: 10 });
+    drag(m, 4, 8, 0);
+    // Left 150pt + 6pt = 156pt snaps to the 160pt grid line; top 105pt to 100pt.
+    expect(m.edits()[0]).toMatchObject({
+      payload: { targetIds: ['2:7'], dxPt: 10, dyPt: -5 },
+    });
+    TestBed.resetTestingModule();
+    const guides = await mounted();
+    guides.component.setView({ gridSnap: false, guidesSnap: true });
+    const item = guides.element.querySelector<HTMLElement>(
+      'button.item[data-item="4"]',
+    )!;
+    item.setPointerCapture = () => {};
+    item.hasPointerCapture = () => false;
+    // Dragging up 68px = 51pt puts the image top (105pt) on Title's 54pt bottom edge.
+    guides.component.startGesture(pointer(item, 0, 0), 4);
+    guides.component.moveGesture(pointer(item, 0, -68));
+    await guides.settle();
+    const text = [...guides.element.querySelectorAll('.guide')].map(
+      (guide) => guide.textContent,
+    );
+    expect(text.some((entry) => entry?.includes('Title'))).toBe(true);
+    guides.component.cancelGesture();
+    // The image is itself a guide target for other items.
+    const title = guides.element.querySelector<HTMLElement>(
+      'button.item[data-item="0"]',
+    )!;
+    title.setPointerCapture = () => {};
+    title.hasPointerCapture = () => false;
+    guides.component.startGesture(pointer(title, 0, 0), 0);
+    guides.component.moveGesture(pointer(title, 0, 68));
+    await guides.settle();
+    const toward = [...guides.element.querySelectorAll('.guide')].map(
+      (guide) => guide.textContent,
+    );
+    expect(toward.some((entry) => entry?.includes('Logo'))).toBe(true);
+  });
+
+  it('lets a geometry-only image move, resize, copy, cut, duplicate and delete', async () => {
+    const m = await mounted();
+    m.component.select(5);
+    await m.settle();
+    expect(m.component.treeEditableIds()).toContain('2:8');
+    expect(m.component.limitations()).toBeNull();
+    expect(m.element.textContent).not.toContain('Preservation-only');
+    expect(m.element.querySelectorAll('.selection-frame .handle').length).toBe(
+      8,
+    );
+    const clipboard = m.component
+      .contextActions()
+      .filter((entry) => ['Copy', 'Cut', 'Duplicate'].includes(entry.label));
+    expect(clipboard.map((entry) => entry.reason)).toEqual(['', '', '']);
+    expect(labels(m)).toContain('Delete… (confirm contained content)');
+    expect(m.clipboards()).toHaveLength(0);
+    drag(m, 5, 8, 4);
+    expect(m.edits()[0]).toMatchObject({
+      payload: { action: 'move', targetIds: ['2:8'], dxPt: 6, dyPt: 3 },
+    });
+    TestBed.resetTestingModule();
+    const copy = await mounted();
+    copy.component.select(5);
+    await copy.settle();
+    expect(copy.component.clipboard('copy')).toBe(true);
+    expect(copy.clipboards()[0]).toMatchObject({
+      action: 'copy',
+      targetIds: ['2:8'],
+    });
+  });
+
+  it('offers a geometry-only image no image or sizing edit', async () => {
+    const m = await mounted();
+    m.component.select(5);
+    await m.settle();
+    const item = m.component.selected()!;
+    expect(item.capabilities).toEqual([...geometryKeys, 'name']);
+    for (const capability of ['image', 'sizing', 'value', 'toolTip'])
+      expect(item.capabilities).not.toContain(capability);
+    expect(
+      m.element.querySelector(
+        '[data-property="image"], [data-property="sizing"]',
+      ),
+    ).toBeNull();
+  });
+
+  it('keeps a preservation-only image preserved: no mutation, copy or delete', async () => {
+    const m = await mounted();
+    m.component.select(6);
+    await m.settle();
+    expect(m.component.treeEditableIds()).not.toContain('2:9');
+    expect(m.component.limitations()).toContain(
+      'Preservation-only: the designer offers no mutation.',
+    );
+    expect(m.element.querySelectorAll('.selection-frame .handle').length).toBe(
+      0,
+    );
+    expect(m.component.canHandle(m.component.selected()!, 'move')).toBe(false);
+    expect(labels(m)).not.toContain('Delete… (confirm contained content)');
+    expect(
+      m.component.contextActions().find((entry) => entry.label === 'Copy')
+        ?.reason,
+    ).toContain('Preservation-only');
+    expect(m.component.clipboard('copy')).toBe(false);
+    expect(m.component.gestureNotice()).toContain('preservation-only');
+    m.viewport.focus();
+    key(m.viewport, 'keydown', { key: 'ArrowRight' });
+    key(m.viewport, 'keyup', { key: 'ArrowRight' });
+    drag(m, 6, 8, 4);
+    expect(m.edits()).toHaveLength(0);
+    expect(m.clipboards()).toHaveLength(0);
+  });
+
+  const deleteForm = (m: Mounted) =>
+    m.element.querySelector<HTMLFormElement>('[aria-label="Delete image"]');
+  const authored = (m: Mounted) =>
+    m
+      .edits()
+      .filter(
+        (entry) => (entry as { operation?: string }).operation === 'author',
+      );
+
+  it('offers an editable image a confirmed Delete image control, not the textbox form', async () => {
+    const m = await mounted();
+    m.component.select(4);
+    await m.settle();
+    expect(m.element.textContent).not.toContain('Preserved content');
+    expect(m.element.querySelector('[aria-label="Delete textbox"]')).toBeNull();
+    expect(m.element.querySelector('[data-property="name"]')).toBeNull();
+    const form = deleteForm(m)!;
+    expect(form).not.toBeNull();
+    expect(form.textContent).toContain('Logo');
+    expect(form.querySelector('button')!.textContent).toContain('Delete image');
+    // Unconfirmed: the request carries an empty confirmation, which the host refuses.
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await m.settle();
+    expect(authored(m).at(-1)).toMatchObject({
+      targetId: '2:7',
+      payload: { action: 'deleteImage', confirm: '' },
+    });
+  });
+
+  it('shows a geometry-only image its name and Delete image, not the preserved text', async () => {
+    const m = await mounted();
+    m.component.select(5);
+    await m.settle();
+    expect(m.element.querySelector('.inspector')?.textContent).toContain(
+      'Missing',
+    );
+    expect(m.element.textContent).not.toContain('Preserved content');
+    expect(deleteForm(m)).not.toBeNull();
+    expect(
+      m.element.querySelector(
+        '[data-property="image"], [data-property="sizing"]',
+      ),
+    ).toBeNull();
+    deleteForm(m)!.querySelector<HTMLInputElement>(
+      'input[type=checkbox]',
+    )!.checked = true;
+    deleteForm(m)!.dispatchEvent(new Event('submit', { cancelable: true }));
+    expect(authored(m).at(-1)).toMatchObject({
+      targetId: '2:8',
+      payload: { action: 'deleteImage', confirm: 'delete-contained-content' },
+    });
+  });
+
+  it('keeps a preservation-only image preserved with no delete control', async () => {
+    const m = await mounted();
+    m.component.select(6);
+    await m.settle();
+    expect(m.element.textContent).toContain('Preserved content');
+    expect(deleteForm(m)).toBeNull();
+    expect(authored(m)).toHaveLength(0);
+  });
+
+  it('offers no clipboard action for an image the host would refuse', async () => {
+    const m = mount();
+    const snapshot = withImages() as unknown as {
+      scene: { items: { id: string; capabilities: string[] }[] };
+    };
+    // An expression-valued Left drops the capability, as the projection does.
+    snapshot.scene.items.find((item) => item.id === '2:7')!.capabilities = [
+      'image',
+      'name',
+      'top',
+      'width',
+      'height',
+      'sizing',
+    ];
+    m.host.ingest(snapshot as unknown as HostMessage);
+    await m.settle();
+    m.fixture.componentInstance.select(4);
+    await m.settle();
+    const entries = m.fixture.componentInstance
+      .contextActions()
+      .filter((entry) => ['Copy', 'Cut', 'Duplicate'].includes(entry.label));
+    expect(entries).toHaveLength(3);
+    for (const entry of entries) expect(entry.reason).not.toBe('');
+    expect(m.fixture.componentInstance.clipboard('copy')).toBe(false);
+    expect(
+      m.host.sent().filter((s) => (s as { kind: string }).kind === 'clipboard'),
+    ).toHaveLength(0);
+  });
+
+  it('leaves non-image preserved items preserved', async () => {
+    const m = await mounted();
+    m.component.select(2);
+    await m.settle();
+    expect(m.component.treeEditableIds()).not.toContain('2:5');
+    expect(m.component.limitations()).toContain(
+      'Preservation-only: the designer offers no mutation.',
+    );
+    expect(labels(m)).not.toContain('Delete… (confirm contained content)');
+    expect(m.component.clipboard('copy')).toBe(false);
+    expect(m.clipboards()).toHaveLength(0);
   });
 });

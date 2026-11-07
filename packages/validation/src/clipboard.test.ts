@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import type { Capture, CaptureRoot } from '@rdlc/report-model/clipboard';
+import type {
+  Capture,
+  CaptureRoot,
+  EmbeddedImageRequirement,
+} from '@rdlc/report-model/clipboard';
 import { RDL_2016 } from '@rdlc/report-model/report';
 import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
@@ -9,6 +13,7 @@ import {
   allocateNames,
   inertAnnotation,
   nameIndex,
+  reconcileImages,
   validateDestination,
 } from './clipboard.js';
 
@@ -33,6 +38,7 @@ function capture(
     formatVersion: 1,
     roots: [root as CaptureRoot],
     datasets,
+    images: [],
     size: 0,
   };
 }
@@ -203,5 +209,188 @@ test('destination compatibility needs identical fields and compatible external t
       ),
     ),
     undefined,
+  );
+});
+
+const requirement = (
+  name: string,
+  identity: string,
+  mime = 'image/png',
+): EmbeddedImageRequirement => ({
+  name,
+  // A hashless (undisplayable) definition has no picture hash, only an xml identity.
+  hash: identity.startsWith('xml:') ? null : identity,
+  identity,
+  mime,
+  xml: `<EmbeddedImage Name="${name}"><MIMEType>${mime}</MIMEType><ImageData>AAAA</ImageData></EmbeddedImage>`,
+  nameRange: { start: 22, end: 22 + name.length },
+});
+
+test('reconcileImages reuses an identical definition without writing it', () => {
+  const result = reconcileImages(
+    [requirement('logo', 'h1')],
+    [
+      { name: 'other', identity: 'h2' },
+      { name: 'logo', identity: 'h1' },
+    ],
+  );
+  assert.deepEqual(result.reuse, ['logo']);
+  assert.deepEqual(result.insert, []);
+  assert.equal(result.rename.size, 0);
+});
+
+test('reconcileImages reuses identical content under another name and redirects the item', () => {
+  const result = reconcileImages(
+    [requirement('logo', 'h1')],
+    [{ name: 'brand', identity: 'h1' }],
+  );
+  assert.deepEqual(result.reuse, ['logo']);
+  assert.deepEqual(result.insert, []);
+  assert.deepEqual([...result.rename], [['logo', 'brand']]);
+  // A same-named identical definition wins over another identical one.
+  const both = reconcileImages(
+    [requirement('logo', 'h1')],
+    [
+      { name: 'brand', identity: 'h1' },
+      { name: 'logo', identity: 'h1' },
+    ],
+  );
+  assert.equal(both.rename.size, 0);
+});
+
+test('reconcileImages inserts a definition whose name is free', () => {
+  const required = requirement('logo', 'h1');
+  const result = reconcileImages(
+    [required],
+    [{ name: 'photo', identity: 'h2' }],
+  );
+  assert.deepEqual(result.reuse, []);
+  assert.deepEqual(result.insert, [required]);
+  assert.equal(result.rename.size, 0);
+  assert.deepEqual(reconcileImages([required], []).insert, [required]);
+});
+
+test('reconcileImages renames on a name collision with different content', () => {
+  const required = requirement('logo', 'h1');
+  const result = reconcileImages(
+    [required],
+    [{ name: 'logo', identity: 'h2' }],
+  );
+  assert.deepEqual(result.insert, [required]);
+  assert.deepEqual([...result.rename], [['logo', 'logo_1']]);
+  // Undisplayable, hashless targets still reserve their name.
+  const reserved = reconcileImages(
+    [required],
+    [
+      { name: 'logo', identity: null },
+      { name: 'logo_1', identity: null },
+    ],
+  );
+  assert.deepEqual([...reserved.rename], [['logo', 'logo_2']]);
+});
+
+test('reconcileImages keeps new names distinct and inserts identical content once', () => {
+  const result = reconcileImages(
+    [
+      requirement('logo', 'h1'),
+      requirement('logo_1', 'h2'),
+      requirement('copy', 'h1'),
+      requirement('photo', 'h3'),
+    ],
+    [
+      { name: 'logo', identity: 'other' },
+      { name: 'photo', identity: 'h3' },
+    ],
+  );
+  assert.deepEqual(
+    result.insert.map((entry) => entry.name),
+    ['logo', 'logo_1'],
+  );
+  assert.deepEqual(
+    [...result.rename],
+    [
+      ['logo', 'logo_2'],
+      ['copy', 'logo_2'],
+    ],
+    'the second identical requirement follows the first insert',
+  );
+  assert.deepEqual(result.reuse, ['copy', 'photo']);
+});
+
+test('reconcileImages ignores a repeated requirement name', () => {
+  const result = reconcileImages(
+    [requirement('logo', 'h1'), requirement('logo', 'h1')],
+    [],
+  );
+  assert.equal(result.insert.length, 1);
+});
+
+test('reconcileImages reuses a hashless definition only on an exact xml identity', () => {
+  const same = requirement('spinner', 'xml:a', 'image/gif');
+  assert.deepEqual(
+    reconcileImages([same], [{ name: 'spinner', identity: 'xml:a' }]).reuse,
+    ['spinner'],
+  );
+  const different = reconcileImages(
+    [same],
+    [{ name: 'spinner', identity: 'xml:b' }],
+  );
+  assert.deepEqual(different.insert, [same]);
+  assert.deepEqual([...different.rename], [['spinner', 'spinner_1']]);
+  // A displayable target never stands in for a hashless definition, or the reverse.
+  assert.deepEqual(
+    reconcileImages([same], [{ name: 'other', identity: 'h1' }]).insert,
+    [same],
+  );
+});
+
+test('reconcileImages never allocates a reserved dangling name', () => {
+  const result = reconcileImages(
+    [requirement('logo', 'h1')],
+    [{ name: 'logo', identity: 'h2' }],
+    ['logo_1'],
+  );
+  assert.deepEqual([...result.rename], [['logo', 'logo_2']]);
+});
+
+test('validateDestination refuses a dangling image reference this report would capture', () => {
+  const imageRoot = (name: string) =>
+    ({
+      identities: [id('Ghost', 'Image')],
+      references: [],
+      embedded: { name, range: null },
+    }) as unknown as CaptureRoot;
+  const withRoot = (root: CaptureRoot, images: Capture['images'] = []) => ({
+    ...capture([]),
+    roots: [root],
+    images,
+  });
+  const destination = load(
+    readFileSync('tests/fixtures/images/collision.rdlc', 'utf8'),
+  );
+  const [refusal] = validateDestination(
+    withRoot(imageRoot('logo')),
+    destination.syntax.root,
+    destination.report,
+  );
+  assert.equal(refusal?.code, 'IMAGE_DEFINITION_CONFLICT');
+  assert.match(refusal!.message, /Ghost/);
+  assert.match(refusal!.message, /logo/);
+  // A name the target does not define, or one the capture carries, is fine.
+  assert.deepEqual(
+    validateDestination(
+      withRoot(imageRoot('nothing')),
+      destination.syntax.root,
+      destination.report,
+    ),
+    [],
+  );
+  assert.deepEqual(
+    validateDestination(
+      withRoot(imageRoot('logo'), [requirement('logo', 'h1')]),
+      destination.syntax.root,
+      destination.report,
+    ),
+    [],
   );
 });

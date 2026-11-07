@@ -102,8 +102,31 @@ never its content (spec Edge Cases).
 ## EmbeddedImageRequirement (clipboard)
 
 Owner: `packages/report-model/src/clipboard.ts`. It extends `Capture` with
-`images: EmbeddedImageRequirement[]` = `{ name, hash, mime, xml }`. The bytes stay
-host-side and count toward `captureBudget` (research R10).
+`images: EmbeddedImageRequirement[]`, one entry per definition name referenced by a captured
+image item, in the source report's definition order:
+
+| Field | Type | Rule |
+|---|---|---|
+| `name` | `string` | The definition name in the source report |
+| `hash` | `string \| null` | SHA-256 of the decoded bytes of a displayable definition; `null` otherwise |
+| `identity` | `string` | What makes two definitions interchangeable: `hash` when displayable, else `xml:` plus a SHA-256 of the exact `EmbeddedImage` source with the `Name` value removed |
+| `mime` | `string \| null` | Constant `MIMEType` text, if any |
+| `xml` | `string` | The exact `EmbeddedImage` source |
+| `nameRange` | `SourceRange` | The `Name` value range within `xml`, used to rename on a collision |
+
+Every referenced definition travels, displayable or not (GIF, malformed data, MIME mismatch):
+a carried non-displayable definition stays non-displayable in the target, so the pasted item
+is geometry-only. A referenced name with no definition has no entry and nothing is invented.
+The bytes stay host-side and count toward `captureBudget` (research R10).
+
+`CaptureRoot.kind` gains `'image'` and an image root carries `embedded: {name, range}`, the
+constant `Value` and its exact operand range within `xml`.
+
+`reconcileImages(requirements, targetDefinitions, reserved)` reuses a target definition only on an
+equal `identity`; otherwise it inserts, renaming on a name collision. `reserved` holds names
+that dangling captured items still point at, which an allocated name must avoid. Pasting an item
+whose definition was missing into a report that defines that name is refused
+(`IMAGE_DEFINITION_CONFLICT`), because the item would silently bind to an unrelated picture.
 
 ## Validation rules (summary)
 

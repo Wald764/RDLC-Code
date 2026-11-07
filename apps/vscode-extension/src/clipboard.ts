@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   captureBudget,
   clipboardFormat,
@@ -9,6 +9,7 @@ import {
   type CaptureReference,
   type CaptureRoot,
   type ClipboardAction,
+  type EmbeddedImageRequirement,
 } from '@rdlc/report-model/clipboard';
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 import type {
@@ -21,7 +22,12 @@ import {
   toPoints,
   type SizeUnit,
 } from '@rdlc/report-model/geometry';
-import { RDL_2016, type ReportProjection } from '@rdlc/report-model/report';
+import { decodeImageData } from '@rdlc/report-model/image-data';
+import {
+  RDL_2016,
+  type EmbeddedImageDefinition,
+  type ReportProjection,
+} from '@rdlc/report-model/report';
 import type { Bounds } from '@rdlc/report-model/scene';
 import type { XmlNode, XmlSyntaxDocument } from '@rdlc/report-model/syntax';
 import { analyze } from '@rdlc/expressions/analyze';
@@ -32,6 +38,7 @@ import {
   clipboardError,
   inertAnnotation,
   nameIndex,
+  reconcileImages,
   validateDestination,
 } from '@rdlc/validation/clipboard';
 import { validateRemoval } from '@rdlc/validation/datasets';
@@ -39,6 +46,7 @@ import {
   planInsertion,
   planRemoval,
   transformRoot,
+  type InsertedDefinition,
 } from '@rdlc/xml-serializer/clipboard';
 import { child } from '@rdlc/xml-serializer/structure';
 import {
@@ -60,6 +68,54 @@ const refuse = (code: string, message: string, action?: string): Refusal => ({
   diagnostics: [clipboardError(code, message, action)],
 });
 const XMLNS = 'http://www.w3.org/2000/xmlns/';
+const sha256 = (bytes: Uint8Array): string =>
+  createHash('sha256').update(bytes).digest('hex');
+/**
+ * Content hash of a displayable definition. The session projection already carries it;
+ * a projection built without a digest is hashed here from the definition's own text.
+ */
+function definitionHash(definition: EmbeddedImageDefinition): string | null {
+  if (!definition.displayable) return null;
+  if (definition.hash !== null) return definition.hash;
+  const data = definition.node.children.find(
+    (c) =>
+      c.expandedName.namespaceUri === RDL_2016 &&
+      c.expandedName.localName === 'ImageData',
+  );
+  const bytes = data ? decodeImageData(data.text) : null;
+  return bytes ? sha256(bytes) : null;
+}
+/**
+ * What makes two definitions interchangeable: the picture hash when displayable, otherwise
+ * a digest of the exact `EmbeddedImage` source with the `Name` value removed.
+ */
+function definitionIdentity(
+  definition: EmbeddedImageDefinition,
+  source: string,
+): string {
+  const hash = definitionHash(definition);
+  if (hash !== null) return hash;
+  const { start } = definition.node.range;
+  const xml = source.slice(start, definition.node.range.end);
+  const nameless =
+    xml.slice(0, definition.nameRange.start - start) +
+    xml.slice(definition.nameRange.end - start);
+  return `xml:${sha256(new TextEncoder().encode(nameless))}`;
+}
+/** The first definition of a name owns it; repeats never resolve and so match nothing. */
+function targetDefinitions(current: Evaluated) {
+  const seen = new Set<string>();
+  return current.projection.embeddedImages.map((definition) => {
+    const first = !seen.has(definition.name);
+    seen.add(definition.name);
+    return {
+      name: definition.name,
+      identity: first
+        ? definitionIdentity(definition, current.snapshot.source)
+        : null,
+    };
+  });
+}
 const prefixOf = (qualified: string) =>
   qualified.includes(':') ? qualified.slice(0, qualified.indexOf(':')) : '';
 const nameAttribute = (node: XmlNode) =>
@@ -92,6 +148,8 @@ export function buildCapture(
   const selected: {
     node: XmlNode;
     kind: CaptureRoot['kind'];
+    /** The embedded definition name of an image item whose `Value` is a constant. */
+    embedded: string | null;
     bounds: Bounds;
     raw: CaptureRoot['raw'];
     provenance: CaptureRoot['provenance'];
@@ -101,19 +159,26 @@ export function buildCapture(
     const textbox = projection.textboxes.find(
       (t) => t.node.id === id && t.context === 'body',
     );
-    const item = table ?? textbox;
+    const image = projection.images.find(
+      (t) => t.node.id === id && t.context === 'body',
+    );
+    const item = table ?? textbox ?? image;
+    // Textbox precedent: copy needs a named, complete item whose position is editable. A
+    // geometry-only image (missing or undisplayable definition) qualifies; a
+    // preservation-only one has no capabilities and is refused here.
+    const leaf = textbox ?? image;
     if (
       !item ||
       (table && !table.structural) ||
-      (textbox &&
-        (!textbox.name ||
-          !textbox.node.closeRange ||
-          !textbox.capabilities.includes('left') ||
-          !textbox.capabilities.includes('top')))
+      (leaf &&
+        (!leaf.name ||
+          !leaf.node.closeRange ||
+          !leaf.capabilities.includes('left') ||
+          !leaf.capabilities.includes('top')))
     )
       return refuse(
         'SELECTION_UNSUPPORTED',
-        `${id}: copy only complete named body textboxes or supported tables.`,
+        `${id}: copy only complete named body textboxes, images or supported tables.`,
       );
     const geometry = acceptedGeometry(projection, item, !!table);
     const keys = ['left', 'top', 'width', 'height'] as const;
@@ -124,7 +189,11 @@ export function buildCapture(
       );
     selected.push({
       node: item.node,
-      kind: table ? 'table' : 'textbox',
+      kind: table ? 'table' : image ? 'image' : 'textbox',
+      embedded:
+        image?.source === 'Embedded' && image.value?.kind === 'constant'
+          ? image.value.text
+          : null,
       bounds: Object.fromEntries(
         keys.map((key) => [key, geometry[key].points!]),
       ) as unknown as Bounds,
@@ -306,6 +375,7 @@ export function buildCapture(
           ? relative(content(node))
           : null;
       };
+      const value = entry.embedded === null ? null : child(root, 'Value');
       roots.push({
         kind: entry.kind,
         xml: source.slice(root.range.start, root.range.end),
@@ -324,6 +394,22 @@ export function buildCapture(
         },
         identities: rootIdentities,
         references,
+        ...(entry.embedded === null
+          ? {}
+          : {
+              embedded: {
+                name: entry.embedded,
+                range:
+                  value && value.closeRange
+                    ? relative(
+                        rawOperandRange(source, content(value), value.text, {
+                          start: 0,
+                          end: value.text.length,
+                        }),
+                      )
+                    : null,
+              },
+            }),
       });
     }
   } catch (error) {
@@ -361,6 +447,30 @@ export function buildCapture(
     }
     requirements.push({ name, fields: definitions });
   }
+  const embedded = new Set(
+    roots.flatMap((root) => (root.embedded ? [root.embedded.name] : [])),
+  );
+  const required: EmbeddedImageRequirement[] = [];
+  // The first definition of a name owns it, displayable or not; a missing one is never
+  // invented. Every referenced definition travels and counts toward `captureBudget`.
+  const seenDefinitions = new Set<string>();
+  for (const definition of projection.embeddedImages) {
+    if (seenDefinitions.has(definition.name)) continue;
+    seenDefinitions.add(definition.name);
+    if (!embedded.has(definition.name)) continue;
+    const { start, end } = definition.node.range;
+    required.push({
+      name: definition.name,
+      hash: definitionHash(definition),
+      identity: definitionIdentity(definition, source),
+      mime: definition.mime,
+      xml: source.slice(start, end),
+      nameRange: {
+        start: definition.nameRange.start - start,
+        end: definition.nameRange.end - start,
+      },
+    });
+  }
   const draft = {
     id: randomUUID(),
     schema: RDL_2016,
@@ -368,6 +478,7 @@ export function buildCapture(
     formatVersion: clipboardVersion as typeof clipboardVersion,
     roots,
     datasets: requirements,
+    images: required,
   };
   const size = new TextEncoder().encode(JSON.stringify(draft)).length;
   if (size > captureBudget)
@@ -416,6 +527,22 @@ export function planPaste(
   if (!body) return refuse('SOURCE_ONLY', 'The report has no body.');
   try {
     const names = allocateNames(capture, nameIndex(syntax.root));
+    // Same document: the definitions are there with the same hash, so nothing is written.
+    // Another report: identical content is reused, a free name is inserted, a collision renamed.
+    const images = reconcileImages(
+      capture.images,
+      targetDefinitions(current),
+      // A dangling captured reference must never become the name of an inserted definition.
+      capture.roots.flatMap((root) =>
+        root.embedded ? [root.embedded.name] : [],
+      ),
+    );
+    const definitions: InsertedDefinition[] = images.insert.map(
+      (requirement) => ({
+        requirement,
+        name: images.rename.get(requirement.name) ?? requirement.name,
+      }),
+    );
     const destination = (child(body, 'ReportItems') ?? body).namespaces;
     const bodyWidth = toPoints(section.width);
     const bodyHeight = toPoints(section.height);
@@ -434,7 +561,7 @@ export function planPaste(
         ['height', bodyHeight, top],
       ] as const)
         if (
-          root.kind === 'textbox' &&
+          root.kind !== 'table' &&
           root.provenance[key] === 'derived' &&
           (container === null ||
             Math.abs(container - start - root.bounds[key]) > 0.01)
@@ -455,9 +582,17 @@ export function planPaste(
           severity: 'warning',
           blockedOperations: [],
         });
-      return transformRoot(root, { names, geometry, destination });
+      return transformRoot(root, {
+        names,
+        geometry,
+        destination,
+        images: images.rename,
+      });
     });
-    const { plan, starts } = planInsertion(snapshot, body, fragments);
+    const { plan, starts } = planInsertion(snapshot, body, fragments, {
+      root: syntax.root!,
+      definitions,
+    });
     const candidate = verifyCandidate(snapshot, plan, (next, original) =>
       verifyClipboardCandidate(original, next, {
         inserted: capture.roots.map((root, i) => ({
@@ -468,6 +603,11 @@ export function planPaste(
         })),
         names,
         removed: [],
+        images: {
+          rename: images.rename,
+          inserted: definitions,
+          required: capture.images.map((entry) => entry.name),
+        },
       }),
     ).source;
     return { ok: true, plan, candidate, starts, warnings };

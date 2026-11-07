@@ -1,7 +1,11 @@
-import type { Capture } from '@rdlc/report-model/clipboard';
+import type {
+  Capture,
+  EmbeddedImageRequirement,
+} from '@rdlc/report-model/clipboard';
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 import type { XmlNode } from '@rdlc/report-model/syntax';
 import { RDL_2016, type ReportProjection } from '@rdlc/report-model/report';
+import { allocateDefinitionName } from './images.js';
 import { nextName, validateName } from './validate.js';
 
 export const EXTENSION_NAMESPACE = 'urn:rdlc-code:extension';
@@ -98,6 +102,7 @@ export function allocateNames(
     Textbox: 'Textbox',
     Tablix: 'Table',
     Group: 'Group',
+    Image: 'Image',
   };
   for (const root of capture.roots)
     for (const identity of root.identities) {
@@ -162,6 +167,21 @@ export function validateDestination(
         );
     }
   }
+  // An image item whose definition was missing at copy time carries nothing. If this report
+  // defines that name, pasting would silently bind the item to an unrelated picture.
+  const carried = new Set(capture.images.map((entry) => entry.name));
+  for (const copied of capture.roots) {
+    const name = copied.embedded?.name;
+    if (
+      name !== undefined &&
+      !carried.has(name) &&
+      report.embeddedImages.some((definition) => definition.name === name)
+    )
+      return fail(
+        'IMAGE_DEFINITION_CONFLICT',
+        `${copied.identities[0]?.name ?? 'The image'} references the embedded image ${name}, which was not defined when it was copied, but this report defines a different ${name}; rename that definition or fix the copied item first.`,
+      );
+  }
   const index = nameIndex(root);
   const internal = new Set(
     capture.roots.flatMap((r) => r.identities.map((i) => i.name)),
@@ -180,4 +200,85 @@ export function validateDestination(
         );
     }
   return [];
+}
+
+export interface ImageReconciliation {
+  /** Requirement names satisfied by a definition the target already holds, or by another insert. */
+  readonly reuse: readonly string[];
+  /** Definitions to write, in the order of `requirements`; the final name is `rename.get(name) ?? name`. */
+  readonly insert: readonly EmbeddedImageRequirement[];
+  /** Only the names that change: collisions and identical content held under another name. */
+  readonly rename: ReadonlyMap<string, string>;
+}
+
+/**
+ * Decides, per captured embedded definition, whether the target report already holds it
+ * (same content identity: reuse), needs it written under its own name, or needs it written
+ * under a new name because a different definition owns the name. Identical content is
+ * carried once. `reserved` lists further names an allocated name must avoid, such as the
+ * names dangling captured items still point at. Compares identities only; payloads never
+ * appear here.
+ */
+export function reconcileImages(
+  requirements: readonly EmbeddedImageRequirement[],
+  targetDefinitions: readonly {
+    readonly name: string;
+    readonly identity: string | null;
+  }[],
+  reserved: readonly string[] = [],
+): ImageReconciliation {
+  const taken = targetDefinitions.map((definition) => definition.name);
+  const avoid = [...taken, ...reserved];
+  const unique = requirements.filter(
+    (entry, index) =>
+      requirements.findIndex((other) => other.name === entry.name) === index,
+  );
+  type Decision =
+    | { readonly kind: 'reuse'; readonly target: string }
+    | { readonly kind: 'insert'; readonly owner: EmbeddedImageRequirement }
+    | { readonly kind: 'follow'; readonly owner: EmbeddedImageRequirement };
+  const owners = new Map<string, EmbeddedImageRequirement>();
+  const decisions = new Map<EmbeddedImageRequirement, Decision>();
+  for (const required of unique) {
+    const same = targetDefinitions.filter(
+      (definition) => definition.identity === required.identity,
+    );
+    const match =
+      same.find((definition) => definition.name === required.name) ?? same[0];
+    const owner = owners.get(required.identity);
+    if (match) decisions.set(required, { kind: 'reuse', target: match.name });
+    else if (owner) decisions.set(required, { kind: 'follow', owner });
+    else {
+      owners.set(required.identity, required);
+      decisions.set(required, { kind: 'insert', owner: required });
+      // A free name is kept, so it must not be handed out as a rename.
+      if (!avoid.includes(required.name)) avoid.push(required.name);
+    }
+  }
+  const finalName = new Map<EmbeddedImageRequirement, string>();
+  for (const required of unique) {
+    const decision = decisions.get(required)!;
+    if (decision.kind === 'reuse') finalName.set(required, decision.target);
+    else if (decision.kind === 'insert') {
+      let name = required.name;
+      if (taken.includes(required.name)) {
+        name = allocateDefinitionName(required.name, avoid);
+        avoid.push(name);
+      }
+      finalName.set(required, name);
+    } else finalName.set(required, finalName.get(decision.owner)!);
+  }
+  const rename = new Map<string, string>();
+  for (const required of unique)
+    if (finalName.get(required) !== required.name)
+      rename.set(required.name, finalName.get(required)!);
+  return {
+    reuse: unique
+      .filter((required) => decisions.get(required)!.kind !== 'insert')
+      .map((required) => required.name),
+    insert: unique.filter(
+      (required) => decisions.get(required)!.kind === 'insert',
+    ),
+    rename,
+  };
 }

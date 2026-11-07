@@ -75,6 +75,9 @@ import {
   reconcileStructureSelection,
   selectStructure,
   hitTest,
+  accessibleName,
+  clipboardBlocked,
+  preservationOnly,
   type Selection,
 } from './selection';
 
@@ -332,6 +335,7 @@ export class EditorComponent {
     panelLayout(this.workspaceWidth(), this.view()),
   );
   readonly panelBounds = panelBounds;
+  readonly accessibleName = accessibleName;
   private readonly tabScroll = { components: 0, structure: 0 };
   private sizing: number | null = null;
   readonly diagnosticsOpen = signal(false);
@@ -362,7 +366,8 @@ export class EditorComponent {
       ? 'Select whole body items; cells and data have no item clipboard.'
       : busy ||
         (this.scene()?.items.some(
-          (item) => selection.bodyItemIds.includes(item.id) && item.placeholder,
+          (item) =>
+            selection.bodyItemIds.includes(item.id) && clipboardBlocked(item),
         )
           ? 'Preservation-only members cannot be copied or deleted; use Code XML.'
           : '');
@@ -401,7 +406,7 @@ export class EditorComponent {
       },
       { label: 'Properties', reason: '', run: () => this.focusProperties() },
       ...this.dataDeletion(busy),
-      ...(selected && selected.kind !== 'cell' && !selected.placeholder
+      ...(selected && selected.kind !== 'cell' && !preservationOnly(selected)
         ? [
             {
               label: 'Delete… (confirm contained content)',
@@ -627,7 +632,7 @@ export class EditorComponent {
       ...(this.scene()
         ?.items.filter(
           (item) =>
-            !item.placeholder &&
+            !preservationOnly(item) &&
             ((item.capabilities?.some((capability) => capability !== 'name') ??
               false) ||
               Object.values(item.operations ?? {}).some(
@@ -674,7 +679,7 @@ export class EditorComponent {
         .map((operation) => operation.reason)
         .filter((reason): reason is string => !!reason),
     );
-    if (item.placeholder)
+    if (preservationOnly(item))
       reasons.add('Preservation-only: the designer offers no mutation.');
     if (!item.bounds)
       reasons.add('Bounds are unknown; no canvas area is shown.');
@@ -1796,7 +1801,7 @@ export class EditorComponent {
       return false;
     }
     const items = ids.map((id) => this.scene()?.items.find((i) => i.id === id));
-    const locked = items.findIndex((item) => !item || item.placeholder);
+    const locked = items.findIndex((item) => !item || clipboardBlocked(item));
     if (locked >= 0) {
       this.gestureNotice.set(
         `${items[locked]?.label ?? ids[locked]} is preservation-only and cannot be copied; inspect it in source.`,

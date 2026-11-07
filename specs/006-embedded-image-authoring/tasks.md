@@ -360,11 +360,11 @@ colliding name is renamed.
 
 ### Batch B6: Manipulation and clipboard
 
-- [ ] T044 [P] [US2] Write the failing tests first in `tests/roundtrip/arrangement.test.ts`.
+- [X] T044 [P] [US2] Write the failing tests first in `tests/roundtrip/arrangement.test.ts`.
   - Move, resize and delete on image items change only `Top`/`Left`/`Height`/`Width`, or
     remove only the `Image` element.
   - `EmbeddedImages` stays byte-identical after a deletion.
-- [ ] T045 [P] [US2] Write the failing tests first for the clipboard.
+- [X] T045 [P] [US2] Write the failing tests first for the clipboard.
   - In `packages/validation/src/clipboard.test.ts`, `reconcileImages` covers the reuse,
     insert and rename-on-collision cases.
   - In `tests/roundtrip/clipboard.test.ts`, a same-report paste writes no definition.
@@ -373,36 +373,40 @@ colliding name is renamed.
     - a paste `authored`→`collision` gives `logo_1`, with the pasted `Value` rewritten;
     - a capture over `captureBudget` is refused with the existing budget error;
     - each operation is one undo step.
-- [ ] T046 [US2] Make image items targetable by layout and deletion.
+- [X] T046 [US2] Make image items targetable by layout and deletion.
   - Add `validateImageCapability` in `packages/validation/src/images.ts`, mirroring
     `validateTextboxCapability` in `textboxes.ts:227`.
   - Make the item lookup in `apps/vscode-extension/src/edit-controller.ts` include
     `projection.images`, so that `LayoutIntent` and `planLayout`
     (`packages/xml-serializer/src/layout.ts:21`) and `planRemoval` accept them.
-- [ ] T047 [US2] Treat image items like other items in the designer
+- [X] T047 [US2] Treat image items like other items in the designer
   (`apps/designer/src/app/editor/selection.ts`, `manipulation.ts` and `editor.component.ts`):
   - they take part in selection and multi-selection;
   - they move and resize with the keyboard and accept snapping;
   - their accessible name is `Image {name}`.
   Add `.spec.ts` cases for these behaviors.
-- [ ] T048 [US2] In `packages/report-model/src/clipboard.ts`, add
-  `EmbeddedImageRequirement = {name, hash, mime, xml}` and `Capture.images`.
-- [ ] T049 [US2] In `apps/vscode-extension/src/clipboard.ts`, extend the capture.
-  - Collect the exact `EmbeddedImage` source and the hash of every definition referenced
-    by a captured image item.
+- [X] T048 [US2] In `packages/report-model/src/clipboard.ts`, add
+  `EmbeddedImageRequirement = {name, hash, identity, mime, xml, nameRange}` and `Capture.images`.
+  `hash` is the picture hash (null when the definition is not displayable), `identity` is the
+  reuse key (the hash, or a digest of the exact source minus the `Name`), and `nameRange` is
+  the `Name` value range inside `xml`.
+- [X] T049 [US2] In `apps/vscode-extension/src/clipboard.ts`, extend the capture.
+  - Collect the exact `EmbeddedImage` source and the identity of every definition referenced
+    by a captured image item, displayable or not. A missing definition is never invented.
   - Count the requirements against `captureBudget`.
-- [ ] T050 [US2] In `packages/validation/src/clipboard.ts`, implement
-  `reconcileImages(requirements, targetDefinitions)`. It returns `{reuse, insert, rename: Map<old,new>}`
-  and uses `allocateDefinitionName` for renames.
-- [ ] T051 [US2] Extend `planInsertion` and `transformRoot` in
+- [X] T050 [US2] In `packages/validation/src/clipboard.ts`, implement
+  `reconcileImages(requirements, targetDefinitions, reserved)`. It returns `{reuse, insert, rename: Map<old,new>}`,
+  reuses a target definition only on an equal `identity`, and uses `allocateDefinitionName`
+  for renames (avoiding the `reserved` dangling names).
+- [X] T051 [US2] Extend `planInsertion` and `transformRoot` in
   `packages/xml-serializer/src/clipboard.ts`.
   - Apply the rename map to the constant `Value` of pasted `Image` elements.
   - Compose the `EmbeddedImages` inserts into the same plan (via `composePlans`).
-- [ ] T052 [US2] Wire the reconciliation in the host paste path
+- [X] T052 [US2] Wire the reconciliation in the host paste path
   (`apps/vscode-extension/src/clipboard.ts`, `planInsertion` use near line 460).
   - A same-document paste writes no definitions.
   - Duplicate follows the same path.
-- [ ] T053 [US2] **Gate B6**. Run `pnpm qa:integration`. Then run the review. Then commit
+- [X] T053 [US2] **Gate B6**. Run `pnpm qa:integration`. Then run the review. Then commit
   `:sparkles: feat(clipboard): copy, paste and duplicate image items with their definitions`.
 
 **Checkpoint**: US1 and US2 work independently.

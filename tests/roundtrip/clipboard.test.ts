@@ -1,10 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { crc32, deflateSync } from 'node:zlib';
 import type { SizeUnit } from '@rdlc/report-model/geometry';
 import { toPoints } from '@rdlc/report-model/geometry';
 import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
+import { captureBudget } from '@rdlc/report-model/clipboard';
+import { rawImageLimit } from '@rdlc/report-model/images';
 import { acceptedGeometry } from '@rdlc/validation/layout';
 import {
   buildCapture,
@@ -26,7 +30,8 @@ function ids(current: ReturnType<typeof load>, names: readonly string[]) {
     (name) =>
       (
         current.projection.tables.find((t) => t.name === name) ??
-        current.projection.textboxes.find((t) => t.name === name)
+        current.projection.textboxes.find((t) => t.name === name) ??
+        current.projection.images.find((t) => t.name === name)
       )?.node.id ?? `missing:${name}`,
   );
 }
@@ -64,7 +69,8 @@ function paste(
   const roots = planned.starts.map(
     (start) =>
       next.projection.tables.find((t) => t.node.range.start === start) ??
-      next.projection.textboxes.find((t) => t.node.range.start === start)!,
+      next.projection.textboxes.find((t) => t.node.range.start === start) ??
+      next.projection.images.find((t) => t.node.range.start === start)!,
   );
   return { ...planned, next, roots, patch: patch! };
 }
@@ -381,4 +387,544 @@ test('cut removes exactly the complete set after whole-set dependency checks', (
       expected.slice(0, node.range.start) + expected.slice(node.range.end);
   }
   assert.equal(cut.candidate, expected);
+});
+
+// ---- Image items and their embedded definitions (feature 006, US2) ----
+
+const images = (name: string) =>
+  readFileSync(`tests/fixtures/images/${name}.rdlc`, 'utf8');
+const sha256 = (bytes: Uint8Array) =>
+  createHash('sha256').update(bytes).digest('hex');
+const authored = images('authored');
+const definitionNames = (source: string) =>
+  [...source.matchAll(/<EmbeddedImage Name="([^"]*)"/g)].map((m) => m[1]);
+const embeddedImages = (source: string) =>
+  /<EmbeddedImages>[\s\S]*?<\/EmbeddedImages>/.exec(source)?.[0] ?? '';
+
+/** Apply one plan and prove the exact inverse of every patch restores the original. */
+function applyAndInvert(source: string, plan: ReturnType<typeof planPaste>) {
+  assert.ok(plan.ok, JSON.stringify(!plan.ok && plan.diagnostics));
+  let restored = plan.candidate;
+  let delta = 0;
+  const spans = plan.plan.patches.map((patch) => {
+    const start = patch.start + delta;
+    delta += patch.replacement.length - (patch.end - patch.start);
+    return { start, end: start + patch.replacement.length, patch };
+  });
+  for (const { start, end, patch } of spans.reverse())
+    restored = restored.slice(0, start) + patch.expected + restored.slice(end);
+  assert.equal(restored, source, 'the inverse patches restore the report');
+  return load(plan.candidate, 2);
+}
+
+test('copying images captures each referenced definition once with its exact source and hash', () => {
+  const current = load(authored);
+  const logo = readFileSync('tests/fixtures/images/pictures/logo.png');
+  const capture = copy(authored, ['LogoAutoSize', 'LogoFit', 'PhotoClip']);
+  assert.deepEqual(
+    capture.images.map((entry) => [entry.name, entry.mime]),
+    [
+      ['logo', 'image/png'],
+      ['photo', 'image/jpeg'],
+    ],
+  );
+  assert.equal(capture.images[0]!.hash, sha256(logo));
+  for (const entry of capture.images) {
+    const definition = current.projection.embeddedImages.find(
+      (d) => d.name === entry.name,
+    )!;
+    assert.equal(
+      entry.xml,
+      authored.slice(definition.node.range.start, definition.node.range.end),
+    );
+    assert.equal(
+      entry.xml.slice(entry.nameRange.start, entry.nameRange.end),
+      entry.name,
+    );
+  }
+  assert.ok(
+    capture.size >= capture.images.reduce((n, e) => n + e.xml.length, 0),
+    'requirements count toward the capture size',
+  );
+  assert.deepEqual(
+    copy(authored, ['LogoFit']).images.map((e) => e.name),
+    ['logo'],
+  );
+  // A foreign attribute on the item keeps the existing textbox-precedent refusal.
+  const tagged = buildCapture(current, ids(current, ['Tagged']));
+  assert.equal(
+    !tagged.ok && tagged.diagnostics[0]!.code,
+    'DEPENDENCY_UNPROVEN',
+  );
+});
+
+test('a same-report paste or duplicate writes no definition and keeps the same Value', () => {
+  const capture = copy(authored, ['LogoAutoSize', 'PhotoClip']);
+  const pasted = paste(authored, capture);
+  assert.equal(pasted.plan.patches.length, 1);
+  assert.equal(embeddedImages(pasted.candidate), embeddedImages(authored));
+  assert.deepEqual(definitionNames(pasted.candidate), [
+    'logo',
+    'photo',
+    'unused',
+  ]);
+  assert.equal(pasted.roots.length, 2);
+  const next = pasted.next.projection;
+  assert.equal(next.images.length, 7);
+  assert.deepEqual(
+    next.embeddedImages.map((d) => [d.name, d.references.length]),
+    [
+      ['logo', 4],
+      ['photo', 3],
+      ['unused', 0],
+    ],
+  );
+  const names = next.images.map((i) => i.name);
+  assert.equal(new Set(names).size, names.length, 'item names stay unique');
+  const copies = next.images.slice(-2);
+  assert.deepEqual(
+    copies.map((i) => [
+      i.value?.kind === 'constant' && i.value.text,
+      i.definition,
+    ]),
+    [
+      ['logo', 'logo'],
+      ['photo', 'photo'],
+    ],
+  );
+  assert.ok(copies.every((i) => i.capabilities.includes('image')));
+  // Duplicate is the same path with the standard 10 pt offset.
+  const duplicate = paste(authored, copy(authored, ['PhotoClip']), 10);
+  assert.equal(duplicate.plan.patches.length, 1);
+  assert.equal(embeddedImages(duplicate.candidate), embeddedImages(authored));
+});
+
+test('a cross-report paste inserts the definition once, in the same plan', () => {
+  const blank = images('blank');
+  const capture = copy(authored, ['LogoAutoSize', 'LogoFit']);
+  assert.equal(capture.images.length, 1, 'two items, one definition');
+  const planned = planPaste(load(blank), capture, 10, 'pt');
+  const next = applyAndInvert(blank, planned);
+  assert.ok(planned.ok);
+  assert.equal(planned.plan.patches.length, 2, 'items and one definition');
+  assert.deepEqual(definitionNames(planned.candidate), ['logo']);
+  assert.match(
+    planned.candidate,
+    /<\/ReportSections>\s*<EmbeddedImages><EmbeddedImage Name="logo">/,
+  );
+  const [definition] = next.projection.embeddedImages;
+  assert.equal(definition!.displayable, true);
+  assert.equal(definition!.name, 'logo');
+  assert.deepEqual(definition!.references, ['LogoAutoSize', 'LogoFit']);
+  const logo = readFileSync('tests/fixtures/images/pictures/logo.png');
+  assert.equal(
+    sha256(
+      Buffer.from(
+        /<ImageData>([^<]*)<\/ImageData>/.exec(planned.candidate)![1]!,
+        'base64',
+      ),
+    ),
+    sha256(logo),
+    'the payload arrives byte for byte',
+  );
+  // Each reported start offset is an inserted Image element.
+  assert.deepEqual(
+    planned.starts.map(
+      (start) =>
+        next.projection.images.find((i) => i.node.range.start === start)?.name,
+    ),
+    ['LogoAutoSize', 'LogoFit'],
+  );
+  assert.deepEqual(
+    next.projection.images.map((i) => i.reason),
+    [null, null],
+  );
+  // The report text outside the footprint is untouched.
+  assert.ok(
+    planned.candidate.includes(blank.slice(0, blank.indexOf('<Body>'))),
+  );
+});
+
+test('candidate offsets stay exact when EmbeddedImages precedes the body', () => {
+  const blank = images('blank').replace(
+    '<ReportSections>',
+    '<EmbeddedImages><EmbeddedImage Name="other"><MIMEType>image/png</MIMEType><ImageData>AAAA</ImageData></EmbeddedImage></EmbeddedImages><ReportSections>',
+  );
+  const planned = planPaste(load(blank), copy(authored, ['LogoFit']), 10, 'pt');
+  const next = applyAndInvert(blank, planned);
+  assert.ok(planned.ok);
+  assert.equal(planned.plan.patches.length, 2);
+  assert.deepEqual(definitionNames(planned.candidate), ['other', 'logo']);
+  assert.deepEqual(
+    planned.starts.map(
+      (start) =>
+        next.projection.images.find((i) => i.node.range.start === start)?.name,
+    ),
+    ['LogoFit'],
+  );
+});
+
+test('a repeated paste into the same report reuses the carried definition', () => {
+  const blank = images('blank');
+  const capture = copy(authored, ['LogoFit']);
+  const first = planPaste(load(blank), capture, 10, 'pt');
+  assert.ok(first.ok);
+  const again = planPaste(load(first.candidate, 2), capture, 20, 'pt');
+  assert.ok(again.ok, JSON.stringify(!again.ok && again.diagnostics));
+  assert.equal(again.plan.patches.length, 1);
+  assert.deepEqual(definitionNames(again.candidate), ['logo']);
+});
+
+test('identical content under another name is reused and the Value follows it', () => {
+  const logo = load(authored).projection.embeddedImages[0]!;
+  const definition = authored
+    .slice(logo.node.range.start, logo.node.range.end)
+    .replace('Name="logo"', 'Name="brand"');
+  const destination = images('blank').replace(
+    '</Report>',
+    `<EmbeddedImages>${definition}</EmbeddedImages></Report>`,
+  );
+  const planned = planPaste(
+    load(destination),
+    copy(authored, ['LogoFit']),
+    10,
+    'pt',
+  );
+  const next = applyAndInvert(destination, planned);
+  assert.ok(planned.ok);
+  assert.equal(planned.plan.patches.length, 1);
+  assert.deepEqual(definitionNames(planned.candidate), ['brand']);
+  assert.equal(
+    next.projection.images[0]!.value?.kind === 'constant' &&
+      next.projection.images[0]!.value.text,
+    'brand',
+  );
+});
+
+test('a name collision with different content renames the definition and rewrites the Value', () => {
+  const collision = images('collision');
+  const capture = copy(authored, ['LogoAutoSize', 'LogoFit', 'PhotoClip']);
+  const planned = planPaste(load(collision), capture, 10, 'pt');
+  const next = applyAndInvert(collision, planned);
+  assert.ok(planned.ok);
+  assert.equal(planned.plan.patches.length, 2);
+  assert.deepEqual(definitionNames(planned.candidate), [
+    'logo',
+    'logo_1',
+    'photo',
+  ]);
+  assert.ok(
+    planned.candidate.includes(
+      embeddedImages(collision).replace('</EmbeddedImages>', ''),
+    ),
+    'the existing logo definition is byte-identical',
+  );
+  const byName = new Map(next.projection.images.map((i) => [i.name, i]));
+  const value = (name: string) => {
+    const v = byName.get(name)?.value;
+    return v?.kind === 'constant' ? v.text : null;
+  };
+  assert.equal(value('Existing'), 'logo', 'the existing item is untouched');
+  assert.equal(value('LogoAutoSize'), 'logo_1');
+  assert.equal(value('LogoFit'), 'logo_1');
+  assert.equal(value('PhotoClip'), 'photo');
+  assert.ok(
+    [...byName.values()].every(
+      (i) => i.definition !== null && i.reason === null,
+    ),
+    'no pasted item is left dangling',
+  );
+  // Only the pasted constants changed relative to the captured source.
+  const pasted = planned.candidate.slice(
+    next.projection.images.find((i) => i.name === 'LogoAutoSize')!.node.range
+      .start,
+    next.projection.images.find((i) => i.name === 'LogoAutoSize')!.node.range
+      .end,
+  );
+  assert.ok(pasted.includes('<Value>logo_1</Value>'));
+  assert.ok(!pasted.includes('<Value>logo</Value>'));
+});
+
+test('an item whose definition is missing still pastes as geometry-only without inventing one', () => {
+  const preserved = images('preserved');
+  const capture = copy(preserved, ['GhostPicture', 'BrokenPicture']);
+  assert.deepEqual(
+    capture.images.map((entry) => entry.name),
+    ['broken'],
+    'only the definition that exists is carried',
+  );
+  const blank = images('blank');
+  const planned = planPaste(
+    load(blank),
+    copy(preserved, ['GhostPicture']),
+    10,
+    'pt',
+  );
+  const next = applyAndInvert(blank, planned);
+  assert.ok(planned.ok);
+  assert.equal(planned.plan.patches.length, 1);
+  assert.deepEqual(definitionNames(planned.candidate), []);
+  assert.deepEqual(
+    next.projection.images.map((i) => [
+      i.reason,
+      i.definition,
+      i.capabilities.includes('image'),
+      i.capabilities.includes('left'),
+    ]),
+    [['reference-missing', null, false, true]],
+  );
+});
+
+test('non-displayable definitions travel with their items and stay non-displayable', () => {
+  const preserved = images('preserved');
+  const source = load(preserved);
+  const cases = [
+    ['GifPicture', 'spinner', 'format-unsupported'],
+    ['BmpPicture', 'bitmap', 'format-unsupported'],
+    ['LegacyPngPicture', 'legacy', 'mime-mismatch'],
+    ['BrokenPicture', 'broken', 'data-invalid'],
+  ] as const;
+  const blank = images('blank');
+  for (const [item, definition, reason] of cases) {
+    const capture = copy(preserved, [item]);
+    const [required] = capture.images;
+    assert.equal(required?.name, definition);
+    assert.equal(required?.hash, null, 'no picture hash without a picture');
+    assert.match(required!.identity, /^xml:[0-9a-f]{64}$/);
+    const planned = planPaste(load(blank), capture, 10, 'pt');
+    const next = applyAndInvert(blank, planned);
+    assert.ok(planned.ok);
+    assert.equal(planned.plan.patches.length, 2, item);
+    assert.deepEqual(definitionNames(planned.candidate), [definition]);
+    const [carried] = next.projection.embeddedImages;
+    assert.equal(carried!.displayable, false);
+    assert.equal(carried!.reason, reason);
+    assert.deepEqual(
+      next.projection.images.map((i) => [i.definition, i.reason]),
+      [[definition, reason]],
+      'the item stays geometry-only',
+    );
+    assert.equal(
+      source.projection.embeddedImages.find((d) => d.name === definition)!
+        .encodedSize,
+      carried!.encodedSize,
+      'the payload arrives unchanged',
+    );
+    // Back into the source report: identical content is reused, nothing is written.
+    const same = planPaste(source, capture, 10, 'pt');
+    assert.ok(same.ok);
+    assert.equal(same.plan.patches.length, 1, `${item} same report`);
+  }
+});
+
+test('a hashless definition is reused only on an exact match, else renamed', () => {
+  const preserved = images('preserved');
+  const capture = copy(preserved, ['GifPicture']);
+  const blank = images('blank');
+  const target = (inner: string) =>
+    blank.replace(
+      '</Report>',
+      `<EmbeddedImages><EmbeddedImage Name="spinner">${inner}</EmbeddedImage></EmbeddedImages></Report>`,
+    );
+  const gif = load(preserved).projection.embeddedImages.find(
+    (d) => d.name === 'spinner',
+  )!.node;
+  const exact = /<EmbeddedImage[^>]*>([\s\S]*)<\/EmbeddedImage>/.exec(
+    preserved.slice(gif.range.start, gif.range.end),
+  )![1]!;
+  const reused = planPaste(load(target(exact)), capture, 10, 'pt');
+  assert.ok(reused.ok);
+  assert.equal(reused.plan.patches.length, 1, 'an exact match is reused');
+  const other = target(
+    '<MIMEType>image/gif</MIMEType><ImageData>R0lGODlhAQABAAAAACw=</ImageData>',
+  );
+  const renamed = planPaste(load(other), capture, 10, 'pt');
+  const next = applyAndInvert(other, renamed);
+  assert.ok(renamed.ok);
+  assert.deepEqual(definitionNames(renamed.candidate), [
+    'spinner',
+    'spinner_1',
+  ]);
+  assert.equal(
+    next.projection.images[0]!.value?.kind === 'constant' &&
+      next.projection.images[0]!.value.text,
+    'spinner_1',
+  );
+});
+
+test('a dangling reference never takes the name of a renamed definition', () => {
+  const dangling = authored.replace(
+    '</ReportItems>',
+    `<Image Name="Dangling"><Source>Embedded</Source><Value>logo_1</Value><Sizing>Fit</Sizing><Top>3.5in</Top><Left>0.25in</Left><Height>0.5in</Height><Width>1.5in</Width></Image></ReportItems>`,
+  );
+  const capture = copy(dangling, ['LogoFit', 'Dangling']);
+  assert.deepEqual(
+    capture.images.map((e) => e.name),
+    ['logo'],
+  );
+  const collision = images('collision');
+  const planned = planPaste(load(collision), capture, 10, 'pt');
+  const next = applyAndInvert(collision, planned);
+  assert.ok(planned.ok, JSON.stringify(!planned.ok && planned.diagnostics));
+  assert.deepEqual(definitionNames(planned.candidate), ['logo', 'logo_2']);
+  const byName = new Map(next.projection.images.map((i) => [i.name, i]));
+  const value = (name: string) => {
+    const v = byName.get(name)?.value;
+    return v?.kind === 'constant' ? v.text : null;
+  };
+  assert.equal(value('LogoFit'), 'logo_2');
+  assert.equal(value('Dangling'), 'logo_1', 'the dangling Value is untouched');
+  assert.equal(byName.get('Dangling')!.reason, 'reference-missing');
+  assert.equal(byName.get('Dangling')!.definition, null);
+});
+
+test('pasting a dangling image reference over a different same-named definition is refused', () => {
+  const preserved = images('preserved');
+  const capture = copy(preserved, ['GhostPicture']);
+  const target = images('blank').replace(
+    '</Report>',
+    '<EmbeddedImages><EmbeddedImage Name="ghost"><MIMEType>image/png</MIMEType><ImageData>iVBORw0KGgo=</ImageData></EmbeddedImage></EmbeddedImages></Report>',
+  );
+  const refused = planPaste(load(target), capture, 10, 'pt');
+  assert.equal(refused.ok, false);
+  const [diagnostic] = !refused.ok ? refused.diagnostics : [];
+  assert.equal(diagnostic?.code, 'IMAGE_DEFINITION_CONFLICT');
+  assert.match(diagnostic!.message, /GhostPicture/);
+  assert.match(diagnostic!.message, /ghost/);
+  assert.ok(!diagnostic!.message.includes('iVBORw0KGgo'), 'no payload');
+  // The same capture pastes fine where the name is free, and into its own report.
+  assert.ok(planPaste(load(images('blank')), capture, 10, 'pt').ok);
+  assert.ok(planPaste(load(preserved), capture, 10, 'pt').ok);
+});
+
+test('renaming a definition leaves a textbox whose text mentions it untouched', () => {
+  const note = images('blank')
+    .match(/<Textbox Name="Title">[\s\S]*?<\/Textbox>/)![0]
+    .replace('Name="Title"', 'Name="Note"')
+    .replace('No embedded images', 'logo');
+  const source = authored.replace('</ReportItems>', `${note}</ReportItems>`);
+  const capture = copy(source, ['LogoFit', 'Note']);
+  const collision = images('collision');
+  const planned = planPaste(load(collision), capture, 10, 'pt');
+  const next = applyAndInvert(collision, planned);
+  assert.ok(planned.ok, JSON.stringify(!planned.ok && planned.diagnostics));
+  const pasted = next.projection.textboxes.find((t) => t.name === 'Note')!;
+  assert.equal(pasted.value?.text, 'logo');
+  assert.equal(
+    next.projection.images.find((i) => i.name === 'LogoFit')!.value?.kind ===
+      'constant' &&
+      (
+        next.projection.images.find((i) => i.name === 'LogoFit')!.value as {
+          text: string;
+        }
+      ).text,
+    'logo_1',
+  );
+});
+
+/** The RDL namespace bound to `r:` instead of being the default, on every element. */
+const prefixedRdl = (xml: string) =>
+  xml
+    .replace(/xmlns="(http:\/\/schemas[^"]*)"/, 'xmlns:r="$1"')
+    .replace(/<(\/?)([A-Z][A-Za-z]*)/g, '<$1r:$2');
+
+test('definitions follow the namespace prefix rule: equal prefixes paste, mismatches are refused', () => {
+  const source = prefixedRdl(authored);
+  const destination = prefixedRdl(images('blank'));
+  assert.equal(load(source).projection.status, 'editable');
+  assert.equal(load(destination).projection.status, 'editable');
+  const capture = copy(source, ['LogoFit']);
+  assert.match(capture.images[0]!.xml, /^<r:EmbeddedImage /);
+  const planned = planPaste(load(destination), capture, 10, 'pt');
+  const next = applyAndInvert(destination, planned);
+  assert.ok(planned.ok, JSON.stringify(!planned.ok && planned.diagnostics));
+  assert.equal(next.projection.embeddedImages[0]!.displayable, true);
+  assert.equal(next.projection.images[0]!.definition, 'logo');
+
+  // Prefixed capture into a default-namespace report, and the reverse, are refused.
+  for (const [from, to] of [
+    [source, images('blank')],
+    [authored, destination],
+  ] as const) {
+    const refused = planPaste(load(to), copy(from, ['LogoFit']), 10, 'pt');
+    assert.equal(refused.ok, false);
+    const [diagnostic] = !refused.ok ? refused.diagnostics : [];
+    assert.equal(diagnostic?.code, 'PASTE_REFUSED');
+    assert.ok(!diagnostic!.message.includes('iVBORw0KGgo'), 'no payload');
+  }
+});
+
+test('preservation-only images are not copied', () => {
+  const preserved = images('preserved');
+  const current = load(preserved);
+  for (const name of ['ExternalPicture', 'ExpressionPicture', 'CellPicture']) {
+    const built = buildCapture(current, ids(current, [name]));
+    assert.equal(built.ok, false, name);
+    assert.equal(
+      !built.ok && built.diagnostics[0]!.code,
+      'SELECTION_UNSUPPORTED',
+    );
+  }
+});
+
+/** A valid PNG padded to `size` bytes with one ancillary chunk, distinct per `seed`. */
+function paddedPng(size: number, seed: number): Buffer {
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const head = Buffer.alloc(4);
+    head.writeUInt32BE(data.length);
+    const tail = Buffer.alloc(4);
+    tail.writeUInt32BE(crc32(body));
+    return Buffer.concat([head, body, tail]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr.set([8, 2, 0, 0, 0], 8);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('tEXt', Buffer.alloc(size - 100, seed)),
+    chunk('IDAT', deflateSync(Buffer.from([0, 1, 2, 3]))),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+test('image definitions count toward captureBudget and are refused with the budget error', () => {
+  const big = [paddedPng(4_900_000, 1), paddedPng(4_900_000, 2)];
+  assert.ok(big.every((png) => png.length < rawImageLimit));
+  let next = 0;
+  // The padded pictures are PNG, so the jpeg definition must declare PNG too.
+  const source = authored
+    .replaceAll('image/jpeg', 'image/png')
+    .replace(
+      /<ImageData>[^<]*<\/ImageData>/g,
+      () =>
+        `<ImageData>${big[next++]?.toString('base64') ?? 'AAAA'}</ImageData>`,
+    );
+  const current = load(source);
+  assert.ok(
+    current.projection.embeddedImages.slice(0, 2).every((d) => d.displayable),
+    'both oversized-for-the-clipboard definitions are valid pictures',
+  );
+  const one = buildCapture(current, ids(current, ['LogoAutoSize']));
+  assert.ok(one.ok, JSON.stringify(!one.ok && one.diagnostics[0]));
+  assert.ok(one.capture.size > 6_000_000 && one.capture.size <= captureBudget);
+  const both = buildCapture(
+    current,
+    ids(current, ['LogoAutoSize', 'PhotoClip']),
+  );
+  assert.equal(both.ok, false);
+  assert.equal(!both.ok && both.diagnostics[0]!.code, 'CAPTURE_TOO_LARGE');
+  assert.equal(
+    !both.ok && both.diagnostics[0]!.message,
+    'The selection exceeds the 8 MiB clipboard budget; copy fewer items.',
+  );
+  assert.ok(
+    !both.ok &&
+      !JSON.stringify(both.diagnostics).includes(
+        /<ImageData>([^<]{64})/.exec(source)![1]!,
+      ),
+    'no payload in the diagnostics',
+  );
 });

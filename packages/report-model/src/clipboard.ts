@@ -33,7 +33,7 @@ export interface CaptureReference {
   readonly range: SourceRange | null;
 }
 export interface CaptureRoot {
-  readonly kind: 'textbox' | 'table';
+  readonly kind: 'textbox' | 'table' | 'image';
   /** Exact source slice of one complete subtree; a table includes its cells/groups. */
   readonly xml: string;
   /** Namespace environment in scope at the root element. */
@@ -51,6 +51,14 @@ export interface CaptureRoot {
   readonly geometry: Readonly<Record<keyof Bounds, SourceRange | null>>;
   readonly identities: readonly CaptureIdentity[];
   readonly references: readonly CaptureReference[];
+  /**
+   * An embedded `image` root only: the definition name its constant `Value` holds, with the
+   * exact operand range within `xml`. `range` is null when no lossless rewrite exists.
+   */
+  readonly embedded?: {
+    readonly name: string;
+    readonly range: SourceRange | null;
+  };
 }
 /** External dataset dependency with the exact source field definitions required. */
 export interface DatasetRequirement {
@@ -61,6 +69,25 @@ export interface DatasetRequirement {
     readonly typeName: string;
   }[];
 }
+/**
+ * An embedded image definition a captured image item references, displayable or not. The
+ * payload stays host-side inside `xml` and counts toward `captureBudget`; it is never logged.
+ */
+export interface EmbeddedImageRequirement {
+  readonly name: string;
+  /** SHA-256 of the decoded bytes of a displayable definition; null for any other. */
+  readonly hash: string | null;
+  /**
+   * Content identity used to reuse a target definition: `hash` for a displayable one, and a
+   * digest of the exact `EmbeddedImage` source with the `Name` value removed otherwise.
+   */
+  readonly identity: string;
+  readonly mime: string | null;
+  /** Exact `EmbeddedImage` source. */
+  readonly xml: string;
+  /** The `Name` attribute value range within `xml`, used when a collision renames it. */
+  readonly nameRange: SourceRange;
+}
 /** Immutable host snapshot; never live source IDs or webview-provided XML. */
 export interface Capture {
   readonly id: string;
@@ -70,6 +97,11 @@ export interface Capture {
   /** One or more roots in source order. */
   readonly roots: readonly CaptureRoot[];
   readonly datasets: readonly DatasetRequirement[];
+  /**
+   * Definitions referenced by the captured image items, one per name, in the source report's
+   * definition order. A referenced name with no definition has no entry and is never invented.
+   */
+  readonly images: readonly EmbeddedImageRequirement[];
   /** UTF-8 bytes of subtree text, namespace environments and dependencies. */
   readonly size: number;
 }

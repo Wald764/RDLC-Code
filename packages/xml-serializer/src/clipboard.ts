@@ -1,10 +1,15 @@
-import type { CaptureRoot } from '@rdlc/report-model/clipboard';
+import type {
+  CaptureRoot,
+  EmbeddedImageRequirement,
+} from '@rdlc/report-model/clipboard';
 import type { DocumentSnapshot } from '@rdlc/report-model/document';
 import type { PatchPlan } from '@rdlc/report-model/editing';
 import type { XmlNode } from '@rdlc/report-model/syntax';
-import { escapeAttribute } from './textboxes.js';
+import { RDL_2016 } from '@rdlc/report-model/report';
+import { escapeAttribute, escapeText } from './textboxes.js';
 import {
   child,
+  composePlans,
   element,
   insertChild,
   patchPlan,
@@ -31,6 +36,8 @@ export function transformRoot(
     >;
     /** Namespace environment at the destination insertion parent. */
     readonly destination: Readonly<Record<string, string>>;
+    /** Embedded definition names renamed or redirected in the target (old to new). */
+    readonly images?: ReadonlyMap<string, string>;
   },
 ): string {
   const edits: FragmentEdit[] = [];
@@ -49,6 +56,15 @@ export function transformRoot(
       );
     // Allocated names are identifiers, so neither text nor CDATA needs escaping.
     edits.push({ ...reference.range, replacement: rename(reference.name) });
+  }
+  const embedded = root.embedded;
+  const definition = embedded && input.images?.get(embedded.name);
+  if (embedded && definition !== undefined && definition !== embedded.name) {
+    if (!embedded.range)
+      throw new Error(
+        `${embedded.name} has no exact lexical operand; rewrite it in source before copying.`,
+      );
+    edits.push({ ...embedded.range, replacement: escapeText(definition) });
   }
   const colon = root.qualifiedName.indexOf(':');
   const prefix = colon < 0 ? '' : root.qualifiedName.slice(0, colon);
@@ -92,14 +108,66 @@ export function transformRoot(
   return result + root.xml.slice(end);
 }
 
+/** An `EmbeddedImage` to write, under its final name (the capture's name unless renamed). */
+export interface InsertedDefinition {
+  readonly requirement: EmbeddedImageRequirement;
+  readonly name: string;
+}
+
+/**
+ * The captured definition source under its final name. Its prefixes must resolve the same
+ * way in the target: the namespace prefix of the RDL elements must match the target's, and
+ * any other prefix must be declared inside the fragment.
+ */
+function definitionFragment(
+  container: XmlNode,
+  definition: InsertedDefinition,
+): string {
+  const { xml, nameRange } = definition.requirement;
+  const binding = Object.entries(container.namespaces).find(
+    ([, uri]) => uri === RDL_2016,
+  );
+  if (!binding) throw new Error('No in-scope RDL namespace binding.');
+  const prefix =
+    /^<(?:([A-Za-z_][\w.-]*):)?EmbeddedImage[\s>/]/.exec(xml)?.[1] ?? '';
+  const declared = new Set(
+    [...xml.matchAll(/\sxmlns:([A-Za-z_][\w.-]*)\s*=/g)].map((m) => m[1]),
+  );
+  const used = new Set(
+    [
+      ...xml.matchAll(
+        /<\/?([A-Za-z_][\w.-]*):|\s([A-Za-z_][\w.-]*):[\w.-]+\s*=/g,
+      ),
+    ].map((m) => (m[1] ?? m[2])!),
+  );
+  if (
+    prefix !== binding[0] ||
+    [...used].some((p) => p !== 'xmlns' && p !== prefix && !declared.has(p))
+  )
+    throw new Error(
+      `The definition ${definition.requirement.name} uses namespace prefixes this report does not bind; add the image from a file instead.`,
+    );
+  return definition.name === definition.requirement.name
+    ? xml
+    : xml.slice(0, nameRange.start) +
+        escapeAttribute(definition.name) +
+        xml.slice(nameRange.end);
+}
+
 /**
  * One insertion patch at the end of Body/ReportItems, creating or opening the
  * container when missing or self-closing. Returns each fragment's candidate offset.
+ * Embedded definitions the items need are appended to `EmbeddedImages` (created as the
+ * last child of `Report` when absent) and composed into the same plan.
  */
 export function planInsertion(
   snapshot: DocumentSnapshot,
   body: XmlNode,
   fragments: readonly string[],
+  embedded: {
+    readonly root: XmlNode;
+    readonly definitions: readonly InsertedDefinition[];
+  } = { root: body, definitions: [] },
 ): { readonly plan: PatchPlan; readonly starts: readonly number[] } {
   const items = child(body, 'ReportItems');
   const xml = fragments.join('');
@@ -123,13 +191,32 @@ export function planInsertion(
     );
     prefix = wrapped.indexOf('\u0000');
   }
+  let plan = patchPlan(snapshot, [patch]);
+  let delta = 0;
+  if (embedded.definitions.length) {
+    const container = child(embedded.root, 'EmbeddedImages');
+    const inner = (parent: XmlNode) =>
+      embedded.definitions.map((d) => definitionFragment(parent, d)).join('');
+    const definitions = insertChild(
+      snapshot,
+      container ?? embedded.root,
+      container
+        ? inner(container)
+        : element(embedded.root, 'EmbeddedImages', inner(embedded.root)),
+    );
+    plan = composePlans(snapshot, [plan, patchPlan(snapshot, [definitions])]);
+    // Candidate offsets shift by whatever the definition patch adds before the items.
+    if (definitions.end <= patch.start)
+      delta =
+        definitions.replacement.length - (definitions.end - definitions.start);
+  }
   const starts: number[] = [];
-  let offset = patch.start + prefix;
+  let offset = patch.start + prefix + delta;
   for (const fragment of fragments) {
     starts.push(offset);
     offset += fragment.length;
   }
-  return { plan: patchPlan(snapshot, [patch]), starts };
+  return { plan, starts };
 }
 
 /** Remove every selected root in one plan; nothing else changes. */

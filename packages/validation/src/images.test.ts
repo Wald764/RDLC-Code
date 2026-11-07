@@ -14,6 +14,7 @@ import {
 import type { ImageRefusal, ValidatedPicture } from '@rdlc/report-model/images';
 import {
   allocateDefinitionName,
+  validateImageCapability,
   crc32,
   decodeImageData,
   sniffFormat,
@@ -22,6 +23,8 @@ import {
   walkPng,
 } from './images.js';
 import { validateName } from './validate.js';
+import { parse } from '@rdlc/xml-parser/parser';
+import { projectReport } from '@rdlc/xml-parser/project-report';
 
 // Assumed contract (T009): validatePicture returns `ValidatedPicture | ImageRefusal`
 // (a refusal is recognized by its `code` property); `digest` maps bytes to a hash string.
@@ -841,4 +844,48 @@ test('allocateDefinitionName is case-sensitive', () => {
   assert.equal(allocateDefinitionName('Logo.png', ['logo']), 'Logo');
   assert.equal(allocateDefinitionName('Logo.png', ['Logo']), 'Logo_1');
   assert.equal(allocateDefinitionName('logo.png', ['LOGO', 'Logo_1']), 'logo');
+});
+
+test('validateImageCapability allows what the projection allows and blocks the rest', () => {
+  const projectionOf = (name: string) =>
+    projectReport(
+      parse({
+        uri: `test:${name}`,
+        version: 1,
+        source: readFileSync(`tests/fixtures/images/${name}.rdlc`, 'utf8'),
+        eol: '\n',
+      }),
+    ).images;
+  const editable = projectionOf('authored')[0]!;
+  for (const property of [
+    'image',
+    'name',
+    'left',
+    'top',
+    'width',
+    'height',
+    'sizing',
+    'value',
+    'toolTip',
+  ] as const)
+    assert.deepEqual(validateImageCapability(editable, property), [], property);
+
+  const preserved = projectionOf('preserved');
+  const geometryOnly = preserved.find((i) => i.name === 'GhostPicture')!;
+  for (const property of ['name', 'left', 'top', 'width', 'height'] as const)
+    assert.deepEqual(validateImageCapability(geometryOnly, property), []);
+  for (const property of ['image', 'sizing', 'value', 'toolTip'] as const) {
+    const [blocked] = validateImageCapability(geometryOnly, property);
+    assert.equal(blocked?.code, 'CAPABILITY_BLOCKED', property);
+    assert.equal(blocked?.itemId, geometryOnly.node.id);
+    assert.equal(blocked?.property, property);
+    assert.deepEqual(blocked?.blockedOperations, ['requested-edit']);
+  }
+  const external = preserved.find((i) => i.name === 'ExternalPicture')!;
+  for (const property of ['name', 'left', 'image'] as const)
+    assert.equal(
+      validateImageCapability(external, property)[0]?.code,
+      'CAPABILITY_BLOCKED',
+      property,
+    );
 });

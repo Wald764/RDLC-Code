@@ -178,12 +178,19 @@ rationale and the alternatives rejected. No `NEEDS CLARIFICATION` item remains o
 ## R10. Clipboard
 
 - **Decision**: Extend the host-side `Capture` (`packages/report-model/src/clipboard.ts:65`)
-  with `images: EmbeddedImageRequirement[]` = `{name, hash, mime, xml}`, where `xml` is the
-  exact `EmbeddedImage` source. Both kinds of paste reuse the same function:
-  - **Same report**: the item keeps its `Value`, and no definition is written.
-  - **Other report**: a definition is reused when the hashes match, inserted when the name
-    is free, and renamed when a different definition already uses the name. When it is
-    renamed, the pasted item's `Value` is rewritten.
+  with `images: EmbeddedImageRequirement[]` = `{name, hash, identity, mime, xml, nameRange}`,
+  where `xml` is the exact `EmbeddedImage` source and `identity` is the picture hash, or for a
+  definition without a displayable picture a digest of its exact source with the `Name` removed.
+  Every definition a captured image item references is carried, displayable or not (FR-012).
+  Both kinds of paste reuse the same function:
+  - **Same report**: the item keeps its `Value`, and no definition is written, because the
+    existing definition has the same identity.
+  - **Other report**: a definition is reused when the identities match, inserted when the name
+    is free, and renamed when a different definition already uses the name. When it is renamed,
+    the pasted item's `Value` is rewritten. Names that dangling captured items point at are
+    never handed out.
+  - **Missing definition**: nothing is invented. If the target defines that name, the paste is
+    refused (`IMAGE_DEFINITION_CONFLICT`), so the item cannot silently bind to another picture.
   The definition and the items are inserted in one composed plan. If the capture would
   exceed `captureBudget`, the copy is refused with the existing budget error. Arbitrary
   system clipboard bitmaps are ignored, as they already are today.

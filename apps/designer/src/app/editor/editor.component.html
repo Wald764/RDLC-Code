@@ -609,7 +609,7 @@
                     [attr.data-image-state]="
                       item.kind === 'image' ? imageView(item).state : null
                     "
-                    [attr.aria-label]="item.label"
+                    [attr.aria-label]="accessibleName(item)"
                     [attr.aria-description]="
                       item.kind === 'image' ? imageDescription(item) : null
                     "
@@ -702,7 +702,7 @@
                             class="handle"
                             [attr.data-handle]="handle"
                             [attr.aria-label]="
-                              'Resize ' + item.label + ' ' + handle
+                              'Resize ' + accessibleName(item) + ' ' + handle
                             "
                             [disabled]="!!host.pending()"
                             (pointerdown)="

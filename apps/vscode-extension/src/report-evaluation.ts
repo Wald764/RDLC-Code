@@ -93,6 +93,7 @@ export function evaluateReport(
     ids: [
       ...(syntax.root ? [syntax.root.id] : []),
       ...projection.textboxes.map((textbox) => textbox.node.id),
+      ...projection.images.map((image) => image.node.id),
       ...projection.datasets.flatMap((dataset) => [
         dataset.node.id,
         ...dataset.fields.map((field) => field.node.id),

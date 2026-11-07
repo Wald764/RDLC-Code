@@ -12,6 +12,8 @@ import type {
   ImageRefusal,
   ValidatedPicture,
 } from '@rdlc/report-model/images';
+import type { Diagnostic } from '@rdlc/report-model/diagnostics';
+import type { ImageItem } from '@rdlc/report-model/report';
 import {
   crc32,
   decodeImageData,
@@ -99,4 +101,41 @@ export function allocateDefinitionName(
   for (let suffix = 1; existingDefinitionNames.includes(candidate); suffix++)
     candidate = `${stem}_${suffix}`;
   return candidate;
+}
+
+export type ImageProperty =
+  | 'image'
+  | 'name'
+  | 'left'
+  | 'top'
+  | 'width'
+  | 'height'
+  | 'sizing'
+  | 'value'
+  | 'toolTip';
+
+/**
+ * Capability guard run before planning a patch for an image item; keeps unsupported
+ * content intact. A geometry-only item (missing or undisplayable definition) passes for
+ * `name` and the geometry keys only; a preservation-only item passes for nothing.
+ */
+export function validateImageCapability(
+  image: ImageItem,
+  property: ImageProperty,
+): readonly Diagnostic[] {
+  if (image.capabilities.includes(property)) return [];
+  return [
+    {
+      code: 'CAPABILITY_BLOCKED',
+      category: 'unsupported',
+      severity: 'error',
+      range: image.node.range,
+      message: `The ${property} property is preservation-only for this image.`,
+      correctiveAction:
+        'Edit this value in the source editor; the designer will not rewrite preserved content.',
+      blockedOperations: ['requested-edit'],
+      itemId: image.node.id,
+      property,
+    },
+  ];
 }

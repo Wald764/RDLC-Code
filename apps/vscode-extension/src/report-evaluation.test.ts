@@ -165,3 +165,12 @@ test('a host digest reaches the projected image definitions and is absent otherw
     hashed.projection.embeddedImages.map((entry) => `digest-${entry.byteSize}`),
   );
 });
+
+test('image items are valid targets for layout and clipboard, even when preservation-only', () => {
+  const evaluation = evaluateReport(
+    snapshot(readFileSync('tests/fixtures/images/preserved.rdlc', 'utf8')),
+  );
+  assert.ok(evaluation.projection.images.length > 0);
+  for (const image of evaluation.projection.images)
+    assert.ok(evaluation.ids.includes(image.node.id), image.name ?? '');
+});

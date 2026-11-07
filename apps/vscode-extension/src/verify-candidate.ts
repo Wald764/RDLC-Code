@@ -6,8 +6,11 @@ import { applyPlan } from '@rdlc/xml-serializer/patches';
 import { projectReport } from '@rdlc/xml-parser/project-report';
 import { acceptedGeometry, type LayoutChange } from '@rdlc/validation/layout';
 import { toPoints } from '@rdlc/report-model/geometry';
-import { RDL_2016 } from '@rdlc/report-model/report';
-import type { CaptureRoot } from '@rdlc/report-model/clipboard';
+import { RDL_2016, type ImageItem } from '@rdlc/report-model/report';
+import type {
+  CaptureRoot,
+  EmbeddedImageRequirement,
+} from '@rdlc/report-model/clipboard';
 import type { Bounds } from '@rdlc/report-model/scene';
 import { analyze } from '@rdlc/expressions/analyze';
 import { inertAnnotation } from '@rdlc/validation/clipboard';
@@ -78,10 +81,17 @@ export function verifyLayoutCandidate(
     return true;
   };
   for (const change of changes) {
+    const image = before.images.some((i) => i.node.id === change.item.node.id);
     const index = change.table
       ? before.tables.findIndex((t) => t.node.id === change.item.node.id)
-      : before.textboxes.findIndex((t) => t.node.id === change.item.node.id);
-    const next = change.table ? after.tables[index] : after.textboxes[index];
+      : image
+        ? before.images.findIndex((t) => t.node.id === change.item.node.id)
+        : before.textboxes.findIndex((t) => t.node.id === change.item.node.id);
+    const next = change.table
+      ? after.tables[index]
+      : image
+        ? after.images[index]
+        : after.textboxes[index];
     if (!next) return false;
     const geometry = acceptedGeometry(after, next, change.table);
     for (const key of ['left', 'top', 'width', 'height'] as const) {
@@ -256,6 +266,17 @@ export function verifyCandidate(
   return { source, syntax };
 }
 
+/** `xmlns` declarations recreating a namespace environment on a wrapper element. */
+function declarationsOf(namespaces: Readonly<Record<string, string>>): string {
+  return Object.entries(namespaces)
+    .filter(([prefix]) => prefix !== 'xml')
+    .map(
+      ([prefix, uri]) =>
+        ` ${prefix ? `xmlns:${prefix}` : 'xmlns'}="${uri.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')}"`,
+    )
+    .join('');
+}
+
 export interface InsertedExpectation {
   readonly root: CaptureRoot;
   /** Candidate offset of the inserted root. */
@@ -276,6 +297,18 @@ export function verifyClipboardCandidate(
     readonly inserted: readonly InsertedExpectation[];
     readonly names: ReadonlyMap<string, string>;
     readonly removed: readonly XmlNode[];
+    /** Definitions carried with pasted image items; absent when none are involved. */
+    readonly images?: {
+      /** Captured definition names that changed in the target (old to new). */
+      readonly rename: ReadonlyMap<string, string>;
+      /** Definitions that must now exist exactly once, under their final names. */
+      readonly inserted: readonly {
+        readonly requirement: EmbeddedImageRequirement;
+        readonly name: string;
+      }[];
+      /** Every definition name the capture carried, whether reused or inserted. */
+      readonly required: readonly string[];
+    };
   },
 ): boolean {
   const before = projectReport(original),
@@ -333,6 +366,9 @@ export function verifyClipboardCandidate(
     node: XmlNode,
     source: string,
     root: boolean,
+    nameOf: (name: string) => string = rename,
+    /** Image root only: where a constant `Value` is expected to point now. */
+    valueOf?: (name: string) => string,
   ): boolean => {
     if (!same(reference.expandedName, node.expandedName)) return false;
     const a = attributes(reference),
@@ -346,7 +382,7 @@ export function verifyClipboardCandidate(
           attribute.expandedName.localName === 'Name';
         return (
           !same(attribute.expandedName, other.expandedName) ||
-          other.value !== (name ? rename(attribute.value) : attribute.value)
+          other.value !== (name ? nameOf(attribute.value) : attribute.value)
         );
       })
     )
@@ -359,9 +395,28 @@ export function verifyClipboardCandidate(
       right = node.children.filter((c) => !geometry(c));
     if (left.length !== right.length) return false;
     if (!reference.children.length && !node.children.length)
-      return node.text === expectedText(reference, source);
-    return left.every((c, i) => compare(c, right[i]!, source, false));
+      return (
+        node.text ===
+        (valueOf &&
+        reference.expandedName.namespaceUri === RDL_2016 &&
+        reference.expandedName.localName === 'Value'
+          ? valueOf(reference.text)
+          : expectedText(reference, source))
+      );
+    return left.every((c, i) =>
+      compare(
+        c,
+        right[i]!,
+        source,
+        false,
+        nameOf,
+        // Only the item's own Value child is a definition reference.
+        root ? valueOf : undefined,
+      ),
+    );
   };
+  const finalDefinition = (name: string) =>
+    expected.images?.rename.get(name) ?? name;
   const insertedIds = new Set<string>();
   for (const entry of expected.inserted) {
     const node = byStart.get(entry.start);
@@ -373,14 +428,7 @@ export function verifyClipboardCandidate(
         entry.fragment
     )
       return false;
-    const declarations = Object.entries(entry.root.namespaces)
-      .filter(([prefix]) => prefix !== 'xml')
-      .map(
-        ([prefix, uri]) =>
-          ` ${prefix ? `xmlns:${prefix}` : 'xmlns'}="${uri.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')}"`,
-      )
-      .join('');
-    const wrapper = `<w${declarations}>${entry.root.xml}</w>`;
+    const wrapper = `<w${declarationsOf(entry.root.namespaces)}>${entry.root.xml}</w>`;
     const parsed = parse({
       uri: 'capture:',
       version: 0,
@@ -391,19 +439,43 @@ export function verifyClipboardCandidate(
     if (
       parsed.status !== 'valid' ||
       !reference ||
-      !compare(reference, node, wrapper, true)
+      !compare(
+        reference,
+        node,
+        wrapper,
+        true,
+        rename,
+        entry.root.kind === 'image' ? finalDefinition : undefined,
+      )
     )
       return false;
-    const item =
-      after.tables.find((t) => t.node.id === node.id) ??
-      after.textboxes.find(
+    const item = {
+      table: after.tables.find((t) => t.node.id === node.id),
+      textbox: after.textboxes.find(
         (t) => t.node.id === node.id && t.context === 'body',
-      );
-    if (
-      !item ||
-      (entry.root.kind === 'table') !== after.tables.includes(item as never)
-    )
-      return false;
+      ),
+      image: after.images.find(
+        (t) => t.node.id === node.id && t.context === 'body',
+      ),
+    }[entry.root.kind];
+    if (!item) return false;
+    const embedded = entry.root.embedded;
+    if (entry.root.kind === 'image' && embedded && expected.images) {
+      // Every pasted item points at its expected final definition: the carried one, or
+      // nothing when it had none. It never silently binds to an unrelated picture.
+      const image = item as ImageItem;
+      const wanted = finalDefinition(embedded.name);
+      const carried = expected.images.required.includes(embedded.name);
+      const target = after.embeddedImages.find((d) => d.name === wanted);
+      if (
+        image.value?.kind !== 'constant' ||
+        image.value.text !== wanted ||
+        (carried
+          ? target === undefined || image.definition !== target.name
+          : image.definition !== null)
+      )
+        return false;
+    }
     const geometry = acceptedGeometry(after, item, entry.root.kind === 'table');
     for (const key of ['left', 'top', 'width', 'height'] as const) {
       const actual = geometry[key].points;
@@ -411,6 +483,35 @@ export function verifyClipboardCandidate(
         return false;
     }
     insertedIds.add(node.id);
+  }
+  if (expected.images) {
+    const inserted = expected.images.inserted;
+    if (
+      after.embeddedImages.length !==
+      before.embeddedImages.length + inserted.length
+    )
+      return false;
+    for (const { requirement, name } of inserted) {
+      const found = after.embeddedImages.filter((d) => d.name === name);
+      // A definition carries no namespace environment of its own: it must resolve against
+      // the target's, exactly as the serializer's prefix check requires.
+      const wrapper = `<w${declarationsOf(found[0]?.node.namespaces ?? {})}>${requirement.xml}</w>`;
+      const reference = parse({
+        uri: 'capture:',
+        version: 0,
+        source: wrapper,
+        eol: '\n',
+      }).root?.children[0];
+      if (
+        found.length !== 1 ||
+        found[0]!.displayable !== (requirement.hash !== null) ||
+        !reference ||
+        !compare(reference, found[0]!.node, wrapper, false, (old) =>
+          old === requirement.name ? name : old,
+        )
+      )
+        return false;
+    }
   }
   // Allocated identities stay unique among report items, groups and datasets.
   const names: string[] = [];
@@ -423,9 +524,13 @@ export function verifyClipboardCandidate(
     if (
       name &&
       node.expandedName.namespaceUri === RDL_2016 &&
-      !['Field', 'DataSource', 'Parameter', 'ReportParameter'].includes(
-        node.expandedName.localName,
-      )
+      ![
+        'Field',
+        'DataSource',
+        'Parameter',
+        'ReportParameter',
+        'EmbeddedImage',
+      ].includes(node.expandedName.localName)
     )
       names.push(name.value);
     node.children.forEach(collect);
@@ -435,20 +540,28 @@ export function verifyClipboardCandidate(
   const count = (report: ReturnType<typeof projectReport>) => ({
     textboxes: report.textboxes.filter((t) => t.context === 'body').length,
     tables: report.tables.length,
+    images: report.images.filter((i) => i.context === 'body').length,
   });
   const removedTables = expected.removed.filter(
     (n) => n.expandedName.localName === 'Tablix',
   ).length;
+  const removedImages = expected.removed.filter(
+    (n) => n.expandedName.localName === 'Image',
+  ).length;
   const insertedTables = expected.inserted.filter(
     (e) => e.root.kind === 'table',
+  ).length;
+  const insertedImages = expected.inserted.filter(
+    (e) => e.root.kind === 'image',
   ).length;
   const was = count(before),
     now = count(after);
   return (
     now.tables === was.tables - removedTables + insertedTables &&
+    now.images === was.images - removedImages + insertedImages &&
     now.textboxes ===
       was.textboxes -
-        (expected.removed.length - removedTables) +
-        (expected.inserted.length - insertedTables)
+        (expected.removed.length - removedTables - removedImages) +
+        (expected.inserted.length - insertedTables - insertedImages)
   );
 }

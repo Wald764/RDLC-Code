@@ -57,6 +57,7 @@ export const authoringFields = {
   createTextbox: ['left', 'top'],
   createImage: ['placement'],
   deleteTextbox: ['confirm'],
+  deleteImage: ['confirm'],
   createTable: ['left', 'top'],
   renameTable: ['name'],
   setTableDataset: ['dataset'],

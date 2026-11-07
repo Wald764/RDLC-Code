@@ -2113,3 +2113,18 @@ test('imageAssets carries one maximal picture, refuses a larger one and never co
     'a client cannot post host asset messages',
   );
 });
+
+test('deleteImage carries only a confirmation string', () => {
+  const author = (payload: Record<string, unknown>) =>
+    validateMessage({ ...edit, operation: 'author', payload });
+  assert.ok(
+    author({ action: 'deleteImage', confirm: 'delete-contained-content' }),
+  );
+  for (const payload of [
+    { action: 'deleteImage' },
+    { action: 'deleteImage', confirm: 1 },
+    { action: 'deleteImage', confirm: 'yes', definition: 'logo' },
+    { action: 'deleteImage', confirm: 'yes', xml: '<Image/>' },
+  ])
+    assert.equal(author(payload), null, JSON.stringify(payload));
+});
