@@ -621,7 +621,7 @@ metadata and reference counts, and supports rename, remove and insert-existing.
   Desktop, visual and offline journeys are CI-only; the five `images/` baselines come from
   the `Desktop baselines` workflow. Remove is offered on every definition and refused with the
   referencing items listed (FR-022).
-- [ ] T093 Push `feat/006-embedded-image-authoring` and open **one** PR to `main`.
+- [X] T093 Push `feat/006-embedded-image-authoring` and open **one** PR to `main`.
   - The body includes the summary, the batch list B0–B10 and the locally verified evidence
     with commands.
   - It states that Desktop, visual and stability checks are CI-validated, and lists any
