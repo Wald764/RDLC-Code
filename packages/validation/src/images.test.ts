@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { crc32 as zlibCrc32, deflateSync } from 'node:zlib';
 import {
   IMAGE_DATA_INVALID,
+  IMAGE_PROPERTY_INVALID,
   IMAGE_FORMAT_UNSUPPORTED,
   IMAGE_PIXELS_EXCEEDED,
   IMAGE_TOO_LARGE,
@@ -15,6 +16,7 @@ import type { ImageRefusal, ValidatedPicture } from '@rdlc/report-model/images';
 import {
   allocateDefinitionName,
   validateImageCapability,
+  validateImageProperty,
   crc32,
   decodeImageData,
   sniffFormat,
@@ -888,4 +890,109 @@ test('validateImageCapability allows what the projection allows and blocks the r
       'CAPABILITY_BLOCKED',
       property,
     );
+});
+
+test('validateImageProperty accepts the four sizing modes and refuses anything else', () => {
+  const check = (value: string) =>
+    validateImageProperty({
+      property: 'sizing',
+      value,
+      range: { start: 3, end: 9 },
+      existingNames: [],
+      definitions: [],
+    });
+  for (const mode of ['AutoSize', 'Fit', 'FitProportional', 'Clip'])
+    assert.deepEqual(check(mode), [], mode);
+  for (const bad of ['', 'fit', 'Stretch', 'Fit ', 'Default']) {
+    const [refusal] = check(bad);
+    assert.equal(refusal?.code, IMAGE_PROPERTY_INVALID, JSON.stringify(bad));
+    assert.equal(refusal?.property, 'sizing');
+    assert.deepEqual(refusal?.range, { start: 3, end: 9 });
+    assert.deepEqual(refusal?.blockedOperations, ['requested-edit']);
+  }
+});
+
+test('validateImageProperty requires Value to name an existing displayable definition', () => {
+  const definitions = [
+    { name: 'logo', displayable: true },
+    { name: 'broken', displayable: false },
+  ];
+  const check = (value: string) =>
+    validateImageProperty({
+      property: 'value',
+      value,
+      range: { start: 0, end: 0 },
+      existingNames: [],
+      definitions,
+    });
+  assert.deepEqual(check('logo'), []);
+  for (const bad of ['broken', 'missing', 'Logo', '', '=Parameters!P.Value'])
+    assert.equal(check(bad)[0]?.code, IMAGE_PROPERTY_INVALID, bad);
+});
+
+test('validateImageProperty reuses validateName for the item name', () => {
+  const check = (value: string) =>
+    validateImageProperty({
+      property: 'name',
+      value,
+      range: { start: 0, end: 0 },
+      existingNames: ['Taken', 'Other'],
+      definitions: [],
+    });
+  for (const name of ['Fresh', '_x', 'Logo_2', 'Ünicode'])
+    assert.equal(
+      check(name).length === 0,
+      validateName(name, ['Taken', 'Other']),
+    );
+  assert.deepEqual(check('Fresh'), []);
+  for (const bad of ['Taken', '', '1Bad', 'has space', 'a-b'])
+    assert.equal(check(bad)[0]?.code, IMAGE_PROPERTY_INVALID, bad);
+});
+
+test('validateImageProperty accepts any ToolTip text, expressions included, without evaluating it', () => {
+  const check = (value: string) =>
+    validateImageProperty({
+      property: 'toolTip',
+      value,
+      range: { start: 0, end: 0 },
+      existingNames: [],
+      definitions: [],
+    });
+  for (const value of [
+    '',
+    'Company logo',
+    '<b>&</b>',
+    '=Fields!A.Value',
+    '=1/0',
+  ])
+    assert.deepEqual(check(value), [], JSON.stringify(value));
+});
+
+test('validateImageProperty diagnostics never echo a payload-sized value', () => {
+  const payload = 'iVBORw0KGgo+/=='.repeat(2000);
+  const diagnostics = [
+    ...validateImageProperty({
+      property: 'sizing',
+      value: payload,
+      range: { start: 0, end: 0 },
+      existingNames: [],
+      definitions: [],
+    }),
+    ...validateImageProperty({
+      property: 'value',
+      value: payload,
+      range: { start: 0, end: 0 },
+      existingNames: [],
+      definitions: [],
+    }),
+    ...validateImageProperty({
+      property: 'name',
+      value: payload,
+      range: { start: 0, end: 0 },
+      existingNames: [],
+      definitions: [],
+    }),
+  ];
+  assert.equal(diagnostics.length, 3);
+  assert.ok(!JSON.stringify(diagnostics).includes('iVBORw0KGgo'));
 });

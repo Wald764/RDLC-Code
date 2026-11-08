@@ -6,7 +6,12 @@ import type { XmlNode, XmlSyntaxDocument } from '@rdlc/report-model/syntax';
 import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
 import { applyPlan } from './patches.js';
-import { planCreateImage, type CreateImageRequest } from './images.js';
+import {
+  planCreateImage,
+  planImageProperty,
+  planReplacePicture,
+  type CreateImageRequest,
+} from './images.js';
 
 const snapshotOf = (source: string, version = 1) => ({
   uri: 'fixture:images',
@@ -235,6 +240,257 @@ test('duplicate EmbeddedImages is preservation-only and refuses the plan', () =>
     planCreateImage(snapshot, syntax.root!, projection.section!, {
       definition,
       item,
+    }),
+  );
+});
+
+// --- US3: property and replace plans ---------------------------------------
+
+const projectionOfSource = (source: string) => {
+  const snapshot = snapshotOf(source);
+  const syntax = parse(snapshot);
+  const projection = projectReport(syntax);
+  assert.ok(syntax.root);
+  return { snapshot, syntax, projection, root: syntax.root };
+};
+const imageNamed = (source: string, name: string) => {
+  const { snapshot, projection } = projectionOfSource(source);
+  const image = projection.images.find((entry) => entry.name === name);
+  assert.ok(image, name);
+  return { snapshot, image };
+};
+const property = (
+  source: string,
+  name: string,
+  key: 'sizing' | 'value' | 'toolTip' | 'name',
+  value: string,
+) => {
+  const { snapshot, image } = imageNamed(source, name);
+  const result = planImageProperty({ snapshot, image, property: key, value });
+  const candidate = apply(source, result);
+  assertOnlyFootprintChanged(source, result, candidate);
+  return { result, candidate };
+};
+const authored = () => load('authored.rdlc');
+
+test('planImageProperty replaces an existing Sizing scalar in place', () => {
+  const source = authored();
+  const { result, candidate } = property(
+    source,
+    'LogoAutoSize',
+    'sizing',
+    'Clip',
+  );
+  assert.equal(result.patches.length, 1);
+  assert.equal(result.patches[0]!.expected, 'AutoSize');
+  assert.equal(
+    candidate,
+    source.replace('<Sizing>AutoSize</Sizing>', '<Sizing>Clip</Sizing>'),
+  );
+});
+
+test('planImageProperty replaces Value and keeps unknown children byte-identical', () => {
+  const source = authored();
+  const { candidate } = property(source, 'Tagged', 'value', 'photo');
+  assert.equal(
+    candidate,
+    source.replace(
+      '<Value>logo</Value>\n            <MIMEType>image/png</MIMEType>\n            <Sizing>Fit</Sizing>\n            <Top>2.85in',
+      '<Value>photo</Value>\n            <MIMEType>image/png</MIMEType>\n            <Sizing>Fit</Sizing>\n            <Top>2.85in',
+    ),
+  );
+  assert.ok(candidate.includes('<x:Opaque keep="1">preserve</x:Opaque>'));
+});
+
+test('planImageProperty inserts an absent Sizing element as the last child', () => {
+  const source = authored().replace(/\n\s*<Sizing>AutoSize<\/Sizing>/, '');
+  const { result, candidate } = property(
+    source,
+    'LogoAutoSize',
+    'sizing',
+    'Fit',
+  );
+  assert.equal(result.patches.length, 1);
+  assert.equal(result.patches[0]!.start, result.patches[0]!.end);
+  assert.ok(candidate.includes('<Sizing>Fit</Sizing></Image>'));
+  const projected = projectReport(parse(snapshotOf(candidate)));
+  assert.equal(
+    projected.images.find((entry) => entry.name === 'LogoAutoSize')!.sizing,
+    'Fit',
+  );
+});
+
+test('planImageProperty inserts, replaces and removes the ToolTip', () => {
+  const base = authored();
+  const inserted = property(
+    base,
+    'LogoFit',
+    'toolTip',
+    'Company <logo> & more',
+  );
+  assert.ok(
+    inserted.candidate.includes(
+      '<ToolTip>Company &lt;logo&gt; &amp; more</ToolTip></Image>',
+    ),
+  );
+  const projected = projectReport(parse(snapshotOf(inserted.candidate)));
+  assert.equal(
+    projected.images.find((entry) => entry.name === 'LogoFit')!.toolTip?.text,
+    'Company <logo> & more',
+  );
+
+  const replaced = property(
+    inserted.candidate,
+    'LogoFit',
+    'toolTip',
+    '=Fields!A.Value',
+  );
+  assert.ok(replaced.candidate.includes('<ToolTip>=Fields!A.Value</ToolTip>'));
+  assert.equal(replaced.result.patches.length, 1);
+
+  const removed = property(replaced.candidate, 'LogoFit', 'toolTip', '');
+  assert.equal(removed.candidate, base);
+});
+
+test('planImageProperty removing an absent ToolTip is an empty plan', () => {
+  const { result, candidate } = property(authored(), 'LogoFit', 'toolTip', '');
+  assert.equal(result.patches.length, 0);
+  assert.equal(candidate, authored());
+});
+
+test('planImageProperty refuses a structured ToolTip instead of rewriting it', () => {
+  const source = authored().replace(
+    '<Source>Embedded</Source>\n            <Value>logo</Value>\n            <MIMEType>image/png</MIMEType>\n            <Sizing>Fit</Sizing>\n            <Top>0.9in',
+    '<Source>Embedded</Source>\n            <Value>logo</Value>\n            <ToolTip><x:Rich/></ToolTip>\n            <Sizing>Fit</Sizing>\n            <Top>0.9in',
+  );
+  const { snapshot, image } = imageNamed(source, 'LogoFit');
+  assert.throws(() =>
+    planImageProperty({ snapshot, image, property: 'toolTip', value: 'x' }),
+  );
+});
+
+test('planImageProperty renames only the Name attribute value', () => {
+  const source = authored();
+  const { result, candidate } = property(source, 'Tagged', 'name', 'A&B');
+  assert.equal(result.patches.length, 1);
+  assert.equal(result.patches[0]!.expected, 'Tagged');
+  assert.equal(
+    candidate,
+    source.replace('<Image Name="Tagged"', '<Image Name="A&amp;B"'),
+  );
+});
+
+const replacementBase64 = readFileSync(
+  'tests/fixtures/images/pictures/photo.jpg',
+).toString('base64');
+
+test('planReplacePicture item scope writes a new definition and repoints this item only', () => {
+  const source = authored();
+  const { snapshot, image, root } = (() => {
+    const found = imageNamed(source, 'LogoFit');
+    return { ...found, root: projectionOfSource(source).root };
+  })();
+  const result = planReplacePicture(snapshot, root, {
+    scope: 'item',
+    image,
+    value: 'photo_1',
+    definition: {
+      name: 'photo_1',
+      mime: 'image/jpeg',
+      base64: replacementBase64,
+    },
+  });
+  const candidate = apply(source, result);
+  assertOnlyFootprintChanged(source, result, candidate);
+  assert.equal(result.patches.length, 2);
+  assert.ok(
+    candidate.includes(
+      definitionXml('photo_1', 'image/jpeg', replacementBase64) +
+        '</EmbeddedImages>',
+    ),
+  );
+  const projected = projectReport(parse(snapshotOf(candidate)));
+  assert.equal(projected.status, 'editable');
+  const byName = new Map(projected.images.map((entry) => [entry.name, entry]));
+  assert.equal(byName.get('LogoFit')!.definition, 'photo_1');
+  assert.equal(byName.get('LogoAutoSize')!.definition, 'logo');
+  assert.equal(byName.get('Tagged')!.definition, 'logo');
+  // The existing definitions are untouched.
+  const logo = source.slice(
+    source.indexOf('<EmbeddedImage Name="logo">'),
+    source.indexOf('</EmbeddedImage>') + '</EmbeddedImage>'.length,
+  );
+  assert.ok(candidate.includes(logo));
+});
+
+test('planReplacePicture item scope onto an existing definition only repoints Value', () => {
+  const source = authored();
+  const { snapshot, image } = imageNamed(source, 'LogoFit');
+  const result = planReplacePicture(snapshot, projectionOfSource(source).root, {
+    scope: 'item',
+    image,
+    value: 'unused',
+  });
+  const candidate = apply(source, result);
+  assertOnlyFootprintChanged(source, result, candidate);
+  assert.equal(result.patches.length, 1);
+  assert.equal(result.patches[0]!.expected, 'logo');
+  assert.equal(
+    projectReport(parse(snapshotOf(candidate))).images.find(
+      (entry) => entry.name === 'LogoFit',
+    )!.definition,
+    'unused',
+  );
+});
+
+test('planReplacePicture all scope rewrites ImageData and MIMEType in place', () => {
+  const source = authored();
+  const { snapshot, projection, root } = projectionOfSource(source);
+  const definition = projection.embeddedImages.find(
+    (entry) => entry.name === 'logo',
+  )!;
+  const result = planReplacePicture(snapshot, root, {
+    scope: 'all',
+    definition,
+    mime: 'image/jpeg',
+    base64: replacementBase64,
+  });
+  const candidate = apply(source, result);
+  assertOnlyFootprintChanged(source, result, candidate);
+  assert.equal(result.patches.length, 2);
+  assert.equal(candidate.match(/<EmbeddedImage /g)?.length, 3);
+  const projected = projectReport(parse(snapshotOf(candidate)));
+  const logo = projected.embeddedImages.find((entry) => entry.name === 'logo')!;
+  assert.equal(logo.mime, 'image/jpeg');
+  assert.equal(logo.format, 'jpeg');
+  assert.equal(logo.displayable, true);
+  assert.deepEqual(logo.references, ['LogoAutoSize', 'LogoFit', 'Tagged']);
+  // Items are not touched at all.
+  const items = (text: string) =>
+    text.slice(text.indexOf('<ReportItems>'), text.indexOf('</ReportItems>'));
+  assert.equal(items(candidate), items(source));
+  // Sibling definitions stay byte-identical.
+  const photo = source.slice(
+    source.indexOf('<EmbeddedImage Name="photo">'),
+    source.indexOf('</EmbeddedImage>', source.indexOf('Name="photo"')) +
+      '</EmbeddedImage>'.length,
+  );
+  assert.ok(candidate.includes(photo));
+});
+
+test('planReplacePicture all scope refuses a structured ImageData', () => {
+  const source = authored().replace(
+    /<ImageData>[^<]*<\/ImageData>/,
+    '<ImageData><x:Odd/></ImageData>',
+  );
+  const { snapshot, projection, root } = projectionOfSource(source);
+  const definition = projection.embeddedImages[0]!;
+  assert.throws(() =>
+    planReplacePicture(snapshot, root, {
+      scope: 'all',
+      definition,
+      mime: 'image/png',
+      base64: pngBase64,
     }),
   );
 });

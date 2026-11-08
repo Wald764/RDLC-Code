@@ -465,13 +465,13 @@ element, is one undo step, and an invalid value is refused.
 
 ### Batch B8: Inspector
 
-- [ ] T061 [P] [US3] Write the failing tests first in `packages/xml-serializer/src/images.test.ts`.
+- [X] T061 [P] [US3] Write the failing tests first in `packages/xml-serializer/src/images.test.ts`.
   - `planImageProperty` for `sizing`, `value`, `toolTip` and `name`: a scalar replace when
     the element is present, an inserted element when it is absent, and `ToolTip` removed
     when it is set to an empty value.
   - `planReplacePicture` with `item` scope: a new definition and a repoint of this item only.
   - `planReplacePicture` with `all` scope: `ImageData` and `MIMEType` rewritten in place.
-- [ ] T062 [P] [US3] Write the failing tests first in `packages/validation/src/images.test.ts`
+- [X] T062 [P] [US3] Write the failing tests first in `packages/validation/src/images.test.ts`
   for `validateImageProperty`.
   - Sizing must be one of `AutoSize | Fit | FitProportional | Clip`.
   - Value must name an existing displayable definition.
@@ -479,35 +479,37 @@ element, is one undo step, and an invalid value is refused.
     non-CLS-compliant names.
   - A ToolTip value is accepted and escaped.
   - Invalid values produce `IMAGE_PROPERTY_INVALID`.
-- [ ] T063 [P] [US3] Write the failing tests first in
+- [X] T063 [P] [US3] Write the failing tests first in
   `apps/designer/src/app/properties/image-properties.component.spec.ts`.
   - The fields are rendered.
   - The read-only metadata (format, pixels, encoded size) contains no payload.
   - "Replace for this item" and "Replace for all N items" both appear when the reference
     count is greater than 1.
   - A ToolTip expression is shown as inert text.
-- [ ] T064 [P] [US3] Write the failing tests first in `tests/vscode/images.test.ts`.
+- [X] T064 [P] [US3] Write the failing tests first in `tests/vscode/images.test.ts`.
   - Every property intent is one undo step.
   - Replace with `item` scope and with `all` scope.
   - An invalid value leaves the text unchanged.
-- [ ] T065 [US3] Implement `planImageProperty` in `packages/xml-serializer/src/images.ts`,
+- [X] T065 [US3] Implement `planImageProperty` in `packages/xml-serializer/src/images.ts`,
   using `setScalar`, `insertChild` and `renameNode` from `structure.ts`.
-- [ ] T066 [US3] Implement `planReplacePicture` in `packages/xml-serializer/src/images.ts`.
-- [ ] T067 [US3] Implement `validateImageProperty` in `packages/validation/src/images.ts`.
-- [ ] T068 [US3] Add the `setImageProperty` and `replaceImagePicture` intents to
+- [X] T066 [US3] Implement `planReplacePicture` in `packages/xml-serializer/src/images.ts`.
+- [X] T067 [US3] Implement `validateImageProperty` in `packages/validation/src/images.ts`.
+- [X] T068 [US3] Add the `setImageProperty` and `replaceImagePicture` intents to
   `packages/report-model/src/editing.ts` and validate them in `protocol.ts`, as defined in
   [image-protocol.md](contracts/image-protocol.md).
-- [ ] T069 [US3] Dispatch both intents in `apps/vscode-extension/src/edit-controller.ts`.
+- [X] T069 [US3] Dispatch both intents in `apps/vscode-extension/src/edit-controller.ts`.
   Replace reuses `runImport` from T033, and a removed target produces `IMAGE_TARGET_STALE`.
-- [ ] T070 [US3] Create `apps/designer/src/app/properties/image-properties.component.{ts,html,scss}`.
+- [X] T070 [US3] Create `apps/designer/src/app/properties/image-properties.component.{ts,html,scss}`.
   - The fields are Name, Left, Top, Width, Height, Sizing, the definition picker (from the
     report's displayable definitions) and ToolTip, plus the read-only metadata from the
     scene's `metadata`.
   - Geometry fields send the existing `LayoutIntent`.
-- [ ] T071 [US3] Route `kind:'image'` to `rdlc-image-properties` in
+- [X] T071 [US3] Route `kind:'image'` to `rdlc-image-properties` in
   `apps/designer/src/app/editor/contextual-inspector.component.ts` (near lines 83-92).
-- [ ] T072 [US3] **Gate B8**. Run `pnpm qa:integration`. Then run the review. Then commit
+- [X] T072 [US3] **Gate B8**. Run `pnpm qa:integration`. Then run the review. Then commit
   `:sparkles: feat(designer): edit image properties in the inspector`.
+  Gate note: node 802/802, designer 389/389, extension host 15/15 files pass (the test window
+  must hold focus for native undo). Replacement relocates a stale target only by name and definition.
 
 ---
 

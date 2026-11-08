@@ -1,14 +1,17 @@
 import type { DocumentSnapshot } from '@rdlc/report-model/document';
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
-import type {
-  EditIntent,
-  PatchPlan,
-  AuthoringIntent,
-  TextboxProperty,
-  TargetMapping,
+import {
+  imageScalarProperties,
+  type EditIntent,
+  type PatchPlan,
+  type AuthoringIntent,
+  type ImageScalarProperty,
+  type TextboxProperty,
+  type TargetMapping,
 } from '@rdlc/report-model/editing';
 import type {
   EmbeddedImageDefinition,
+  ImageItem,
   ReportProjection,
   Textbox,
 } from '@rdlc/report-model/report';
@@ -45,8 +48,16 @@ import {
   type PageProperty,
 } from '@rdlc/xml-serializer/page';
 import { planCreateTextbox } from '@rdlc/xml-serializer/authoring';
-import { planCreateImage } from '@rdlc/xml-serializer/images';
-import { allocateDefinitionName } from '@rdlc/validation/images';
+import {
+  planCreateImage,
+  planImageProperty,
+  planReplacePicture,
+} from '@rdlc/xml-serializer/images';
+import {
+  allocateDefinitionName,
+  validateImageCapability,
+  validateImageProperty,
+} from '@rdlc/validation/images';
 import {
   computeImageSize,
   defaultImagePosition,
@@ -499,6 +510,248 @@ export function planImageCreation(
   }
 }
 
+/**
+ * Checks that must pass before the file chooser opens for a picture replacement: the
+ * request is for the current version of an editable report and its target is an image
+ * whose picture may change. Returns the refusals, if any.
+ */
+export function checkImageReplacement(
+  snapshot: DocumentSnapshot,
+  syntax: XmlSyntaxDocument,
+  report: ReportProjection,
+  intent: AuthoringIntent,
+): readonly Diagnostic[] {
+  if (snapshot.version !== intent.baseVersion)
+    return [
+      diagnostic(
+        'STALE_EDIT',
+        'The document changed; select the item again.',
+        'stale-edit',
+        { start: 0, end: 0 },
+      ),
+    ];
+  const root = syntax.root;
+  if (!root) return syntax.diagnostics;
+  if (report.status !== 'editable')
+    return [
+      diagnostic(
+        'SOURCE_ONLY',
+        'Fix source diagnostics before editing visually.',
+        'unsupported',
+        { start: 0, end: 0 },
+      ),
+    ];
+  const image = report.images.find(
+    (entry) => entry.node.id === intent.targetId && entry.context === 'body',
+  );
+  return image
+    ? validateImageCapability(image, 'image')
+    : [
+        diagnostic(
+          IMAGE_TARGET_STALE,
+          'The image no longer exists; select it again.',
+          'stale-edit',
+          root.range,
+        ),
+      ];
+}
+
+/** Fixed text for any image property planning or verification failure; no error text. */
+export const imageEditFailureMessage =
+  'The image could not be edited safely; inspect the report source.';
+
+/** Fixed text for any replacement planning or verification failure; no error text. */
+export const imageReplaceFailureMessage =
+  'The picture could not be replaced safely; inspect the report source.';
+
+/**
+ * Plan a picture replacement against the latest accepted evaluation, after the file
+ * chooser resolved. The target is the intent's node when the version is unchanged, and
+ * otherwise the one body image still carrying both `original.name` and `original.definition`; a target that is gone is
+ * `IMAGE_TARGET_STALE`. `item` scope reuses the B4 dedupe and naming: an identical
+ * displayable picture is referenced, a new one gets a definition. `all` rewrites the
+ * referenced definition in place. Choosing the picture already shown is a no-op.
+ */
+export function planImageReplacement(
+  snapshot: DocumentSnapshot,
+  syntax: XmlSyntaxDocument,
+  report: ReportProjection,
+  intent: AuthoringIntent,
+  imported: ImportedPicture,
+  original?: {
+    readonly name: string | null;
+    readonly definition: string | null;
+  },
+): PlanOutcome {
+  const root = syntax.root;
+  if (!root) return { ok: false, diagnostics: syntax.diagnostics };
+  const fail = (message: string, code: string): PlanOutcome => ({
+    ok: false,
+    diagnostics: [
+      diagnostic(
+        code,
+        message,
+        code === IMAGE_TARGET_STALE ? 'stale-edit' : 'unsupported',
+        root.range,
+      ),
+    ],
+  });
+  const payload = intent.payload;
+  if (payload.action !== 'replaceImagePicture')
+    return fail('This is not a picture replacement.', 'EDIT_REFUSED');
+  if (report.status !== 'editable')
+    return fail(
+      'Fix source diagnostics before editing visually.',
+      'SOURCE_ONLY',
+    );
+  let target: ImageItem | undefined;
+  if (snapshot.version === intent.baseVersion)
+    target = report.images.find(
+      (entry) => entry.node.id === intent.targetId && entry.context === 'body',
+    );
+  else if (original?.name && original.definition) {
+    const matches = report.images.filter(
+      (entry) =>
+        entry.name === original.name &&
+        entry.definition === original.definition &&
+        entry.context === 'body',
+    );
+    target = matches.length === 1 ? matches[0] : undefined;
+  }
+  if (!target)
+    return fail(
+      'The image no longer exists; select it again.',
+      IMAGE_TARGET_STALE,
+    );
+  const blocked = validateImageCapability(target, 'image');
+  if (blocked.length) return { ok: false, diagnostics: blocked };
+  const { picture, fileName } = imported;
+  const index = report.images.indexOf(target);
+  const definitionIndex = report.embeddedImages.findIndex(
+    (entry) => entry.name === target.definition,
+  );
+  const current = report.embeddedImages[definitionIndex];
+  if (!current || (payload.scope === 'all' && !current.displayable))
+    return fail(
+      'The embedded image no longer exists; refresh and retry.',
+      IMAGE_TARGET_STALE,
+    );
+  const unchanged: PlanOutcome = {
+    ok: true,
+    plan: patchPlan(snapshot, []),
+    candidate: snapshot.source,
+    changed: false,
+  };
+  const base64 = Buffer.from(picture.bytes).toString('base64');
+  const label = fileName || current.name;
+  try {
+    let plan: PatchPlan;
+    let verify: (projected: ReportProjection) => boolean;
+    const samePictures = (projected: ReportProjection) =>
+      projected.images.length === report.images.length &&
+      projected.images.every(
+        (entry, position) =>
+          entry.name === report.images[position]!.name &&
+          (position === index ||
+            entry.definition === report.images[position]!.definition),
+      );
+    if (payload.scope === 'all') {
+      if (
+        current.displayable &&
+        current.hash === picture.hash &&
+        current.mime === picture.mime
+      )
+        return unchanged;
+      plan = planReplacePicture(snapshot, root, {
+        scope: 'all',
+        definition: current,
+        mime: picture.mime,
+        base64,
+      });
+      verify = (projected) => {
+        const next = projected.embeddedImages[definitionIndex];
+        return (
+          samePictures(projected) &&
+          projected.images[index]!.definition === current.name &&
+          projected.embeddedImages.length === report.embeddedImages.length &&
+          next?.name === current.name &&
+          next.displayable &&
+          next.mime === picture.mime &&
+          next.pixels?.width === picture.pixels.width &&
+          next.pixels.height === picture.pixels.height &&
+          projected.embeddedImages.every(
+            (entry, position) =>
+              position === definitionIndex ||
+              (entry.name === report.embeddedImages[position]!.name &&
+                entry.encodedSize ===
+                  report.embeddedImages[position]!.encodedSize),
+          )
+        );
+      };
+    } else {
+      const same = report.embeddedImages.find(
+        (entry) => entry.displayable && entry.hash === picture.hash,
+      );
+      if (same?.name === current.name) return unchanged;
+      let created:
+        | { name: string; mime: ImageMime; base64: string }
+        | undefined;
+      let value: string;
+      if (same) value = same.name;
+      else {
+        value = allocateDefinitionName(
+          fileName,
+          report.embeddedImages.map((entry) => entry.name),
+        );
+        created = { name: value, mime: picture.mime, base64 };
+      }
+      plan = planReplacePicture(snapshot, root, {
+        scope: 'item',
+        image: target,
+        value,
+        ...(created ? { definition: created } : {}),
+      });
+      verify = (projected) => {
+        const next = projected.images[index];
+        const definition = projected.embeddedImages.find(
+          (entry) => entry.name === value,
+        );
+        return (
+          samePictures(projected) &&
+          next?.definition === value &&
+          next.value?.kind === 'constant' &&
+          next.value.text === value &&
+          projected.embeddedImages.length ===
+            report.embeddedImages.length + (created ? 1 : 0) &&
+          !!definition?.displayable &&
+          (!created ||
+            (definition.mime === created.mime &&
+              definition.pixels?.width === picture.pixels.width &&
+              definition.pixels.height === picture.pixels.height))
+        );
+      };
+    }
+    if (exceedsParseBudget(snapshot.source, plan))
+      return fail(
+        `Replacing the picture with "${label}" would exceed the 16 MiB report size limit.`,
+        IMAGE_REPORT_BUDGET,
+      );
+    const candidate = verifyCandidate(snapshot, plan, (next) => {
+      const projected = projectReport(next);
+      return projected.status === 'editable' && verify(projected);
+    }).source;
+    return {
+      ok: true,
+      plan,
+      candidate,
+      changed: candidate !== snapshot.source,
+    };
+  } catch {
+    // Underlying error text may quote source text, including the picture payload (FR-025).
+    return fail(imageReplaceFailureMessage, 'EDIT_REFUSED');
+  }
+}
+
 export function planAuthoringIntent(
   snapshot: DocumentSnapshot,
   syntax: XmlSyntaxDocument,
@@ -900,6 +1153,78 @@ export function planAuthoringIntent(
             return false;
         }
       };
+    } else if (payload.action === 'replaceImagePicture') {
+      return fail('Replacing a picture opens the file chooser first.');
+    } else if (payload.action === 'setImageProperty') {
+      if (!image || image.context !== 'body')
+        return {
+          ok: false,
+          diagnostics: [
+            diagnostic(
+              IMAGE_TARGET_STALE,
+              'The image no longer exists; select it again.',
+              'stale-edit',
+              root.range,
+            ),
+          ],
+        };
+      const property = payload.property as ImageScalarProperty;
+      const known = (imageScalarProperties as readonly string[]).includes(
+        property,
+      );
+      const capability = known ? validateImageCapability(image, property) : [];
+      if (capability.length) return { ok: false, diagnostics: capability };
+      if (property === 'name' && payload.value !== image.name) {
+        const dependencies = validateTextboxRename(root, image);
+        if (dependencies.length)
+          return { ok: false, diagnostics: dependencies };
+      }
+      const errors = validateImageProperty({
+        property,
+        value: payload.value,
+        range: image.node.range,
+        existingNames: reportItemNames(root).filter(
+          (entry) => entry !== image.name,
+        ),
+        definitions: report.embeddedImages,
+      });
+      if (errors.length) return { ok: false, diagnostics: errors };
+      const imageValue = (entry: ImageItem): string | null => {
+        switch (property) {
+          case 'name':
+            return entry.name;
+          case 'sizing':
+            return entry.sizing;
+          case 'value':
+            return entry.value?.kind === 'constant' ? entry.value.text : null;
+          case 'toolTip':
+            return entry.toolTip?.text ?? '';
+        }
+      };
+      if (imageValue(image) === payload.value)
+        return {
+          ok: true,
+          plan: patchPlan(snapshot, []),
+          candidate: snapshot.source,
+          changed: false,
+        };
+      plan = planImageProperty({
+        snapshot,
+        image,
+        property,
+        value: payload.value,
+      });
+      const imageIndex = report.images.indexOf(image);
+      verify = (candidate) => {
+        const next = candidate.images[imageIndex];
+        return (
+          candidate.images.length === report.images.length &&
+          candidate.embeddedImages.length === report.embeddedImages.length &&
+          next !== undefined &&
+          imageValue(next) === payload.value &&
+          (property !== 'value' || next.definition === payload.value)
+        );
+      };
     } else if (payload.action === 'deleteImage') {
       // Editable and geometry-only body images; preservation-only ones have no capabilities.
       if (
@@ -964,9 +1289,11 @@ export function planAuthoringIntent(
     };
   } catch (error) {
     return fail(
-      error instanceof Error
-        ? error.message
-        : 'Authoring could not be verified.',
+      payload.action === 'setImageProperty'
+        ? imageEditFailureMessage
+        : error instanceof Error
+          ? error.message
+          : 'Authoring could not be verified.',
     );
   }
 }

@@ -15,6 +15,10 @@ import {
   TextboxPropertiesComponent,
   type TextboxCommit,
 } from '../properties/textbox-properties.component';
+import {
+  ImagePropertiesComponent,
+  type ImageGeometryCommit,
+} from '../properties/image-properties.component';
 
 /** Selected Data or Structure target; data/structural targets never carry scene bounds. */
 export interface SelectedTarget {
@@ -29,6 +33,7 @@ export interface SelectedTarget {
   standalone: true,
   imports: [
     TextboxPropertiesComponent,
+    ImagePropertiesComponent,
     DatasetsComponent,
     TablePropertiesComponent,
   ],
@@ -81,7 +86,15 @@ export interface SelectedTarget {
           Preserved content. Use Code XML to inspect unsupported properties.
         </p>
       } @else if (selected.kind === 'image') {
-        <!-- Image properties arrive with the image inspector; delete is offered below. -->
+        <rdlc-image-properties
+          [item]="selected"
+          [state]="state()"
+          [refusal]="refusal()"
+          [expanded]="expanded()"
+          (expand)="expand.emit($event)"
+          (request)="request.emit($event)"
+          (geometry)="geometry.emit($event)"
+        />
       } @else if (selected.kind !== 'table') {
         <rdlc-textbox-properties
           [item]="selected"
@@ -176,6 +189,7 @@ export class ContextualInspectorComponent {
   readonly structureNode = input<SelectedTarget | null>(null);
   readonly expanded = input<Partial<Record<InspectorSection, boolean>>>({});
   readonly commit = output<TextboxCommit>();
+  readonly geometry = output<ImageGeometryCommit>();
   readonly expand = output<{ section: InspectorSection; open: boolean }>();
   readonly request = output<AuthoringRequest>();
 

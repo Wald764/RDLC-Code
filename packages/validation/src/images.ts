@@ -2,6 +2,7 @@ import {
   IMAGE_DATA_INVALID,
   IMAGE_FORMAT_UNSUPPORTED,
   IMAGE_PIXELS_EXCEEDED,
+  IMAGE_PROPERTY_INVALID,
   IMAGE_TOO_LARGE,
   dimensionLimit,
   pixelLimit,
@@ -13,7 +14,13 @@ import type {
   ValidatedPicture,
 } from '@rdlc/report-model/images';
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
+import type { SourceRange } from '@rdlc/report-model/document';
+import {
+  imageScalarProperties,
+  type ImageScalarProperty,
+} from '@rdlc/report-model/editing';
 import type { ImageItem } from '@rdlc/report-model/report';
+import { validateName } from './validate.js';
 import {
   crc32,
   decodeImageData,
@@ -138,4 +145,67 @@ export function validateImageCapability(
       property,
     },
   ];
+}
+
+const sizingModes: readonly string[] = [
+  'AutoSize',
+  'Fit',
+  'FitProportional',
+  'Clip',
+];
+
+/**
+ * Validates one authored image scalar. The diagnostics name the property and the rule,
+ * never the submitted value, so nothing a caller pastes can reach a message (FR-025).
+ * A ToolTip is free text, stored escaped and never evaluated; an expression is accepted
+ * as the text it is. `existingNames` excludes the item's own current name.
+ */
+export function validateImageProperty(input: {
+  readonly property: ImageScalarProperty;
+  readonly value: string;
+  readonly range: SourceRange;
+  readonly existingNames: readonly string[];
+  readonly definitions: readonly {
+    readonly name: string;
+    readonly displayable: boolean;
+  }[];
+}): readonly Diagnostic[] {
+  const { property, value } = input;
+  const invalid = (message: string): readonly Diagnostic[] => [
+    {
+      code: IMAGE_PROPERTY_INVALID,
+      category: 'invalid-value',
+      severity: 'error',
+      range: input.range,
+      message,
+      correctiveAction:
+        'Correct the authored value or inspect the item in source.',
+      blockedOperations: ['requested-edit'],
+      property,
+    },
+  ];
+  if (!(imageScalarProperties as readonly string[]).includes(property))
+    return invalid('This image property cannot be set this way.');
+  switch (property) {
+    case 'sizing':
+      return sizingModes.includes(value)
+        ? []
+        : invalid('Use AutoSize, Fit, FitProportional or Clip for Sizing.');
+    case 'value':
+      return input.definitions.some(
+        (definition) => definition.displayable && definition.name === value,
+      )
+        ? []
+        : invalid(
+            'Choose an embedded image of this report that can be displayed.',
+          );
+    case 'name':
+      return validateName(value, input.existingNames)
+        ? []
+        : invalid(
+            'Use a unique, CLS-compatible report-item name within this report.',
+          );
+    case 'toolTip':
+      return [];
+  }
 }

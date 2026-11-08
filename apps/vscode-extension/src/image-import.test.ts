@@ -32,8 +32,10 @@ import {
 } from './image-import.js';
 import {
   checkImageCreation,
+  checkImageReplacement,
   imageFailureMessage,
   planImageCreation,
+  planImageReplacement,
   planTextboxIntent,
 } from './edit-controller.js';
 
@@ -684,6 +686,354 @@ test('a planning failure surfaces a fixed message and never underlying error tex
   assert.ok(!text.includes('Duplicate'));
   assert.ok(
     !text.includes(
+      Buffer.from(file.picture.bytes).toString('base64').slice(0, 32),
+    ),
+  );
+});
+
+// --- US3: property intents and picture replacement -------------------------
+
+const authored = () => evaluate(report('authored.rdlc'));
+const imageIn = (state: ReturnType<typeof evaluate>, name: string) =>
+  state.projection.images.find((entry) => entry.name === name)!;
+function property(
+  state: ReturnType<typeof evaluate>,
+  name: string,
+  key: string,
+  value: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return planTextboxIntent(state.snapshot, state.syntax, state.projection, {
+    requestId: 'r',
+    baseVersion: state.snapshot.version,
+    targetId: imageIn(state, name).node.id,
+    operation: 'author',
+    payload: { action: 'setImageProperty', property: key, value },
+    ...overrides,
+  } as never);
+}
+const codes = (outcome: ReturnType<typeof property>) =>
+  outcome.ok ? [] : outcome.diagnostics.map((entry) => entry.code);
+
+test('setImageProperty plans one scalar patch per property and verifies the result', () => {
+  const state = authored();
+  for (const [key, value] of [
+    ['sizing', 'Clip'],
+    ['value', 'photo'],
+    ['toolTip', 'Hello'],
+    ['name', 'Brand'],
+  ] as const) {
+    const outcome = property(state, 'LogoFit', key, value);
+    assert.equal(outcome.ok && outcome.changed, true, key);
+    assert.equal(outcome.ok && outcome.plan.patches.length, 1, key);
+  }
+  // Same value: accepted, nothing to write.
+  const same = property(state, 'LogoFit', 'sizing', 'Fit');
+  assert.equal(same.ok && same.changed, false);
+  assert.equal(same.ok && same.plan.patches.length, 0);
+});
+
+test('setImageProperty refuses invalid values with IMAGE_PROPERTY_INVALID', () => {
+  const state = authored();
+  for (const [key, value] of [
+    ['sizing', 'Stretch'],
+    ['value', 'nowhere'],
+    ['name', 'LogoAutoSize'],
+    ['name', 'not valid'],
+  ] as const)
+    assert.deepEqual(
+      codes(property(state, 'LogoFit', key, value)),
+      ['IMAGE_PROPERTY_INVALID'],
+      `${key}=${value}`,
+    );
+  assert.deepEqual(
+    codes(property(state, 'LogoFit', 'left', '1in')),
+    ['IMAGE_PROPERTY_INVALID'],
+    'geometry is not an image property',
+  );
+});
+
+test('setImageProperty refuses a removed target, a stale version and blocked capabilities', () => {
+  const state = authored();
+  assert.deepEqual(
+    codes(property(state, 'LogoFit', 'sizing', 'Fit', { targetId: '1:99999' })),
+    ['IMAGE_TARGET_STALE'],
+  );
+  assert.deepEqual(
+    codes(property(state, 'LogoFit', 'sizing', 'Fit', { baseVersion: 0 })),
+    ['STALE_EDIT'],
+  );
+  const preserved = evaluate(report('preserved.rdlc'));
+  assert.deepEqual(
+    codes(property(preserved, 'GhostPicture', 'sizing', 'Fit')),
+    ['CAPABILITY_BLOCKED'],
+  );
+  assert.deepEqual(
+    codes(property(preserved, 'ExternalPicture', 'name', 'Other')),
+    ['CAPABILITY_BLOCKED'],
+  );
+  // Geometry-only items keep `name`: the capability guard lets it through (the existing
+  // reference analysis may still refuse a rename in a report with opaque expressions).
+  assert.ok(
+    !codes(property(preserved, 'GhostPicture', 'name', 'Ghost2')).includes(
+      'CAPABILITY_BLOCKED',
+    ),
+  );
+});
+
+test('renaming an image used by an expression is refused', () => {
+  const source = report('authored.rdlc').replace(
+    '<Height>3.5in</Height>',
+    '<Height>3.5in</Height><Visibility><Hidden>=ReportItems!LogoFit.Value = 1</Hidden></Visibility>',
+  );
+  const state = evaluate(source);
+  const outcome = property(state, 'LogoFit', 'name', 'Other');
+  assert.equal(outcome.ok, false);
+});
+
+const replacement = (
+  state: ReturnType<typeof evaluate>,
+  name: string,
+  scope: string,
+  overrides: Record<string, unknown> = {},
+) =>
+  ({
+    requestId: 'r',
+    baseVersion: state.snapshot.version,
+    targetId: imageIn(state, name).node.id,
+    operation: 'author',
+    payload: { action: 'replaceImagePicture', scope },
+    ...overrides,
+  }) as Parameters<typeof checkImageReplacement>[3];
+
+test('the replace gate runs before the chooser and names every refusal', () => {
+  const state = authored();
+  const check = (request: Parameters<typeof checkImageReplacement>[3]) =>
+    checkImageReplacement(
+      state.snapshot,
+      state.syntax,
+      state.projection,
+      request,
+    ).map((entry) => entry.code);
+  assert.deepEqual(check(replacement(state, 'LogoFit', 'item')), []);
+  assert.deepEqual(
+    check(replacement(state, 'LogoFit', 'all', { baseVersion: 0 })),
+    ['STALE_EDIT'],
+  );
+  assert.deepEqual(
+    check(replacement(state, 'LogoFit', 'all', { targetId: '1:99999' })),
+    [IMAGE_TARGET_STALE],
+  );
+  const preserved = evaluate(report('preserved.rdlc'));
+  for (const name of ['GhostPicture', 'ExternalPicture', 'ExpressionPicture'])
+    assert.deepEqual(
+      checkImageReplacement(
+        preserved.snapshot,
+        preserved.syntax,
+        preserved.projection,
+        replacement(preserved, name, 'item'),
+      ).map((entry) => entry.code),
+      ['CAPABILITY_BLOCKED'],
+      name,
+    );
+});
+
+test('item scope adds a definition, repoints one item and reuses identical pictures', async () => {
+  const state = authored();
+  const file = await imported('progressive.jpg');
+  const outcome = planImageReplacement(
+    state.snapshot,
+    state.syntax,
+    state.projection,
+    replacement(state, 'LogoFit', 'item'),
+    file,
+  );
+  assert.ok(outcome.ok && outcome.changed);
+  if (!outcome.ok) return;
+  assert.equal(outcome.plan.patches.length, 2);
+  const next = projectReport(
+    parse({ ...state.snapshot, source: outcome.candidate }),
+    { digest },
+  );
+  assert.deepEqual(
+    next.images.map((entry) => [entry.name, entry.definition]),
+    [
+      ['LogoAutoSize', 'logo'],
+      ['LogoFit', 'progressive'],
+      ['PhotoFitProportional', 'photo'],
+      ['PhotoClip', 'photo'],
+      ['Tagged', 'logo'],
+    ],
+  );
+  // An identical picture reuses the existing definition, writing only Value.
+  const logo = await imported('logo.png');
+  const reuse = planImageReplacement(
+    state.snapshot,
+    state.syntax,
+    state.projection,
+    replacement(state, 'PhotoClip', 'item'),
+    logo,
+  );
+  assert.ok(reuse.ok && reuse.changed);
+  assert.equal(reuse.ok && reuse.plan.patches.length, 1);
+  // The picture it already shows is a no-op.
+  const same = planImageReplacement(
+    state.snapshot,
+    state.syntax,
+    state.projection,
+    replacement(state, 'LogoFit', 'item'),
+    logo,
+  );
+  assert.ok(same.ok && !same.changed);
+});
+
+test('all scope rewrites the definition in place and an identical picture is a no-op', async () => {
+  const state = authored();
+  const file = await imported('progressive.jpg');
+  const outcome = planImageReplacement(
+    state.snapshot,
+    state.syntax,
+    state.projection,
+    replacement(state, 'LogoFit', 'all'),
+    file,
+  );
+  assert.ok(outcome.ok && outcome.changed);
+  if (!outcome.ok) return;
+  assert.equal(outcome.plan.patches.length, 2);
+  const next = projectReport(
+    parse({ ...state.snapshot, source: outcome.candidate }),
+    { digest },
+  );
+  const definition = next.embeddedImages.find(
+    (entry) => entry.name === 'logo',
+  )!;
+  assert.equal(definition.hash, file.picture.hash);
+  assert.equal(definition.mime, 'image/jpeg');
+  assert.equal(next.embeddedImages.length, 3);
+  const logo = await imported('logo.png');
+  const same = planImageReplacement(
+    state.snapshot,
+    state.syntax,
+    state.projection,
+    replacement(state, 'LogoFit', 'all'),
+    logo,
+  );
+  assert.ok(same.ok && !same.changed);
+});
+
+test('a replacement locates its target by name in a later version, or reports it stale', async () => {
+  const state = authored();
+  const file = await imported('progressive.jpg');
+  const original = replacement(state, 'LogoFit', 'item');
+  const later = evaluate(
+    report('authored.rdlc').replace(
+      '<Height>3.5in</Height>',
+      '<Height>4in</Height>',
+    ),
+    5,
+  );
+  const found = planImageReplacement(
+    later.snapshot,
+    later.syntax,
+    later.projection,
+    original,
+    file,
+    { name: 'LogoFit', definition: 'logo' },
+  );
+  assert.ok(found.ok && found.changed);
+  const removed = evaluate(
+    report('authored.rdlc').replace(
+      /<Image Name="LogoFit">[\s\S]*?<\/Image>/,
+      '',
+    ),
+    5,
+  );
+  const stale = planImageReplacement(
+    removed.snapshot,
+    removed.syntax,
+    removed.projection,
+    original,
+    file,
+    { name: 'LogoFit', definition: 'logo' },
+  );
+  assert.equal(!stale.ok && stale.diagnostics[0]?.code, IMAGE_TARGET_STALE);
+  const unnamed = planImageReplacement(
+    later.snapshot,
+    later.syntax,
+    later.projection,
+    original,
+    file,
+  );
+  assert.equal(!unnamed.ok && unnamed.diagnostics[0]?.code, IMAGE_TARGET_STALE);
+});
+
+test('a stale target is never relocated by name alone when the definition differs', async () => {
+  const state = authored();
+  const file = await imported('progressive.jpg');
+  // Same name, now pointing at another definition: an unrelated item reused the name.
+  const reused = evaluate(
+    report('authored.rdlc').replace(
+      /(<Image Name="LogoFit">[\s\S]*?<Value>)logo(<\/Value>)/,
+      '$1photo$2',
+    ),
+    5,
+  );
+  assert.equal(
+    reused.projection.images.find((entry) => entry.name === 'LogoFit')
+      ?.definition,
+    'photo',
+  );
+  for (const scope of ['item', 'all'] as const) {
+    const outcome = planImageReplacement(
+      reused.snapshot,
+      reused.syntax,
+      reused.projection,
+      replacement(state, 'LogoFit', scope),
+      file,
+      { name: 'LogoFit', definition: 'logo' },
+    );
+    assert.equal(
+      !outcome.ok && outcome.diagnostics[0]?.code,
+      IMAGE_TARGET_STALE,
+      scope,
+    );
+  }
+  // Same name and same definition still relocates, for both scopes.
+  const unchanged = evaluate(report('authored.rdlc'), 5);
+  for (const scope of ['item', 'all'] as const) {
+    const outcome = planImageReplacement(
+      unchanged.snapshot,
+      unchanged.syntax,
+      unchanged.projection,
+      replacement(state, 'LogoFit', scope),
+      file,
+      { name: 'LogoFit', definition: 'logo' },
+    );
+    assert.ok(outcome.ok && outcome.changed, scope);
+  }
+});
+
+test('a replacement over the 16 MiB budget is refused and never echoes the payload', async () => {
+  // Pad with a comment so only the new picture can tip the report over the budget.
+  const base = report('authored.rdlc');
+  const room = 64;
+  const filler = 'x'.repeat(sourceStringLengthBudget - base.length - room - 7);
+  const fat = evaluate(base.replace('</Report>', `<!--${filler}--></Report>`));
+  assert.equal(fat.projection.status, 'editable');
+  const file = await imported('progressive.jpg');
+  const outcome = planImageReplacement(
+    fat.snapshot,
+    fat.syntax,
+    fat.projection,
+    replacement(fat, 'LogoFit', 'item'),
+    file,
+  );
+  assert.equal(
+    !outcome.ok && outcome.diagnostics[0]?.code,
+    IMAGE_REPORT_BUDGET,
+  );
+  assert.ok(
+    !JSON.stringify(outcome).includes(
       Buffer.from(file.picture.bytes).toString('base64').slice(0, 32),
     ),
   );

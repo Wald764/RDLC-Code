@@ -2128,3 +2128,95 @@ test('deleteImage carries only a confirmation string', () => {
   ])
     assert.equal(author(payload), null, JSON.stringify(payload));
 });
+
+test('setImageProperty and replaceImagePicture accept only their closed enums', () => {
+  const author = (payload: Record<string, unknown>) =>
+    validateMessage({ ...edit, operation: 'author', payload });
+  for (const property of ['sizing', 'value', 'toolTip', 'name'])
+    assert.ok(
+      author({ action: 'setImageProperty', property, value: 'x' }),
+      property,
+    );
+  assert.ok(
+    author({ action: 'setImageProperty', property: 'toolTip', value: '' }),
+  );
+  for (const payload of [
+    { action: 'setImageProperty', property: 'left', value: '1in' },
+    { action: 'setImageProperty', property: 'image', value: 'x' },
+    { action: 'setImageProperty', property: 'Sizing', value: 'Fit' },
+    { action: 'setImageProperty', property: 'sizing' },
+    { action: 'setImageProperty', value: 'Fit' },
+    { action: 'setImageProperty', property: 'sizing', value: 3 },
+    { action: 'setImageProperty', property: 'sizing', value: 'Fit', item: 'a' },
+    { action: 'setImageProperty', property: 'sizing', value: 'Fit', path: 'a' },
+  ])
+    assert.equal(author(payload), null, JSON.stringify(payload));
+  for (const scope of ['item', 'all'])
+    assert.ok(author({ action: 'replaceImagePicture', scope }), scope);
+  for (const payload of [
+    { action: 'replaceImagePicture' },
+    { action: 'replaceImagePicture', scope: 'both' },
+    { action: 'replaceImagePicture', scope: 1 },
+    { action: 'replaceImagePicture', scope: 'item', path: 'C:\\logo.png' },
+    { action: 'replaceImagePicture', scope: 'item', uri: 'file:///logo.png' },
+    { action: 'replaceImagePicture', scope: 'item', data: 'iVBORw0KGgo=' },
+    { action: 'replaceImagePicture', scope: 'item', bytes: [1, 2, 3] },
+  ])
+    assert.equal(author(payload), null, JSON.stringify(payload));
+});
+
+test('authoring state may describe image definitions and items, closed and string-valued', () => {
+  const snapshot = (authoring: unknown) => ({
+    protocol: 2,
+    kind: 'snapshot',
+    version: 2,
+    projection: { status: 'editable', capabilities: [], diagnostics: [] },
+    scene: null,
+    authoring,
+  });
+  const base = { id: '2:1', page: {}, datasets: [], tables: [] };
+  const images = [
+    {
+      id: '2:7',
+      definition: 'logo',
+      toolTip: { text: 'tip', expression: false },
+    },
+    { id: '2:8', definition: null, toolTip: null },
+  ];
+  const embeddedImages = [
+    { name: 'logo', displayable: true, references: 2 },
+    { name: 'broken', displayable: false, references: 0 },
+  ];
+  assert.ok(validateMessage(snapshot(base)));
+  assert.ok(validateMessage(snapshot({ ...base, images, embeddedImages })));
+  for (const authoring of [
+    { ...base, images: [{ ...images[0], extra: 1 }], embeddedImages },
+    { ...base, images: [{ ...images[0], definition: 3 }], embeddedImages },
+    {
+      ...base,
+      images: [{ ...images[0], toolTip: { text: 'x' } }],
+      embeddedImages,
+    },
+    {
+      ...base,
+      images,
+      embeddedImages: [{ ...embeddedImages[0], references: -1 }],
+    },
+    {
+      ...base,
+      images,
+      embeddedImages: [{ ...embeddedImages[0], displayable: 'yes' }],
+    },
+    {
+      ...base,
+      images,
+      embeddedImages: [{ ...embeddedImages[0], data: 'iVBORw0KGgo=' }],
+    },
+    { ...base, images: 'none' },
+  ])
+    assert.equal(
+      validateMessage(snapshot(authoring)),
+      null,
+      JSON.stringify(authoring),
+    );
+});

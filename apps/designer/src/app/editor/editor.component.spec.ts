@@ -5088,7 +5088,8 @@ describe('image items among body items', () => {
     await m.settle();
     expect(m.element.textContent).not.toContain('Preserved content');
     expect(m.element.querySelector('[aria-label="Delete textbox"]')).toBeNull();
-    expect(m.element.querySelector('[data-property="name"]')).toBeNull();
+    expect(m.element.querySelector('rdlc-textbox-properties')).toBeNull();
+    expect(m.element.querySelector('rdlc-image-properties')).not.toBeNull();
     const form = deleteForm(m)!;
     expect(form).not.toBeNull();
     expect(form.textContent).toContain('Logo');
@@ -5099,6 +5100,114 @@ describe('image items among body items', () => {
     expect(authored(m).at(-1)).toMatchObject({
       targetId: '2:7',
       payload: { action: 'deleteImage', confirm: '' },
+    });
+  });
+
+  it('routes an editable image to the image inspector and its geometry to a LayoutIntent', async () => {
+    const m = await mounted();
+    m.component.select(4);
+    await m.settle();
+    const field = (property: string) =>
+      m.element.querySelector<HTMLInputElement>(
+        `rdlc-image-properties [data-property="${property}"]`,
+      )!;
+    expect(field('name').value).toBe('Logo');
+    expect(field('left').value).toBe('150pt');
+    // The inspector is disabled while an edit is pending, so each one is answered first.
+    const answer = async () => {
+      const sent = m.edits().at(-1) as { requestId: string };
+      m.host.ingest({
+        protocol: 2,
+        kind: 'editResult',
+        requestId: sent.requestId,
+        baseVersion: 2,
+        version: 2,
+        changed: false,
+        accepted: false,
+        mappings: [],
+        reason: 'REFUSED',
+        diagnostics: [],
+      });
+      await m.settle();
+    };
+    const commit = async (property: string, value: string) => {
+      field(property).value = value;
+      field(property).dispatchEvent(new Event('change'));
+      await m.settle();
+    };
+    await commit('left', '200pt');
+    expect(m.edits().at(-1)).toMatchObject({
+      operation: 'layout',
+      payload: { action: 'move', targetIds: ['2:7'], dxPt: 50, dyPt: 0 },
+    });
+    await answer();
+    await commit('top', '100pt');
+    expect(m.edits().at(-1)).toMatchObject({
+      operation: 'layout',
+      payload: { action: 'move', targetIds: ['2:7'], dxPt: 0, dyPt: -5 },
+    });
+    await answer();
+    await commit('width', '100pt');
+    expect(m.edits().at(-1)).toMatchObject({
+      operation: 'layout',
+      payload: { action: 'resize', handle: 'e', xPt: 250 },
+    });
+    await answer();
+    await commit('height', '60pt');
+    expect(m.edits().at(-1)).toMatchObject({
+      operation: 'layout',
+      payload: { action: 'resize', handle: 's', yPt: 165 },
+    });
+    await answer();
+    // The host refuses a negative position; a value that is not a size never leaves.
+    const sent = m.edits().length;
+    await commit('left', 'wide');
+    expect(m.edits()).toHaveLength(sent);
+    expect(m.component.gestureNotice()).toContain('valid size');
+  });
+
+  it('sends image property and replace requests as typed author intents', async () => {
+    const m = await mounted();
+    m.component.select(4);
+    await m.settle();
+    const sizing = m.element.querySelector<HTMLSelectElement>(
+      'rdlc-image-properties [data-property="sizing"]',
+    )!;
+    sizing.value = 'Clip';
+    sizing.dispatchEvent(new Event('change'));
+    await m.settle();
+    expect(authored(m).at(-1)).toMatchObject({
+      targetId: '2:7',
+      payload: {
+        action: 'setImageProperty',
+        property: 'sizing',
+        value: 'Clip',
+      },
+    });
+    const sent = authored(m).at(-1) as { requestId: string };
+    m.host.ingest({
+      protocol: 2,
+      kind: 'editResult',
+      requestId: sent.requestId,
+      baseVersion: 2,
+      version: 2,
+      changed: false,
+      accepted: false,
+      mappings: [],
+      reason: 'IMAGE_PROPERTY_INVALID',
+      diagnostics: [],
+    });
+    await m.settle();
+    const replace = [
+      ...m.element.querySelectorAll<HTMLButtonElement>(
+        'rdlc-image-properties button',
+      ),
+    ].find((button) => button.textContent!.includes('Replace'))!;
+    replace.click();
+    await m.settle();
+    expect(authored(m).at(-1)).toMatchObject({
+      targetId: '2:7',
+      payload: { action: 'replaceImagePicture', scope: 'all' },
     });
   });
 

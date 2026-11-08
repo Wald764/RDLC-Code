@@ -324,10 +324,19 @@ function projectItem(
     source === 'Embedded' &&
     value?.kind === 'constant';
   const named = nameAttribute ? ['name'] : [];
+  // A structured ToolTip has no inert text to edit, so the capability is withheld.
+  const toolTipEditable = toolTipNode === null || toolTip !== null;
   const capabilities: string[] = !authorable
     ? []
     : definition?.displayable
-      ? ['image', ...named, ...geometry, 'sizing', 'value', 'toolTip']
+      ? [
+          'image',
+          ...named,
+          ...geometry,
+          'sizing',
+          'value',
+          ...(toolTipEditable ? ['toolTip'] : []),
+        ]
       : [...named, ...geometry];
 
   return {

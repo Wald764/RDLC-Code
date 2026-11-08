@@ -351,6 +351,24 @@ test('ToolTip is read as inert text and flagged when it is an expression', () =>
   assert.equal(none!.toolTip, null);
 });
 
+test('a structured ToolTip is not editable and withholds the toolTip capability', () => {
+  const { images } = projectSource(
+    wrap(
+      embeddedItem(
+        'Structured',
+        'logo',
+        '<ToolTip><Nested>x</Nested></ToolTip>',
+      ),
+      definition('logo', 'image/png', logoData),
+    ),
+  );
+  assert.equal(images[0]!.toolTip, null);
+  assert.deepEqual(
+    images[0]!.capabilities,
+    editable.filter((capability) => capability !== 'toolTip'),
+  );
+});
+
 test('nested, absent-closing and non-editable-report items never gain capabilities', () => {
   const definitions = definition('logo', 'image/png', logoData);
   const nested = projectSource(

@@ -8,6 +8,7 @@ import type {
   NativeActionMessage,
   ViewIdentity,
 } from '@rdlc/report-model/protocol';
+import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 import type { PatchPlan } from '@rdlc/report-model/editing';
 import type { XmlNode, XmlSyntaxDocument } from '@rdlc/report-model/syntax';
 import { projectStructure } from '@rdlc/renderer/structure';
@@ -16,9 +17,13 @@ import { DocumentBinding } from './protocol.js';
 import { settleHistoryChange } from './history-settle.js';
 import {
   checkImageCreation,
+  checkImageReplacement,
   correlateTargets,
   planImageCreation,
+  planImageReplacement,
   planTextboxIntent,
+  type ImportedPicture,
+  type PlanOutcome,
 } from './edit-controller.js';
 import {
   refusalDiagnostic,
@@ -364,6 +369,18 @@ export class DocumentSession {
                 bodyWidth: projection.section.width ?? '',
                 bodyHeight: projection.section.height ?? '',
               },
+              embeddedImages: projection.embeddedImages.map((definition) => ({
+                name: definition.name,
+                displayable: definition.displayable,
+                references: definition.references.length,
+              })),
+              images: projection.images
+                .filter((image) => image.context === 'body')
+                .map((image) => ({
+                  id: image.node.id,
+                  definition: image.definition,
+                  toolTip: image.toolTip,
+                })),
               datasets: projection.datasets.map((dataset) => ({
                 id: dataset.node.id,
                 name: dataset.name,
@@ -828,6 +845,13 @@ export class DocumentSession {
       await this.createImage(message, current);
       return;
     }
+    if (
+      message.operation === 'author' &&
+      message.payload.action === 'replaceImagePicture'
+    ) {
+      await this.replaceImage(message, current);
+      return;
+    }
     const outcome = planTextboxIntent(
       current.snapshot,
       current.syntax,
@@ -907,11 +931,7 @@ export class DocumentSession {
     });
   }
 
-  /**
-   * Picture insertion: gate, file chooser, then a plan against the latest accepted
-   * snapshot (the chooser is asynchronous and the text may have changed). Cancel and
-   * every refusal leave the text and the history untouched.
-   */
+  /** Picture insertion; see `runPictureEdit`. */
   private async createImage(
     message: ClientMessage & { kind: 'edit'; operation: 'author' },
     current: ReportEvaluation,
@@ -920,6 +940,73 @@ export class DocumentSession {
       typeof message.payload,
       { action: 'createImage' }
     >;
+    await this.runPictureEdit(
+      message,
+      current,
+      checkImageCreation(
+        current.snapshot,
+        current.syntax,
+        current.projection,
+        message,
+      ),
+      (latest, imported) =>
+        planImageCreation(
+          latest.snapshot,
+          latest.syntax,
+          latest.projection,
+          payload,
+          imported,
+        ),
+    );
+  }
+
+  /**
+   * Picture replacement. The target is remembered by name and definition so that the plan
+   * can find it again in a later version: node ids belong to the version that held them.
+   */
+  private async replaceImage(
+    message: ClientMessage & { kind: 'edit'; operation: 'author' },
+    current: ReportEvaluation,
+  ): Promise<void> {
+    const target = current.projection.images.find(
+      (image) => image.node.id === message.targetId,
+    );
+    const original = {
+      name: target?.name ?? null,
+      definition: target?.definition ?? null,
+    };
+    await this.runPictureEdit(
+      message,
+      current,
+      checkImageReplacement(
+        current.snapshot,
+        current.syntax,
+        current.projection,
+        message,
+      ),
+      (latest, imported) =>
+        planImageReplacement(
+          latest.snapshot,
+          latest.syntax,
+          latest.projection,
+          message,
+          imported,
+          original,
+        ),
+    );
+  }
+
+  /**
+   * Gate, file chooser, then a plan against the latest accepted snapshot (the chooser is
+   * asynchronous and the text may have changed). Cancel and every refusal leave the text
+   * and the history untouched.
+   */
+  private async runPictureEdit(
+    message: ClientMessage & { kind: 'edit'; operation: 'author' },
+    current: ReportEvaluation,
+    unavailable: readonly Diagnostic[],
+    plan: (latest: ReportEvaluation, imported: ImportedPicture) => PlanOutcome,
+  ): Promise<void> {
     const settle = async (
       result: Partial<Extract<HostMessage, { kind: 'editResult' }>> & {
         reason: string;
@@ -940,12 +1027,6 @@ export class DocumentSession {
       await this.publish();
     };
     // Same refusals as native history and WorkspaceEdit, before the chooser may open.
-    const unavailable = checkImageCreation(
-      current.snapshot,
-      current.syntax,
-      current.projection,
-      message,
-    );
     if (unavailable.length) {
       await settle({
         reason: unavailable[0]!.code,
@@ -989,17 +1070,23 @@ export class DocumentSession {
     // Re-read the latest accepted snapshot: the plan applies to it, not to `current`.
     this.sync();
     const latest = this.evaluate();
-    const outcome = planImageCreation(
-      latest.snapshot,
-      latest.syntax,
-      latest.projection,
-      payload,
-      { picture: imported.picture, fileName: imported.fileName },
-    );
+    const outcome = plan(latest, {
+      picture: imported.picture,
+      fileName: imported.fileName,
+    });
     if (!outcome.ok) {
       await settle({
         reason: outcome.diagnostics[0]?.code ?? 'REJECTED',
         diagnostics: outcome.diagnostics,
+      });
+      return;
+    }
+    if (!outcome.changed) {
+      // The chosen picture is what the target already shows: nothing to write.
+      await settle({
+        accepted: true,
+        reason: 'UNCHANGED',
+        version: latest.snapshot.version,
       });
       return;
     }

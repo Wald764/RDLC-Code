@@ -168,6 +168,12 @@ export async function run(): Promise<void> {
   await existingItemKeepsUnknownContent();
   await missingDefinitionIsGeometryOnly();
   await preservationOnlyRefusesMutation();
+  await propertyIntents();
+  await invalidPropertyValues();
+  await propertyCapabilities();
+  await replacePictureItemScope();
+  await replacePictureAllScope();
+  await replacePictureRefusals();
 }
 
 async function insertPngThenJpeg(): Promise<void> {
@@ -845,4 +851,483 @@ async function preservationOnlyRefusesMutation(): Promise<void> {
   } finally {
     designer.dispose();
   }
+}
+
+// --- US3: inspector property and replace intents ---------------------------
+
+/** Sends an author intent for the named image and waits for its result. */
+async function author(
+  designer: ReturnType<typeof view>,
+  document: vscode.TextDocument,
+  name: string,
+  payload: Record<string, string>,
+  options: { baseVersion?: number; targetId?: string } = {},
+): Promise<Result> {
+  const baseVersion = options.baseVersion ?? document.version;
+  const targetId =
+    options.targetId ??
+    project(document).images.find((entry) => entry.name === name)!.node.id;
+  const requestId = `author-${Math.random().toString(36).slice(2, 10)}`;
+  designer.session.receive({
+    protocol: 2,
+    kind: 'edit',
+    requestId,
+    baseVersion,
+    targetId,
+    operation: 'author',
+    payload,
+  } as never);
+  await until(
+    () =>
+      designer.messages.some(
+        (m) => m.kind === 'editResult' && m.requestId === requestId,
+      ),
+    'author settles',
+  );
+  const result = designer.messages.find(
+    (m): m is Result => m.kind === 'editResult' && m.requestId === requestId,
+  )!;
+  assert.ok(validateMessage(result), 'result satisfies the shared protocol');
+  return result;
+}
+
+const setProperty = (property: string, value: string) => ({
+  action: 'setImageProperty',
+  property,
+  value,
+});
+
+const authoredSource = () =>
+  readFileSync(join(fixtures, 'authored.rdlc'), 'utf8');
+
+/** Every property intent is one patch, one undo step and touches only its element. */
+async function propertyIntents(): Promise<void> {
+  const document = await open(authoredSource());
+  await vscode.window.showTextDocument(document);
+  const original = document.getText();
+  const designer = view(document, new FakeImageSource());
+  try {
+    const untouched = ['LogoAutoSize', 'PhotoFitProportional', 'PhotoClip'].map(
+      (name) => itemTextOf(original, name),
+    );
+    const steps: [string, string, (text: string) => boolean][] = [
+      ['sizing', 'Clip', (text) => text.includes('<Sizing>Clip</Sizing>')],
+      [
+        'toolTip',
+        'Company <logo> & more',
+        (text) =>
+          text.includes('<ToolTip>Company &lt;logo&gt; &amp; more</ToolTip>'),
+      ],
+      ['value', 'photo', (text) => text.includes('<Value>photo</Value>')],
+      ['name', 'Brand', (text) => text.includes('<Image Name="Brand">')],
+    ];
+    const texts = [original];
+    let previous = 'LogoFit';
+    for (const [property, value, check] of steps) {
+      const result = await author(
+        designer,
+        document,
+        previous,
+        setProperty(property, value),
+      );
+      assert.deepEqual(
+        [result.accepted, result.changed],
+        [true, true],
+        property,
+      );
+      assert.equal(result.reason, 'APPLIED', property);
+      assert.ok(
+        check(itemText(document, property === 'name' ? value : previous)),
+      );
+      if (property === 'name') previous = value;
+      texts.push(document.getText());
+      // Everything outside the targeted item is byte-identical.
+      for (const text of untouched)
+        assert.ok(document.getText().includes(text), `${property}: ${text}`);
+      assert.equal(
+        embeddedImagesOf(document.getText()),
+        embeddedImagesOf(original),
+      );
+    }
+    const projected = project(document).images.find((i) => i.name === 'Brand')!;
+    assert.deepEqual(
+      [projected.sizing, projected.definition, projected.toolTip?.text],
+      ['Clip', 'photo', 'Company <logo> & more'],
+    );
+    // An ToolTip expression is stored as text and never evaluated.
+    const expression = await author(
+      designer,
+      document,
+      'Brand',
+      setProperty('toolTip', '=Fields!Missing.Value'),
+    );
+    assert.equal(expression.accepted, true);
+    assert.equal(
+      project(document).images.find((i) => i.name === 'Brand')!.toolTip
+        ?.expression,
+      true,
+    );
+    texts.push(document.getText());
+    // Clearing the ToolTip removes the element again.
+    const cleared = await author(
+      designer,
+      document,
+      'Brand',
+      setProperty('toolTip', ''),
+    );
+    assert.equal(cleared.accepted, true);
+    assert.ok(!itemText(document, 'Brand').includes('ToolTip'));
+    texts.push(document.getText());
+
+    // An unchanged value is accepted without touching the text or the history.
+    const version = document.version;
+    const same = await author(
+      designer,
+      document,
+      'Brand',
+      setProperty('sizing', 'Clip'),
+    );
+    assert.deepEqual(
+      [same.accepted, same.changed, same.reason],
+      [true, false, 'UNCHANGED'],
+    );
+    assert.equal(document.version, version);
+
+    // One native undo per intent, then one redo per intent.
+    for (let index = texts.length - 2; index >= 0; index--)
+      await history(document, 'undo', texts[index]!);
+    assert.equal(document.getText(), original);
+    for (let index = 1; index < texts.length; index++)
+      await history(document, 'redo', texts[index]!);
+  } finally {
+    designer.dispose();
+  }
+}
+
+/** Invalid values are refused with IMAGE_PROPERTY_INVALID and leave text and history alone. */
+async function invalidPropertyValues(): Promise<void> {
+  const document = await open(authoredSource());
+  await vscode.window.showTextDocument(document);
+  const original = document.getText();
+  const designer = view(document, new FakeImageSource());
+  try {
+    const version = document.version;
+    const cases: [string, string][] = [
+      ['sizing', 'Stretch'],
+      ['sizing', 'fit'],
+      ['sizing', ''],
+      ['value', 'missing'],
+      ['value', ''],
+      ['name', 'LogoAutoSize'],
+      ['name', '1Bad'],
+      ['name', 'has space'],
+      ['name', ''],
+    ];
+    for (const [property, value] of cases) {
+      const result = await author(
+        designer,
+        document,
+        'LogoFit',
+        setProperty(property, value),
+      );
+      const label = `${property}=${JSON.stringify(value)}`;
+      assert.equal(result.accepted, false, label);
+      assert.equal(result.changed, false, label);
+      assert.equal(result.reason, 'IMAGE_PROPERTY_INVALID', label);
+      assert.equal(
+        result.diagnostics[0]?.code,
+        'IMAGE_PROPERTY_INVALID',
+        label,
+      );
+      assert.equal(document.getText(), original, label);
+      assert.equal(document.version, version, label);
+      assert.equal(document.isDirty, false, label);
+    }
+    // The base64 of a definition never appears in a refusal.
+    const probe = project(document).embeddedImages.length;
+    assert.ok(probe > 0);
+    assertNoPayload(designer.messages, picture('logo.png'));
+  } finally {
+    designer.dispose();
+  }
+}
+
+/** Geometry-only and preservation-only targets are refused without editing. */
+async function propertyCapabilities(): Promise<void> {
+  const document = await open(
+    readFileSync(join(fixtures, 'preserved.rdlc'), 'utf8'),
+  );
+  await vscode.window.showTextDocument(document);
+  const original = document.getText();
+  const designer = view(document, new FakeImageSource());
+  try {
+    // Geometry-only: the picture cannot be restyled.
+    const blocked = await author(
+      designer,
+      document,
+      'GhostPicture',
+      setProperty('sizing', 'Fit'),
+    );
+    assert.equal(blocked.accepted, false);
+    assert.equal(blocked.reason, 'CAPABILITY_BLOCKED');
+    for (const name of [
+      'ExternalPicture',
+      'DatabasePicture',
+      'ExpressionPicture',
+    ]) {
+      const refused = await author(
+        designer,
+        document,
+        name,
+        setProperty('name', 'Renamed'),
+      );
+      assert.equal(refused.accepted, false, name);
+      assert.equal(refused.reason, 'CAPABILITY_BLOCKED', name);
+    }
+    assert.equal(document.getText(), original);
+    assert.equal(document.isDirty, false);
+    // Geometry-only items keep `name`: the capability guard lets it through, whatever the
+    // existing reference analysis decides for this report.
+    const renamed = await author(
+      designer,
+      document,
+      'GhostPicture',
+      setProperty('name', 'Ghost2'),
+    );
+    assert.notEqual(renamed.reason, 'CAPABILITY_BLOCKED');
+  } finally {
+    designer.dispose();
+  }
+}
+
+/** `item` scope adds a definition (or reuses an identical one) and repoints this item only. */
+async function replacePictureItemScope(): Promise<void> {
+  const document = await open(authoredSource());
+  await vscode.window.showTextDocument(document);
+  const original = document.getText();
+  const source = new FakeImageSource();
+  const designer = view(document, source);
+  try {
+    const replace = { action: 'replaceImagePicture', scope: 'item' };
+    source.enqueue({
+      fileName: 'progressive.jpg',
+      bytes: picture('progressive.jpg'),
+    });
+    const result = await author(designer, document, 'LogoFit', replace);
+    assert.deepEqual(
+      [result.accepted, result.changed, result.reason],
+      [true, true, 'APPLIED'],
+    );
+    assert.deepEqual(source.calls, ['pick', 'stat', 'read']);
+    const afterNew = document.getText();
+    const projection = project(document);
+    assert.equal(projection.status, 'editable');
+    assert.deepEqual(
+      projection.embeddedImages.map((entry) => entry.name),
+      ['logo', 'photo', 'unused', 'progressive'],
+    );
+    const byName = new Map(
+      projection.images.map((entry) => [entry.name, entry.definition]),
+    );
+    assert.equal(byName.get('LogoFit'), 'progressive');
+    assert.equal(byName.get('LogoAutoSize'), 'logo');
+    assert.equal(byName.get('Tagged'), 'logo');
+    for (const name of [
+      'LogoAutoSize',
+      'PhotoFitProportional',
+      'PhotoClip',
+      'Tagged',
+    ])
+      assert.ok(afterNew.includes(itemTextOf(original, name)), name);
+    // The existing definitions stay byte-identical.
+    for (const name of ['logo', 'photo', 'unused'])
+      assert.ok(afterNew.includes(definitionTextOf(original, name)), name);
+    assertNoPayload(designer.messages, picture('progressive.jpg'));
+
+    // The same picture again reuses the definition, so only Value changes.
+    source.enqueue({
+      fileName: 'again.jpg',
+      bytes: picture('progressive.jpg'),
+    });
+    const reuse = await author(designer, document, 'PhotoClip', replace);
+    assert.equal(reuse.accepted, true);
+    const afterReuse = document.getText();
+    assert.equal(project(document).embeddedImages.length, 4);
+    assert.equal(
+      project(document).images.find((entry) => entry.name === 'PhotoClip')!
+        .definition,
+      'progressive',
+    );
+    assert.equal(
+      afterReuse,
+      afterNew.replace(
+        itemTextOf(afterNew, 'PhotoClip'),
+        itemTextOf(afterNew, 'PhotoClip').replace(
+          '<Value>photo</Value>',
+          '<Value>progressive</Value>',
+        ),
+      ),
+    );
+
+    // Choosing what the item already shows changes nothing.
+    source.enqueue({ fileName: 'logo.png', bytes: picture('logo.png') });
+    const version = document.version;
+    const unchanged = await author(designer, document, 'LogoAutoSize', replace);
+    assert.deepEqual([unchanged.accepted, unchanged.changed], [true, false]);
+    assert.equal(document.version, version);
+
+    await history(document, 'undo', afterNew);
+    await history(document, 'undo', original);
+    await history(document, 'redo', afterNew);
+    await history(document, 'redo', afterReuse);
+  } finally {
+    designer.dispose();
+  }
+}
+
+/** `all` scope rewrites the referenced definition in place; items are not touched. */
+async function replacePictureAllScope(): Promise<void> {
+  const document = await open(authoredSource());
+  await vscode.window.showTextDocument(document);
+  const original = document.getText();
+  const source = new FakeImageSource();
+  const designer = view(document, source);
+  try {
+    source.enqueue({
+      fileName: 'progressive.jpg',
+      bytes: picture('progressive.jpg'),
+    });
+    const result = await author(designer, document, 'LogoFit', {
+      action: 'replaceImagePicture',
+      scope: 'all',
+    });
+    assert.deepEqual(
+      [result.accepted, result.changed, result.reason],
+      [true, true, 'APPLIED'],
+    );
+    const after = document.getText();
+    const projection = project(document);
+    assert.equal(projection.status, 'editable');
+    assert.equal(projection.embeddedImages.length, 3);
+    const logo = projection.embeddedImages.find(
+      (entry) => entry.name === 'logo',
+    )!;
+    assert.equal(logo.mime, 'image/jpeg');
+    assert.equal(logo.format, 'jpeg');
+    assert.equal(logo.displayable, true);
+    assert.deepEqual(logo.references, ['LogoAutoSize', 'LogoFit', 'Tagged']);
+    const items = (text: string) =>
+      text.slice(text.indexOf('<ReportItems>'), text.indexOf('</ReportItems>'));
+    assert.equal(items(after), items(original));
+    for (const name of ['photo', 'unused'])
+      assert.ok(after.includes(definitionTextOf(original, name)), name);
+    assertNoPayload(designer.messages, picture('progressive.jpg'));
+    await history(document, 'undo', original);
+    await history(document, 'redo', after);
+  } finally {
+    designer.dispose();
+  }
+}
+
+/** Cancel, gating, capability and stale refusals; the chooser opens only when it can succeed. */
+async function replacePictureRefusals(): Promise<void> {
+  const replace = { action: 'replaceImagePicture', scope: 'item' };
+  const document = await open(authoredSource());
+  await vscode.window.showTextDocument(document);
+  const original = document.getText();
+  const source = new FakeImageSource();
+  const designer = view(document, source);
+  try {
+    const version = document.version;
+    source.enqueue('cancelled');
+    const cancelled = await author(designer, document, 'LogoFit', replace);
+    assert.deepEqual([cancelled.accepted, cancelled.cancelled], [false, true]);
+    assert.deepEqual(cancelled.diagnostics, []);
+
+    source.enqueue({ fileName: 'anim.gif', bytes: picture('gif.gif') });
+    const refused = await author(designer, document, 'LogoFit', replace);
+    assert.equal(refused.accepted, false);
+    assert.equal(refused.reason, IMAGE_FORMAT_UNSUPPORTED);
+    assert.equal(document.getText(), original);
+    assert.equal(document.version, version);
+    assert.equal(document.isDirty, false);
+
+    // A target removed while the chooser was open is IMAGE_TARGET_STALE.
+    const without = original.replace(itemTextOf(original, 'LogoFit'), '');
+    source.enqueue({
+      file: { fileName: 'logo.png', bytes: picture('photo.jpg') },
+      during: () => replaceSource(document, without),
+    });
+    const gone = await author(designer, document, 'LogoFit', replace);
+    assert.equal(gone.accepted, false);
+    assert.equal(gone.reason, 'IMAGE_TARGET_STALE');
+    assert.equal(document.getText(), without);
+
+    // A change elsewhere while the chooser is open still replaces the right item.
+    const edited = without.replace(
+      '<Height>3.5in</Height>',
+      '<Height>4in</Height>',
+    );
+    source.enqueue({
+      file: { fileName: 'progressive.jpg', bytes: picture('progressive.jpg') },
+      during: () => replaceSource(document, edited),
+    });
+    const moved = await author(designer, document, 'PhotoClip', replace);
+    assert.equal(moved.accepted, true);
+    assert.equal(
+      project(document).images.find((entry) => entry.name === 'PhotoClip')!
+        .definition,
+      'progressive',
+    );
+    assert.deepEqual(
+      moved.mappings,
+      [],
+      'ids of a stale version are not mapped',
+    );
+
+    // Preservation-only and geometry-only items never open the chooser.
+    const preserved = await open(
+      readFileSync(join(fixtures, 'preserved.rdlc'), 'utf8'),
+    );
+    await vscode.window.showTextDocument(preserved);
+    const quiet = new FakeImageSource();
+    const other = view(preserved, quiet);
+    try {
+      for (const name of [
+        'ExternalPicture',
+        'ExpressionPicture',
+        'GhostPicture',
+      ]) {
+        const result = await author(other, preserved, name, replace);
+        assert.equal(result.accepted, false, name);
+        assert.equal(result.reason, 'CAPABILITY_BLOCKED', name);
+      }
+      assert.equal(quiet.count('pick'), 0);
+    } finally {
+      other.dispose();
+    }
+
+    // Untrusted workspaces never open the chooser either.
+    const guarded = await open(authoredSource());
+    const untrusted = new FakeImageSource();
+    const locked = view(guarded, untrusted, () => false);
+    try {
+      const result = await author(locked, guarded, 'LogoFit', replace);
+      assert.equal(result.reason, 'WORKSPACE_UNTRUSTED');
+      assert.equal(untrusted.count('pick'), 0);
+      assert.equal(guarded.getText(), authoredSource());
+    } finally {
+      locked.dispose();
+    }
+  } finally {
+    designer.dispose();
+  }
+}
+
+function definitionTextOf(source: string, name: string): string {
+  const start = source.indexOf(`<EmbeddedImage Name="${name}">`);
+  assert.ok(start >= 0, name);
+  const end =
+    source.indexOf('</EmbeddedImage>', start) + '</EmbeddedImage>'.length;
+  return source.slice(start, end);
 }

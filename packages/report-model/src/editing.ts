@@ -56,6 +56,8 @@ export const authoringFields = {
   setPage: ['property', 'value'],
   createTextbox: ['left', 'top'],
   createImage: ['placement'],
+  setImageProperty: ['property', 'value'],
+  replaceImagePicture: ['scope'],
   deleteTextbox: ['confirm'],
   deleteImage: ['confirm'],
   createTable: ['left', 'top'],
@@ -82,6 +84,23 @@ export const authoringOptionalFields = {
   createImage: ['left', 'top', 'definition'],
 } as const;
 export const imagePlacements = ['default', 'drop'] as const;
+/**
+ * `setImageProperty` properties: one scalar each. Geometry travels as a `LayoutIntent`
+ * and the picture as `replaceImagePicture`; the target item is the intent's `targetId`.
+ */
+export const imageScalarProperties = [
+  'sizing',
+  'value',
+  'toolTip',
+  'name',
+] as const;
+export type ImageScalarProperty = (typeof imageScalarProperties)[number];
+/**
+ * `replaceImagePicture` scopes: `item` writes a new definition (or reuses an identical
+ * one) and repoints only the target; `all` rewrites the referenced definition in place.
+ */
+export const imageReplaceScopes = ['item', 'all'] as const;
+export type ImageReplaceScope = (typeof imageReplaceScopes)[number];
 export type AuthoringAction = keyof typeof authoringFields;
 type OptionalFieldsOf<K extends AuthoringAction> =
   K extends keyof typeof authoringOptionalFields

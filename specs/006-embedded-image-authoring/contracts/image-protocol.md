@@ -9,8 +9,8 @@ client message is a `protocolError` (`validateMessage`).
 | Action | Payload (all strings, matching the `authoringFields` style) | Result | Undo |
 |---|---|---|---|
 | `createImage` | `placement: 'default' \| 'drop'`, `left?`, `top?`, `definition?` | With no `definition`, the host opens the file chooser (`ImageSource`) and writes a new `EmbeddedImage` (or reuses an identical one) plus an `Image` item. With `definition`, the host inserts an item that references that definition | 1 step |
-| `setImageProperty` | `item`, `property: 'sizing' \| 'value' \| 'toolTip' \| 'name'`, `value` | One scalar patch | 1 step |
-| `replaceImagePicture` | `item`, `scope: 'item' \| 'all'` | The host opens the file chooser. `item` writes a new definition and repoints only this item. `all` rewrites the referenced definition's `ImageData`/`MIMEType` in place | 1 step |
+| `setImageProperty` | `property: 'sizing' \| 'value' \| 'toolTip' \| 'name'`, `value`. The item is the edit's `targetId` | One scalar patch. An empty `toolTip` removes the element. Geometry is not an image property: it travels as the existing `LayoutIntent` | 1 step |
+| `replaceImagePicture` | `scope: 'item' \| 'all'`. The item is the edit's `targetId` | The host opens the file chooser. `item` writes a new definition and repoints only this item. `all` rewrites the referenced definition's `ImageData`/`MIMEType` in place | 1 step |
 | `renameEmbeddedImage` | `definition`, `newName` | Renames the definition and every constant reference, or is refused with `IMAGE_RENAME_BLOCKED` | 1 step |
 | `removeEmbeddedImage` | `definition` | Removes an unreferenced definition, or is refused with `IMAGE_REMOVE_BLOCKED`, which lists the referencing items | 1 step |
 
@@ -32,6 +32,7 @@ read-only file system) and source-only status apply before the file chooser open
 | Message | Fields | Rule |
 |---|---|---|
 | `snapshot` (existing) | The scene includes `kind:'image'` items | No bytes |
+| `snapshot.authoring` (extended) | `embeddedImages: {name, displayable, references}[]` and `images: {id, definition, toolTip}[]` (body items) | Feeds the inspector's picker, reference count and ToolTip text. No bytes, hashes or paths |
 | `imageAssets` (new) | `assets: {key, mime, data}[]` | Sent only for displayable PNG and JPEG definitions whose key the webview has not yet received. Base64 payload only. Never logged |
 
 ## Webview → host native actions (sidebar)

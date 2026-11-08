@@ -154,7 +154,7 @@ export function validateTableAction(
       return fail('Select a non-detail row group.');
     return validateDataMutation(root, group.node, 'group', group.name, source);
   }
-  if ('scope' in payload) {
+  if ('scope' in payload && 'field' in payload) {
     if (
       payload.scope !== dataset.name &&
       !table!.groups.some(

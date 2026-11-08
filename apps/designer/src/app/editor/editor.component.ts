@@ -59,6 +59,7 @@ import { StructureTreeComponent } from './structure-tree.component';
 import type { DesignScene } from '@rdlc/report-model/scene';
 import { DiagnosticsComponent } from '../diagnostics/diagnostics.component';
 import type { TextboxCommit } from '../properties/textbox-properties.component';
+import type { ImageGeometryCommit } from '../properties/image-properties.component';
 import { explainRefusal, HostAdapter } from './host-adapter';
 import { IconComponent, type IconName } from './icon.component';
 import {
@@ -3103,6 +3104,61 @@ export class EditorComponent {
     if (edit.targetId !== undefined && edit.targetId !== this.selected()?.id)
       return;
     this.sendCommit(edit);
+  }
+
+  /**
+   * An image geometry field commit, sent as the existing `LayoutIntent`: Left and Top as a
+   * move by the difference, Width and Height as an east or south edge drag to the new
+   * size. The host validates it exactly like a pointer or keyboard gesture, so a negative
+   * or zero value is refused there and the report stays unchanged.
+   */
+  imageGeometry(edit: ImageGeometryCommit): void {
+    if (this.conflict() || this.pointerGuard) return;
+    if (edit.targetId !== undefined && edit.targetId !== this.selected()?.id)
+      return;
+    const snapshot = this.host.snapshot();
+    const item = this.selected();
+    if (!snapshot || snapshot.status !== 'editable' || !item) return;
+    const points = (property: ImageGeometryCommit['property']) =>
+      item.resolvedGeometry?.[property].points ??
+      toPoints(item.geometry?.[property] ?? null);
+    const target = toPoints(edit.value);
+    const current = points(edit.property);
+    const left = points('left');
+    const top = points('top');
+    if (
+      target === null ||
+      current === null ||
+      (edit.property === 'width' && left === null) ||
+      (edit.property === 'height' && top === null)
+    ) {
+      this.gestureNotice.set(
+        'Enter a valid size with its unit (pt, pc, in, mm or cm); document unchanged.',
+      );
+      return;
+    }
+    if (target === current) return;
+    this.cancelGesture();
+    const common = { targetIds: [item.id], unit: this.view().unit };
+    const payload: LayoutIntent['payload'] =
+      edit.property === 'left'
+        ? { ...common, action: 'move', dxPt: target - current, dyPt: 0 }
+        : edit.property === 'top'
+          ? { ...common, action: 'move', dxPt: 0, dyPt: target - current }
+          : edit.property === 'width'
+            ? { ...common, action: 'resize', handle: 'e', xPt: left! + target }
+            : { ...common, action: 'resize', handle: 's', yPt: top! + target };
+    if (
+      this.host.sendEdit({
+        requestId: crypto.randomUUID(),
+        baseVersion: snapshot.version,
+        operation: 'layout',
+        payload,
+      })
+    ) {
+      this.gestureNotice.set('');
+      this.draft.set(null);
+    }
   }
 
   /** Typed intent only; the host validates, patches, reparses and applies. */

@@ -2,6 +2,8 @@ import {
   authoringFields,
   authoringOptionalFields,
   imagePlacements,
+  imageReplaceScopes,
+  imageScalarProperties,
   textboxProperties,
   resizeHandles,
   alignModes,
@@ -56,6 +58,23 @@ export type {
 } from './navigation.js';
 
 export interface AuthoringState {
+  /** Image definitions for the inspector's picker; absent from older hosts. */
+  readonly embeddedImages?: readonly {
+    readonly name: string;
+    readonly displayable: boolean;
+    /** Count of image items whose constant `Value` names the definition. */
+    readonly references: number;
+  }[];
+  /** Per image item: its definition name and ToolTip, which the scene does not carry. */
+  readonly images?: readonly {
+    readonly id: string;
+    readonly definition: string | null;
+    /** Inert text; an expression is shown, never evaluated. */
+    readonly toolTip: {
+      readonly text: string;
+      readonly expression: boolean;
+    } | null;
+  }[];
   readonly id: string;
   readonly page: Readonly<Record<string, string>>;
   readonly datasets: readonly {
@@ -613,11 +632,50 @@ function scene(value: unknown, expectedVersion: number): boolean {
   );
 }
 
+/** Optional image slices of the authoring state: closed, string and number valued only. */
+function imageAuthoring(value: Record<string, unknown>): boolean {
+  const { embeddedImages, images } = value;
+  return (
+    (embeddedImages === undefined ||
+      (Array.isArray(embeddedImages) &&
+        embeddedImages.every(
+          (entry) =>
+            record(entry) &&
+            keys(entry, ['name', 'displayable', 'references']) &&
+            string(entry.name) &&
+            typeof entry.displayable === 'boolean' &&
+            version(entry.references),
+        ))) &&
+    (images === undefined ||
+      (Array.isArray(images) &&
+        images.every(
+          (entry) =>
+            record(entry) &&
+            keys(entry, ['id', 'definition', 'toolTip']) &&
+            id(entry.id) &&
+            (entry.definition === null || string(entry.definition)) &&
+            (entry.toolTip === null ||
+              (record(entry.toolTip) &&
+                keys(entry.toolTip, ['text', 'expression']) &&
+                string(entry.toolTip.text) &&
+                typeof entry.toolTip.expression === 'boolean')),
+        )))
+  );
+}
+
 function authoring(value: unknown): boolean {
   if (value === undefined || value === null) return true;
   return (
     record(value) &&
-    keys(value, ['id', 'page', 'datasets', 'tables']) &&
+    keys(value, [
+      'id',
+      'page',
+      'datasets',
+      'tables',
+      'embeddedImages',
+      'images',
+    ]) &&
+    imageAuthoring(value) &&
     id(value.id) &&
     record(value.page) &&
     Object.keys(value.page).every(
@@ -863,7 +921,15 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
               (key) => string((value.payload as Record<string, unknown>)[key]),
             ) &&
             (value.payload.action !== 'createImage' ||
-              createImage(value.payload))));
+              createImage(value.payload)) &&
+            (value.payload.action !== 'setImageProperty' ||
+              (imageScalarProperties as readonly unknown[]).includes(
+                value.payload.property,
+              )) &&
+            (value.payload.action !== 'replaceImagePicture' ||
+              (imageReplaceScopes as readonly unknown[]).includes(
+                value.payload.scope,
+              ))));
       break;
     case 'clipboard': {
       const action = value.action as ClipboardAction;

@@ -1,0 +1,114 @@
+<form
+  class="properties"
+  aria-label="Image properties"
+  (submit)="$event.preventDefault()"
+>
+  @if (refusal()) {
+    <p role="status" id="image-refusal">
+      {{ refusal() }}. Accepted values are shown below each field.
+    </p>
+  }
+  <p class="sr-only">
+    Sizes retain their explicit pt, pc, in, mm or cm units. A ToolTip is shown
+    as text; expressions are never evaluated.
+  </p>
+  @for (section of sections; track section.label) {
+    @if (relevant(section.properties).length || section.key === 'appearance') {
+      <details
+        [open]="expanded()[section.key] ?? true"
+        (toggle)="toggled(section.key, $event)"
+      >
+        <summary>{{ section.label }}</summary>
+        @for (field of relevant(section.properties); track field.property) {
+          <label class="field">
+            <span>{{ field.label }}</span>
+            @if (field.property === 'value') {
+              <select
+                [attr.data-property]="field.property"
+                data-escape-cancel
+                [attr.aria-describedby]="refusal() ? 'image-refusal' : null"
+                [value]="current(field.property)"
+                (change)="submit(field.property, $event)"
+                (keydown.enter)="submit(field.property, $event)"
+                (keydown.escape)="cancel(field.property, $event)"
+              >
+                @for (name of definitions(); track name) {
+                  <option [value]="name" [selected]="name === definition()">
+                    {{ name }}
+                  </option>
+                }
+              </select>
+            } @else if (field.kind === 'select') {
+              <select
+                [attr.data-property]="field.property"
+                data-escape-cancel
+                [attr.aria-describedby]="refusal() ? 'image-refusal' : null"
+                [value]="current(field.property)"
+                (change)="submit(field.property, $event)"
+                (keydown.enter)="submit(field.property, $event)"
+                (keydown.escape)="cancel(field.property, $event)"
+              >
+                @for (option of sizings; track option) {
+                  <option
+                    [value]="option"
+                    [selected]="option === current(field.property)"
+                  >
+                    {{ option }}
+                  </option>
+                }
+              </select>
+            } @else {
+              <input
+                type="text"
+                [attr.data-property]="field.property"
+                data-escape-cancel
+                [attr.aria-describedby]="refusal() ? 'image-refusal' : null"
+                [value]="current(field.property)"
+                (change)="submit(field.property, $event)"
+                (keydown.enter)="submit(field.property, $event)"
+                (keydown.escape)="cancel(field.property, $event)"
+              />
+            }
+          </label>
+          @if (field.property === 'toolTip' && toolTipIsExpression()) {
+            <small>
+              This ToolTip is an expression. It is shown as text and never
+              evaluated.
+            </small>
+          }
+          @if (refusal()) {
+            <small
+              >Accepted {{ field.label }}: {{ current(field.property) }}</small
+            >
+          }
+        }
+        @if (section.key === 'appearance') {
+          <dl class="metadata" aria-label="Picture metadata">
+            <dt>Format</dt>
+            <dd>{{ metadata().format }}</dd>
+            <dt>Dimensions</dt>
+            <dd>{{ metadata().dimensions }}</dd>
+            <dt>Encoded size</dt>
+            <dd>{{ metadata().encoded }}</dd>
+          </dl>
+          @if (canReplace()) {
+            <div class="replace">
+              @if (shared()) {
+                <button type="button" (click)="replace('item')">
+                  Replace for this item
+                </button>
+                <button type="button" (click)="replace('all')">
+                  Replace for all {{ references() }} items
+                </button>
+              } @else {
+                <button type="button" (click)="replace('all')">
+                  Replace picture
+                </button>
+              }
+            </div>
+          }
+        }
+      </details>
+    }
+  }
+</form>
