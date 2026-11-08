@@ -157,3 +157,18 @@ deletion blocked, force pushes blocked, pull request required (0 approvals) and
 `Required checks` required, with no bypass actors. Work happens on feature
 branches merged through pull requests. See [releases.md](../releases.md) for the
 release flow and the tag rulesets.
+
+## Headless VS Code on Linux
+
+On Linux, `pnpm qa:*` runs every step that opens a VS Code or Electron window
+(`test:vscode`, the installed-VSIX host run, Desktop E2E and `test:visual`) under
+`xvfb-run -a -s "-screen 0 WxHx24"` (1920x1080 for the extension host, 1440x1000 as in
+CI for Desktop E2E and visual runs). The child environment drops `WAYLAND_DISPLAY`,
+`XDG_SESSION_TYPE`, `EGL_PLATFORM` and `XAUTHORITY`. Without this, Electron opens on
+the developer's own Wayland session: when it is locked, minimized or reached over RDP,
+the window is unfocused, native undo does nothing ("undo document sync" failures) or
+startup hangs, even under a plain `xvfb-run`. The printed step command shows the
+wrapper. The wrapper is skipped when `CI` is set (workflows wrap themselves), on
+macOS and Windows, and when `xvfb-run` is not installed (a one-line note is printed and
+the run stays on the current display). Set `RDLC_QA_DISPLAY=native` to keep the current
+display, for example to watch the window.
