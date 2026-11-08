@@ -238,23 +238,18 @@ const renderedOnce = (page: Page): Promise<string[]> =>
       rows
         .map((element, domIndex) => {
           const html = element as HTMLElement;
-          const posinset = Number(html.getAttribute('aria-posinset'));
           const top = Number.parseFloat(html.style.top);
           return {
             domIndex,
-            posinset:
-              Number.isFinite(posinset) && posinset > 0 ? posinset : NaN,
             top: Number.isFinite(top) ? top : html.getBoundingClientRect().top,
             label:
               element.getAttribute('aria-label') ||
               (element.textContent ?? '').trim(),
           };
         })
-        .sort((a, b) =>
-          Number.isNaN(a.posinset) || Number.isNaN(b.posinset)
-            ? a.top - b.top || a.domIndex - b.domIndex
-            : a.posinset - b.posinset,
-        )
+        // Never sort by aria-posinset: it is the position among siblings at
+        // one tree level, so it interleaves categories and their children.
+        .sort((a, b) => a.top - b.top || a.domIndex - b.domIndex)
         .map((row) => row.label),
     );
 
