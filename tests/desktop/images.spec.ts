@@ -358,10 +358,16 @@ async function save(ctx: Ctx): Promise<void> {
   await ctx.page.keyboard.press(`${MOD}+s`);
 }
 
+/** A whole report: a read racing a write can return a truncated document. */
+const complete = (text: string): boolean =>
+  text.trimEnd().endsWith('</Report>');
+
 /**
  * Save while the editor is dirty until the report on disk satisfies `accept`.
  * An edit is applied asynchronously, so an immediate save can still see the old
- * document; saving a clean editor is a no-op. The last text read is returned.
+ * document; saving a clean editor is a no-op. A truncated read (the file caught
+ * mid-write) is never accepted, whatever the predicate. The last text read is
+ * returned.
  */
 async function savedUntil(
   ctx: Ctx,
@@ -374,7 +380,7 @@ async function savedUntil(
     .poll(
       async () => {
         last = await bytes(ctx, name);
-        if (accept(last)) return true;
+        if (complete(last) && accept(last)) return true;
         if ((await dirtyTabs(ctx.page).count()) > 0) await save(ctx);
         return false;
       },
@@ -1654,7 +1660,10 @@ test('SC-006-timing', async () => {
       ).toHaveCount(51);
       const imported = await savedUntil(
         ctx,
-        (text) => (text.match(/<Image /g) ?? []).length === 51,
+        (text) =>
+          complete(text) &&
+          imageCount(text) === 51 &&
+          dataCount(text) === dataCount(original) + 1,
         'the 5 MiB import reached disk',
       );
       expect(dataCount(imported)).toBe(dataCount(original) + 1);

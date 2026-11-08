@@ -230,17 +230,59 @@ const stripCue = (label: string): string => {
   return (cue < 0 ? label : label.slice(0, cue)).trim();
 };
 
-/** Native rows actually in the DOM; the tree virtualizes, so callers walk windows. */
-const rendered = (page: Page): Promise<string[]> =>
+/** Native rows in the DOM, in visual order (the list is virtualized and absolutely positioned). */
+const renderedOnce = (page: Page): Promise<string[]> =>
   dataPane(page)
     .locator('.monaco-list-rows [role="treeitem"]')
     .evaluateAll((rows) =>
-      rows.map(
-        (element) =>
-          element.getAttribute('aria-label') ||
-          (element.textContent ?? '').trim(),
-      ),
+      rows
+        .map((element, domIndex) => {
+          const html = element as HTMLElement;
+          const posinset = Number(html.getAttribute('aria-posinset'));
+          const top = Number.parseFloat(html.style.top);
+          return {
+            domIndex,
+            posinset:
+              Number.isFinite(posinset) && posinset > 0 ? posinset : NaN,
+            top: Number.isFinite(top) ? top : html.getBoundingClientRect().top,
+            label:
+              element.getAttribute('aria-label') ||
+              (element.textContent ?? '').trim(),
+          };
+        })
+        .sort((a, b) =>
+          Number.isNaN(a.posinset) || Number.isNaN(b.posinset)
+            ? a.top - b.top || a.domIndex - b.domIndex
+            : a.posinset - b.posinset,
+        )
+        .map((row) => row.label),
     );
+
+/**
+ * Native rows once the scroll has settled: two consecutive position-ordered
+ * snapshots are identical, so a mid-scroll recycled list is never asserted on.
+ */
+async function rendered(page: Page): Promise<string[]> {
+  let previous = JSON.stringify(await renderedOnce(page));
+  let settled: string[] = [];
+  await expect
+    .poll(
+      async () => {
+        const current = await renderedOnce(page);
+        const same = JSON.stringify(current) === previous;
+        previous = JSON.stringify(current);
+        settled = current;
+        return same;
+      },
+      {
+        message: 'the native Data list stopped scrolling',
+        intervals: [150],
+        timeout: 10_000,
+      },
+    )
+    .toBe(true);
+  return settled;
+}
 
 /** Offset of `slice` inside `sequence`, or -1 when it is not a contiguous window. */
 const windowOffset = (slice: string[], sequence: string[]): number => {
