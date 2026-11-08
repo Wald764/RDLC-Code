@@ -636,7 +636,10 @@ metadata and reference counts, and supports rename, remove and insert-existing.
   Gate note: run 42494181151 on e3d4476 is MERGEABLE (`Required checks` green, no blocking
   entry). The only informational failure is `images.spec.ts::SC-006-timing` (5 MiB picture
   shown in 1.2–2.7 s against the 1 s budget, on every OS), so the authoring Desktop jobs and
-  the stability gate stay red and the PR is not FULLY VALIDATED.
+  the stability gate stay red and the PR is not FULLY VALIDATED. Run 42501760998 then hit
+  two single-repeat stability failures (`data.spec.ts::US3.2-add-edit-delete` context menu,
+  `components.spec.ts::FR-018-fallback` intermediate save); both tests were hardened without
+  weakening their assertions, and the final verdict is the PR's latest CI run.
 
 ---
 

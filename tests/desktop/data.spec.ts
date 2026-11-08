@@ -262,17 +262,38 @@ async function activateMenu(
   // The product drops a click on a row whose authority is stale (tree rebuilt
   // after Undo/Redo or a mutation) by design, so the click and the cue converge
   // together; re-clicking an already selected row is idempotent.
+  const item = page.getByRole('menuitem', { name: title });
+  // The right-click is retried together with the selection: a context menu that
+  // never opened (the click landed on a row the host was rebuilding) is
+  // dismissed, if open at all, and the whole gesture starts over. The row must
+  // also carry no "Source only" cue, the host's own sign that it published the
+  // actionable context value; the offered item is still exactly one.
+  let attempts = 0;
   await expect(async () => {
+    attempts += 1;
+    if ((await page.getByRole('menuitem').count()) > 0)
+      await page.keyboard.press('Escape');
     await target.click({ timeout: 5_000 });
     await expect(target, `${label} is selected`).toHaveAttribute(
       'aria-label',
       /Selected/,
       { timeout: 3_000 },
     );
-  }).toPass({ timeout: 30_000 });
-  await target.click({ button: 'right' });
-  const item = page.getByRole('menuitem', { name: title });
-  await expect(item, `${title} is offered for ${label}`).toHaveCount(1);
+    await expect(
+      target,
+      `${label} is published with its actionable context value`,
+    ).not.toHaveAttribute('aria-label', /Source only/, { timeout: 3_000 });
+    await target.click({ button: 'right', timeout: 5_000 });
+    await expect(item, `${title} is offered for ${label}`).toHaveCount(1, {
+      timeout: 5_000,
+    });
+  }).toPass({ timeout: 45_000 });
+  // A first-open miss stays visible in the report instead of passing silently.
+  if (attempts > 1)
+    test.info().annotations.push({
+      type: 'retried-context-menu',
+      description: `${label}: ${attempts} attempts`,
+    });
   // Real pointer activation, held between mousedown and mouseup: the shipped
   // 1.142.0 build attaches a menu item's MOUSE_UP handler only 100 ms after the
   // item renders (`runOnceToEnableMouseUp = new Delayed(..., 100)` scheduled in

@@ -1269,8 +1269,27 @@ test('FR-018-fallback', async () => {
       ctx.page.locator('.monaco-workbench .tab.dirty'),
     ).not.toHaveCount(0);
     await save(ctx);
-    await expect.poll(() => bytes(ctx, 'report.rdlc')).not.toBe(original);
-    const alt = await bytes(ctx, 'report.rdlc');
+    // Wait for the complete saved Alt drop, not for any change: a half-written
+    // file or an intermediate save also differs from the original. The expected
+    // document is the 004 default Textbox with only its two pt coordinates free
+    // (client points are non-negative inside the body, hence no sign).
+    const altShape = withReportItem(
+      original,
+      textboxXml('Textbox1', '@@LEFT@@', '@@TOP@@'),
+    );
+    const altPattern = new RegExp(
+      `^${altShape
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        .replace('@@LEFT@@', '[0-9.]+pt')
+        .replace('@@TOP@@', '[0-9.]+pt')}$`,
+    );
+    let alt = '';
+    await expect
+      .poll(async () => (alt = await bytes(ctx, 'report.rdlc')), {
+        message: 'the saved Alt drop is the complete Textbox with pt Left/Top',
+        timeout: 30_000,
+      })
+      .toMatch(altPattern);
     const raw = rawPoints(box, DROP);
     expect(
       Math.abs(ptValue(alt, 'Left') - raw.left),
