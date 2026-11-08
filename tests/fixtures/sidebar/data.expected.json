@@ -13,6 +13,12 @@
     "classification",
     "mime",
     "hasPayload",
+    "format",
+    "encodedSize",
+    "pixelWidth",
+    "pixelHeight",
+    "references",
+    "displayable",
     "hasQuery",
     "source",
     "nullable",
@@ -317,7 +323,14 @@
           "name": "Logo",
           "open": "<EmbeddedImage Name=\"Logo\">",
           "close": "</EmbeddedImage>",
-          "details": { "hasPayload": true, "mime": "image/png" },
+          "details": {
+            "hasPayload": true,
+            "format": "other",
+            "encodedSize": 16,
+            "references": 0,
+            "displayable": false,
+            "mime": "image/png"
+          },
           "authoring": false
         },
         {
@@ -329,7 +342,13 @@
           "name": "Odd",
           "open": "<EmbeddedImage Name=\"Odd\">",
           "close": "</EmbeddedImage>",
-          "details": { "hasPayload": true },
+          "details": {
+            "hasPayload": true,
+            "format": "other",
+            "encodedSize": 16,
+            "references": 0,
+            "displayable": false
+          },
           "authoring": false
         },
         {
@@ -341,7 +360,14 @@
           "name": "Empty",
           "open": "<EmbeddedImage Name=\"Empty\">",
           "close": "</EmbeddedImage>",
-          "details": { "hasPayload": false, "mime": "image/gif" },
+          "details": {
+            "hasPayload": false,
+            "format": "other",
+            "encodedSize": 0,
+            "references": 0,
+            "displayable": false,
+            "mime": "image/gif"
+          },
           "authoring": false
         }
       ]

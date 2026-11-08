@@ -5,6 +5,7 @@ import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
 import { projectNavigation } from './navigation.js';
 import {
+  embeddedImageContextValues,
   groupDataCategories,
   projectData,
   type DataCategories,
@@ -623,4 +624,106 @@ test('the shared entry budget truncates Structure and Data independently', () =>
     joint.structure.nodes.length + joint.data.nodes.length <= sharedEntryCap,
     'one shared cap for both projections',
   );
+});
+
+/**
+ * Feature 006 (US4): embedded image definitions carry format, encoded size,
+ * pixels, reference count and the context values that gate the row menus. Only
+ * inert facts: the base64 payload never reaches the projection.
+ */
+test('embedded image definitions expose format, size, pixels, reference count and context values', () => {
+  const load = (name: string) => {
+    const source = readFileSync(`tests/fixtures/images/${name}`, 'utf8');
+    const syntax = parse({
+      uri: `fixture:${name}`,
+      version: 4,
+      source,
+      eol: '\n',
+    });
+    const report = projectReport(syntax);
+    return { source, report, navigation: projectNavigation(syntax, report) };
+  };
+  const authored = load('authored.rdlc');
+  const definitions = authored.navigation.data.nodes.filter(
+    (node) => node.kind === 'embedded-image',
+  );
+  assert.deepEqual(
+    definitions.map((node) => node.name),
+    ['logo', 'photo', 'unused'],
+  );
+  const facts = Object.fromEntries(
+    definitions.map((node) => [node.name, node.details!]),
+  );
+  assert.deepEqual(
+    [facts.logo!.format, facts.photo!.format, facts.unused!.format],
+    ['png', 'jpeg', 'png'],
+  );
+  assert.deepEqual(
+    [facts.logo!.references, facts.photo!.references, facts.unused!.references],
+    [3, 2, 0],
+    'constant Value references, counted per definition',
+  );
+  for (const name of ['logo', 'photo', 'unused']) {
+    const projected = authored.report.embeddedImages.find(
+      (d) => d.name === name,
+    )!;
+    const details = facts[name]!;
+    assert.equal(details.displayable, true, name);
+    assert.equal(details.encodedSize, projected.encodedSize, name);
+    assert.ok(details.encodedSize! > 0, name);
+    assert.deepEqual(
+      [details.pixelWidth, details.pixelHeight],
+      [projected.pixels!.width, projected.pixels!.height],
+      name,
+    );
+    assert.equal(details.hasPayload, true, name);
+  }
+  assert.deepEqual(embeddedImageContextValues(facts.logo!), [
+    'dataEmbeddedImage.displayable',
+    'dataEmbeddedImage.referenced',
+  ]);
+  assert.deepEqual(embeddedImageContextValues(facts.unused!), [
+    'dataEmbeddedImage.displayable',
+    'dataEmbeddedImage.unreferenced',
+  ]);
+  assert.equal(
+    validateAcceptedNavigation(authored.navigation, 4, authored.source.length),
+    true,
+    'the closed navigation envelope still validates with the new metadata',
+  );
+
+  // Definitions that cannot be displayed lose `displayable` but keep the facts.
+  const preserved = load('preserved.rdlc');
+  const byName = (name: string) =>
+    preserved.navigation.data.nodes.find((node) => node.name === name)!
+      .details!;
+  assert.equal(byName('spinner').displayable, false);
+  assert.equal(byName('spinner').format, 'other');
+  assert.equal(byName('spinner').references, 1);
+  assert.deepEqual(embeddedImageContextValues(byName('spinner')), [
+    'dataEmbeddedImage.referenced',
+  ]);
+  assert.equal(byName('broken').displayable, false);
+  assert.equal(
+    byName('logo').references,
+    1,
+    'a table-cell image counts as a reference',
+  );
+
+  // No payload, hash or label with payload text anywhere in the projection.
+  for (const { source, navigation } of [authored, preserved]) {
+    const serialized = JSON.stringify(navigation);
+    for (const match of source.matchAll(/<ImageData>([^<]{40,})</g)) {
+      const payload = match[1]!.trim();
+      assert.ok(
+        !serialized.includes(payload.slice(0, 40)),
+        'payload in the projection',
+      );
+    }
+    for (const node of navigation.data.nodes)
+      assert.ok(
+        node.label.length < 80,
+        `${node.label}: label stays a short name`,
+      );
+  }
 });

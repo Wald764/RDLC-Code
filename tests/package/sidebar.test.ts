@@ -40,6 +40,10 @@ const dataActions = [
   'dataDelete',
   'dataAddDataset',
 ].map((id) => `rdlcCode.sidebar.${id}`);
+// Feature 006 (US4): embedded image definition actions of Report Data.
+const imageActions = ['imageInsert', 'imageRename', 'imageRemove'].map(
+  (id) => `rdlcCode.sidebar.${id}`,
+);
 // Committed in fac6b25 (supplied activity icon); any byte change must be deliberate.
 const activitySvgSha256 =
   '5edf5dcf6c5155ecde4efc9dbb977aa9421cf28f89e64f7fce17d1aec0bdca9e';
@@ -72,6 +76,7 @@ test('retained public commands and new sidebar commands are all contributed', ()
     ...sidebarCommands,
     ...structureActions,
     ...dataActions,
+    ...imageActions,
   ])
     assert.ok(commandIds.includes(command), command);
   assert.equal(new Set(commandIds).size, commandIds.length, 'duplicate IDs');
@@ -200,6 +205,50 @@ test('data actions are scoped to Report Data rows and carry no authoring payload
   assert.doesNotMatch(
     JSON.stringify(menus),
     /author|payload|delete-contained-content/i,
+  );
+});
+
+test('embedded image actions are scoped to definition rows by their context values', () => {
+  const context = (
+    manifest.contributes.menus as Record<
+      string,
+      { command: string; when?: string }[]
+    >
+  )['view/item/context']!;
+  const condition = (command: string) => {
+    const entries = context.filter((entry) => entry.command === command);
+    assert.equal(entries.length, 1, command);
+    return entries[0]!.when ?? '';
+  };
+  const matches = (command: string, value: string) => {
+    const when = condition(command);
+    assert.ok(when.includes('view == rdlcCode.data'), command);
+    const pattern = /viewItem =~ \/(.+)\//.exec(when)?.[1];
+    assert.ok(pattern, command);
+    return new RegExp(pattern).test(value);
+  };
+  const referenced =
+    'dataEmbeddedImage.displayable dataEmbeddedImage.referenced';
+  const unused = 'dataEmbeddedImage.displayable dataEmbeddedImage.unreferenced';
+  const undisplayable = 'dataEmbeddedImage.unreferenced';
+  assert.equal(matches('rdlcCode.sidebar.imageInsert', referenced), true);
+  assert.equal(matches('rdlcCode.sidebar.imageInsert', undisplayable), false);
+  for (const value of [referenced, unused, undisplayable])
+    assert.equal(matches('rdlcCode.sidebar.imageRename', value), true, value);
+  assert.equal(matches('rdlcCode.sidebar.imageRemove', unused), true);
+  assert.equal(matches('rdlcCode.sidebar.imageRemove', referenced), false);
+  for (const command of imageActions)
+    for (const value of [
+      'rdlcCode.source',
+      'rdlcCode.body',
+      'rdlcCode.dataset',
+    ])
+      assert.equal(matches(command, value), false, `${command}: ${value}`);
+  // Code XML stays reachable from definition rows.
+  assert.ok(
+    context
+      .filter((entry) => entry.command === 'rdlcCode.sidebar.source')
+      .some((entry) => (entry.when ?? '').includes('dataEmbeddedImage')),
   );
 });
 

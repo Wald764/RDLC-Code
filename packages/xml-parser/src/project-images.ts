@@ -22,6 +22,10 @@ import {
   walkJpeg,
   walkPng,
 } from '@rdlc/report-model/image-data';
+import {
+  findImageElementReferences,
+  mayBeEmbedded,
+} from '@rdlc/report-model/image-references';
 import { child, children, RDL_2016 } from './names.js';
 
 export interface ImageProjectionOptions {
@@ -216,13 +220,25 @@ export function projectImages(
   visit(root, false, null);
 
   const references = new Map<string, string[]>();
+  const refer = (name: string, from: string) =>
+    references.set(name, [...(references.get(name) ?? []), from]);
+  // Only a constant `Value` behind a Source that may be Embedded names a definition
+  // (the removal rules of `findDefinitionBlockers`): External and Database never do.
   // An unnamed item still counts, under its node id, so removal checks stay safe.
   for (const item of images)
-    if (item.value?.kind === 'constant')
-      references.set(item.value.text, [
-        ...(references.get(item.value.text) ?? []),
-        item.name ?? item.node.id,
-      ]);
+    if (item.value?.kind === 'constant' && mayBeEmbedded(item.source))
+      refer(item.value.text, item.name ?? item.node.id);
+  // Other image elements (BackgroundImage, PointerImage, IndicatorImage...) count under
+  // the item that owns them, so a definition they use is never reported unreferenced.
+  for (const element of findImageElementReferences(root))
+    if (element.value.kind === 'constant' && mayBeEmbedded(element.source)) {
+      const owner = element.owner;
+      refer(
+        element.value.text,
+        (owner ? attribute(owner, 'Name')?.value : undefined) ??
+          element.node.id,
+      );
+    }
   return {
     images,
     embeddedImages: definitions.map((definition) => ({

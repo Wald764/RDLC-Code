@@ -5,6 +5,13 @@ import {
 } from '@rdlc/report-model/navigation';
 import type { DesignScene } from '@rdlc/report-model/scene';
 import type { ClipboardAction } from '@rdlc/report-model/clipboard';
+import type { ReportProjection } from '@rdlc/report-model/report';
+import type { XmlNode } from '@rdlc/report-model/syntax';
+import { embeddedImageContextValues } from '@rdlc/renderer/data';
+import {
+  validateDefinitionMutation,
+  validateDefinitionName,
+} from '@rdlc/validation/images';
 import type { NativeIntent } from './host-context.js';
 
 /** Eligibility is checked again by the captured host/session and existing clipboard engine. */
@@ -233,6 +240,159 @@ export function datasetCreateRoute(): DataRoute {
   };
 }
 
+/** Finite embedded image commands of Report Data (feature 006, US4). */
+export type ImageCommand = 'insert' | 'rename' | 'remove';
+
+export interface ImageRoute {
+  /** Typed intent for the designer's own edit path; it carries definition names only. */
+  readonly intent: NativeIntent;
+  /** The report: definition edits target it, as image creation does. */
+  readonly targetIds: readonly string[];
+  /** Short confirmation once the designer accepted the edit. */
+  readonly notice: string;
+}
+
+/** Accepted facts an image command decides on, taken from the current evaluation. */
+export interface ImageContext {
+  readonly root: XmlNode | null;
+  readonly report: ReportProjection;
+}
+
+/**
+ * Row summary of an embedded image definition: format, pixels, encoded size and
+ * reference count (FR-021). Built from inert numbers and flags only; the picture data
+ * never reaches a label, description or tooltip (FR-025).
+ */
+export function embeddedImageSummary(node: NavigationNode): string {
+  const details = node.details;
+  if (!details || details.references === undefined) return '';
+  const format = { png: 'PNG', jpeg: 'JPEG', other: 'Other format' }[
+    details.format ?? 'other'
+  ];
+  const size = details.encodedSize ?? 0;
+  const references = details.references;
+  return [
+    details.displayable ? format : `${format} (not displayable)`,
+    details.pixelWidth !== undefined && details.pixelHeight !== undefined
+      ? `${details.pixelWidth}x${details.pixelHeight} px`
+      : '',
+    size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KB`,
+    `${references} ${references === 1 ? 'reference' : 'references'}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/**
+ * Pre-check for the rename input box: null when the name is acceptable. The message
+ * names the rule and never echoes the submitted text. `current` is the definition's
+ * own name, which a rename may keep.
+ */
+export function imageNameProblem(
+  value: string,
+  current: string,
+  context: ImageContext,
+): string | null {
+  const problem = validateDefinitionName({
+    newName: value,
+    existingNames: context.report.embeddedImages
+      .map((entry) => entry.name)
+      .filter((name) => name !== current),
+    range: { start: 0, end: 0 },
+  })[0];
+  return problem ? problem.message : null;
+}
+
+/**
+ * Guard an image command at execution time. Insert needs a displayable definition;
+ * rename and remove run the same reference analysis as the host edit
+ * (`validateDefinitionMutation`), so the refusal lists the blocking items before
+ * anything is dispatched. The host revalidates when it plans the edit.
+ */
+export function checkImageCommand(
+  node: NavigationNode,
+  command: ImageCommand,
+  context: ImageContext,
+  newName?: string,
+): { readonly name: string; readonly rootId: string } {
+  if (node.kind !== 'embedded-image' || node.name === null)
+    throw new Error('Choose an embedded image in Report Data.');
+  const name = node.name;
+  const root = context.root;
+  if (!root || context.report.status !== 'editable')
+    throw new Error('Open an editable report to change embedded images.');
+  const definition = context.report.embeddedImages.find(
+    (entry) => entry.name === name,
+  );
+  if (!definition)
+    throw new Error(`Embedded image "${name}" no longer exists.`);
+  if (command === 'insert') {
+    if (!definition.displayable)
+      throw new Error(
+        `Embedded image "${name}" cannot be inserted: it is not a displayable PNG or JPEG.`,
+      );
+  } else {
+    const blocked = validateDefinitionMutation({
+      operation: command,
+      root,
+      definitions: context.report.embeddedImages,
+      images: context.report.images,
+      name,
+      ...(command === 'rename' && newName !== undefined ? { newName } : {}),
+    });
+    if (blocked.length)
+      throw new Error(blocked.map((entry) => entry.message).join(' '));
+  }
+  return { name, rootId: root.id };
+}
+
+/** Typed intent of an image command, after {@link checkImageCommand}. */
+export function imageRoute(
+  node: NavigationNode,
+  command: ImageCommand,
+  context: ImageContext,
+  newName?: string,
+): ImageRoute {
+  const { name, rootId } = checkImageCommand(node, command, context, newName);
+  const targetIds = [rootId];
+  if (command === 'insert')
+    return {
+      intent: {
+        action: 'author',
+        payload: {
+          action: 'createImage',
+          placement: 'default',
+          definition: name,
+        },
+      },
+      targetIds,
+      notice: `An image item for embedded image "${name}" was inserted.`,
+    };
+  if (command === 'remove')
+    return {
+      intent: {
+        action: 'author',
+        payload: { action: 'removeEmbeddedImage', definition: name },
+      },
+      targetIds,
+      notice: `Embedded image "${name}" was removed.`,
+    };
+  const problem = imageNameProblem(newName ?? '', name, context);
+  if (problem !== null) throw new Error(problem);
+  return {
+    intent: {
+      action: 'author',
+      payload: {
+        action: 'renameEmbeddedImage',
+        definition: name,
+        newName: newName!,
+      },
+    },
+    targetIds,
+    notice: `Embedded image "${name}" was renamed to "${newName}".`,
+  };
+}
+
 /**
  * Menu visibility only: unavailable rows stay inspect/source-only and every
  * handler above rechecks the captured capability before acting.
@@ -241,7 +401,15 @@ export function structureContextValue(
   node: NavigationNode,
   table: NavigationNode | undefined,
   scene: DesignScene | null,
+  editable = false,
 ): string {
+  // Image commands (FR-026) need the report status `editable`, passed explicitly by
+  // the view; any other report keeps the row inspect/source-only. The facts shown in
+  // the row description do not depend on it (FR-021).
+  if (node.kind === 'embedded-image')
+    return editable && node.details
+      ? embeddedImageContextValues(node.details).join(' ')
+      : 'rdlcCode.source';
   // Data rows: only an eligible dataset/field claims the existing form's key.
   if (isDataKind(node.kind))
     return dataFormKinds.has(node.kind) && eligible(node, 'properties')
@@ -253,7 +421,12 @@ export function structureContextValue(
   if (
     scene?.items.some(
       (entry) =>
-        entry.id === target.id && entry.kind !== 'cell' && entry.placeholder,
+        entry.id === target.id &&
+        entry.kind !== 'cell' &&
+        entry.placeholder &&
+        // A picture that cannot be shown is a placeholder but stays a movable,
+        // deletable item while it keeps a capability (geometry-only).
+        !(entry.kind === 'image' && entry.capabilities?.length),
     )
   )
     return 'rdlcCode.source';

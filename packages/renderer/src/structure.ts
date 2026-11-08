@@ -13,6 +13,7 @@ const kinds: Readonly<Record<string, StructureNode['kind']>> = {
   PageHeader: 'header',
   PageFooter: 'footer',
   Textbox: 'textbox',
+  Image: 'image',
   Tablix: 'table',
   Table: 'table',
   TablixBody: 'table-body',
@@ -73,6 +74,10 @@ export function projectStructure(
     ...report.textboxes
       .filter((t) => t.capabilities.length > 0)
       .map((t) => t.node.id),
+    // Geometry-only images stay authorable; only preservation-only ones carry a reason.
+    ...report.images
+      .filter((image) => image.capabilities.length > 0)
+      .map((image) => image.node.id),
     ...report.tables.filter((t) => t.structural).map((t) => t.node.id),
   ]);
   const visit = (
@@ -104,7 +109,8 @@ export function projectStructure(
       : foreign ||
           kind === 'preserved' ||
           kind === 'container' ||
-          ((kind === 'textbox' || kind === 'table') && !supported.has(node.id))
+          ((kind === 'textbox' || kind === 'table' || kind === 'image') &&
+            !supported.has(node.id))
         ? `${node.qualifiedName} is preserved; inspect source for unsupported content.`
         : null;
     const name =
@@ -122,7 +128,13 @@ export function projectStructure(
       range: { ...node.range },
       preservedReason,
     });
-    if (foreign || kind === 'preserved' || kind === 'textbox') return;
+    if (
+      foreign ||
+      kind === 'preserved' ||
+      kind === 'textbox' ||
+      kind === 'image'
+    )
+      return;
     for (const child of node.children)
       visit(child, node.id, depth + 1, preservedReason);
   };

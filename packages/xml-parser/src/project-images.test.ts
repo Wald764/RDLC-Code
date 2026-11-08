@@ -800,3 +800,27 @@ test('projecting preserved.rdlc fetches nothing, resolves no path and evaluates 
     'no expression result adds a reference',
   );
 });
+
+test('references count every image element that can name a definition, not External or Database', () => {
+  const definitions =
+    definition('logo', 'image/png', logoData) +
+    definition('badge', 'image/png', logoData);
+  const gauge = (kind: string, source: string, value: string) =>
+    `<${kind}><Source>${source}</Source><Value>${value}</Value></${kind}>`;
+  const { embeddedImages } = projectSource(
+    wrap(
+      `<GaugePanel Name="Dial"><LinearGauges><LinearGauge Name="Level">${gauge('PointerImage', 'Embedded', 'logo')}${gauge('CapImage', 'External', 'badge')}</LinearGauge></LinearGauges><StateIndicators><StateIndicator Name="Light">${gauge('IndicatorImage', 'Embedded', 'logo')}</StateIndicator></StateIndicators></GaugePanel>` +
+        // External and Database images never name a definition.
+        '<Image Name="Web"><Source>External</Source><Value>badge</Value></Image>' +
+        '<Image Name="Db"><Source>Database</Source><Value>badge</Value></Image>',
+      definitions,
+    ),
+  );
+  assert.deepEqual(
+    embeddedImages.map((entry) => [entry.name, entry.references]),
+    [
+      ['logo', ['Level', 'Light']],
+      ['badge', []],
+    ],
+  );
+});

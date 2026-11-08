@@ -171,7 +171,15 @@ test('native projections keep actual cell/member/header ancestry and separate da
   );
   assert.equal(result.data.nodes[1]?.parentId, result.data.nodes[0]?.id);
   assert.deepEqual(result.data.nodes[0]?.details, { hasQuery: true });
-  assert.deepEqual(result.data.nodes[3]?.details, { hasPayload: true });
+  // Inspection facts hold although this report is not editable (no page size).
+  assert.notEqual(projectReport(syntax).status, 'editable');
+  assert.deepEqual(result.data.nodes[3]?.details, {
+    hasPayload: true,
+    format: 'other',
+    encodedSize: 12,
+    references: 0,
+    displayable: false,
+  });
   assert.deepEqual(result.data.nodes[4]?.details, { source: 'inline' });
   assert.equal(
     result.structure.nodes.some((node) =>
@@ -529,4 +537,65 @@ test('parser budget boundaries keep exhausted sources source-only and invent no 
     assert.equal(navigation.data.truncated, false);
     assert.equal(projectStructure(syntax, report).nodes.length, 0);
   }
+});
+
+test('native structure lists image items with their capability state, in source order', () => {
+  const load = (name: string) => {
+    const source = readFileSync(`tests/fixtures/images/${name}`, 'utf8');
+    const syntax = parse({
+      uri: `fixture:${name}`,
+      version: 2,
+      source,
+      eol: '\n',
+    });
+    return {
+      source,
+      report: projectReport(syntax),
+      navigation: projectNavigation(syntax, projectReport(syntax)),
+    };
+  };
+  const eligible = (
+    node: { capabilities: readonly { operation: string; eligible: boolean }[] },
+    operation: string,
+  ) => node.capabilities.find((c) => c.operation === operation)?.eligible;
+
+  const authored = load('authored.rdlc');
+  const images = authored.navigation.structure.nodes.filter(
+    (node) => node.kind === 'image',
+  );
+  assert.deepEqual(
+    images.map((node) => node.name),
+    ['LogoAutoSize', 'LogoFit', 'PhotoFitProportional', 'PhotoClip', 'Tagged'],
+  );
+  assert.deepEqual(
+    images.map((node) => node.sourceOrder),
+    [...images.map((node) => node.sourceOrder)].sort((a, b) => a - b),
+  );
+  for (const node of images) {
+    assert.equal(node.label, `Image: ${node.name}`);
+    assert.equal(eligible(node, 'select'), true);
+    assert.equal(eligible(node, 'properties'), true, node.name!);
+    assert.equal(node.opaqueReason, null, node.name!);
+  }
+  assert.ok(
+    !authored.navigation.structure.nodes.some(
+      (node) => node.kind === 'preserved',
+    ),
+  );
+  assert.equal(
+    validateAcceptedNavigation(authored.navigation, 2, authored.source.length),
+    true,
+    "the 'image' kind is part of the closed envelope",
+  );
+
+  const mixed = load('preserved.rdlc');
+  const named = (name: string) =>
+    mixed.navigation.structure.nodes.find((node) => node.name === name)!;
+  for (const name of ['ExternalPicture', 'ExpressionPicture', 'CellPicture']) {
+    assert.equal(named(name).kind, 'image', name);
+    assert.equal(eligible(named(name), 'properties'), false, name);
+    assert.ok(named(name).opaqueReason, `${name}: states why`);
+    assert.equal(eligible(named(name), 'select'), true, name);
+  }
+  assert.equal(eligible(named('GhostPicture'), 'properties'), true);
 });

@@ -214,10 +214,16 @@ rationale and the alternatives rejected. No `NEEDS CLARIFICATION` item remains o
     `structureContextValue` capability states.
   - **Report Data**: the existing `embedded-image` nodes (`packages/renderer/src/data.ts:295`)
     gain format, encoded size, pixel dimensions and reference count, plus context values
-    `dataEmbeddedImage.editable` and `.referenced`.
+    `dataEmbeddedImage.displayable`, `.referenced` and `.unreferenced`. The facts are
+    shown for every report (inspection, FR-021); only an editable report gets the context
+    values, any other keeps the row `rdlcCode.source` (FR-026). The reference
+    count covers `Image` items and every other `*Image` element with a constant `Value`
+    (`PointerImage`, `IndicatorImage`, `BackgroundImage`...), so Remove is hidden for a
+    definition they use.
   - **Commands**: new `rdlcCode.sidebar.imageRename`, `imageRemove` and `imageInsert`,
     registered in `sidebar/actions.ts` and contributed in `apps/vscode-extension/package.json`.
-    Rename uses `showInputBox` with the existing name validation. Insert runs the existing
+    Rename uses `showInputBox` with the same name validation (CLS identifier, unique,
+    1 to 256 characters). Insert runs the existing
     native create route with the definition name.
   - **Components view**: a new `CreateKind` value `'image'` in
     `packages/report-model/src/navigation.ts`.

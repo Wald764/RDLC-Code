@@ -11,8 +11,12 @@ client message is a `protocolError` (`validateMessage`).
 | `createImage` | `placement: 'default' \| 'drop'`, `left?`, `top?`, `definition?` | With no `definition`, the host opens the file chooser (`ImageSource`) and writes a new `EmbeddedImage` (or reuses an identical one) plus an `Image` item. With `definition`, the host inserts an item that references that definition | 1 step |
 | `setImageProperty` | `property: 'sizing' \| 'value' \| 'toolTip' \| 'name'`, `value`. The item is the edit's `targetId` | One scalar patch. An empty `toolTip` removes the element. Geometry is not an image property: it travels as the existing `LayoutIntent` | 1 step |
 | `replaceImagePicture` | `scope: 'item' \| 'all'`. The item is the edit's `targetId` | The host opens the file chooser. `item` writes a new definition and repoints only this item. `all` rewrites the referenced definition's `ImageData`/`MIMEType` in place | 1 step |
-| `renameEmbeddedImage` | `definition`, `newName` | Renames the definition and every constant reference, or is refused with `IMAGE_RENAME_BLOCKED` | 1 step |
-| `removeEmbeddedImage` | `definition` | Removes an unreferenced definition, or is refused with `IMAGE_REMOVE_BLOCKED`, which lists the referencing items | 1 step |
+| `renameEmbeddedImage` | `definition`, `newName`. The target is the report | Renames the definition and every constant reference (`Source` Embedded) in one composed plan, or is refused with `IMAGE_RENAME_BLOCKED`, which lists the blocking items. An invalid or duplicate `newName` is `IMAGE_PROPERTY_INVALID`; the current name is a no-op | 1 step |
+| `removeEmbeddedImage` | `definition`. The target is the report | Removes an unreferenced definition, or is refused with `IMAGE_REMOVE_BLOCKED`, which lists the referencing items. Removing the last definition removes the whole `EmbeddedImages` collection, because MS-RDL 2.306 requires at least one entry in a present collection (2.305 makes the collection optional) | 1 step |
+
+**Blocking items** (`validateDefinitionMutation`, one diagnostic per item with its `itemId`; the first 20 are listed and the rest summarized by count). A constant `Value` naming the definition blocks a removal only, because a rename rewrites it. These block both operations: an `Image` whose `Value` is an expression and whose `Source` is Embedded, an expression or unknown; a constant `Value` behind an unknown or repeated `Source` or `Value`; a structured `Value`; any other image element that could name the definition (`BackgroundImage` and every RDL element named `*Image` with a `Value`, such as `MapMarkerImage`, `IndicatorImage`, `CapImage`, `TopImage`, `PointerImage`, `FrameImage`, `StateImage` and `GaugeImage`; it is listed under its nearest named ancestor and is never rewritten); a definition name that is missing or defined more than once. External and Database images never block. A rename also refuses a `newName` that has no definition but that an Embedded or unknown-source image item or element already references by constant, because the rename would silently give that item a picture (`IMAGE_RENAME_BLOCKED`, listing the item and never the submitted text). Messages carry authored names only, never picture data.
+
+A definition `Name` is 1 to 256 characters (rsInvalidEmbeddedImageNameLength, MS-RDL 6.40) and a CLS-compatible identifier unique among the embedded images; the sidebar input box applies the same rule (`IMAGE_PROPERTY_INVALID`). The reference count of a definition is the number of image items and image elements whose constant `Value` names it behind a `Source` that is Embedded, an expression or unknown; External and Database never count. It is the same rule as removal, so a definition used by a `PointerImage` or `IndicatorImage` is `referenced` and its Remove entry is hidden.
 
 These existing intents and messages accept image items without changing shape:
 `LayoutIntent` (move and resize), deletion, the `clipboard` message (copy, cut, paste and
@@ -44,9 +48,13 @@ read-only file system) and source-only status apply before the file chooser open
 
 | Command | View / context value | Behavior |
 |---|---|---|
-| `rdlcCode.sidebar.imageInsert` | Data, `dataEmbeddedImage.displayable` | `createImage {definition}` |
-| `rdlcCode.sidebar.imageRename` | Data, `dataEmbeddedImage.*` | `showInputBox` → `renameEmbeddedImage` |
-| `rdlcCode.sidebar.imageRemove` | Data, `dataEmbeddedImage.unreferenced` | `removeEmbeddedImage` |
+| `rdlcCode.sidebar.imageInsert` | Data, `dataEmbeddedImage.displayable` | Native `author` action with `createImage {placement:'default', definition}`; no file chooser |
+| `rdlcCode.sidebar.imageRename` | Data, `dataEmbeddedImage.*` | `showInputBox` (same name rule) → native `author` action with `renameEmbeddedImage` |
+| `rdlcCode.sidebar.imageRemove` | Data, `dataEmbeddedImage.unreferenced` | Native `author` action with `removeEmbeddedImage` |
+
+The three commands check the same reference analysis as the host edit before dispatching, so a refusal reaches the author as a warning that lists the blocking items. The native `author` payload accepts the optional fields of `authoringOptionalFields` (here `definition`).
+
+A definition row's `contextValue` is a space-separated list: `dataEmbeddedImage.displayable` (present for a valid PNG or JPEG) followed by exactly one of `dataEmbeddedImage.referenced` and `dataEmbeddedImage.unreferenced`. The view passes the report state explicitly (`editable` only for status `editable`): in a report that is not editable (including a 2016 report that is only partly supported) the row stays `rdlcCode.source` and offers no image command (FR-026), but it still shows the same facts, because inspection works for every report (FR-021). The row description is `format · pixels · encoded size · reference count`; the closed `NavigationDetails` gain `format`, `encodedSize`, `pixelWidth`, `pixelHeight`, `references` and `displayable`. Image nodes in both views use the `file-media` ThemeIcon.
 
 The existing Structure commands (reveal, copy, cut, duplicate, delete, properties and
 source) apply to `image` nodes according to their capability state.

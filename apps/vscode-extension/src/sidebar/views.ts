@@ -15,9 +15,14 @@ import {
   clipboardIntent,
   dataIntent,
   datasetCreateRoute,
+  checkImageCommand,
+  embeddedImageSummary,
+  imageNameProblem,
+  imageRoute,
   structureContextValue,
   structureIntent,
   type DataAction,
+  type ImageCommand,
 } from './actions.js';
 
 interface Row {
@@ -43,6 +48,18 @@ export const dataCommandActions = {
   dataRename: 'rename',
   dataDelete: 'delete',
 } as const satisfies Record<string, DataAction>;
+
+/**
+ * Registered native embedded image commands (Report Data rows). Insert reuses the
+ * guarded creation path with an existing definition, so no file chooser opens; rename
+ * and remove send the typed definition intents and are refused with the blocking
+ * items listed. Every key must exist in package.json's `contributes.commands`.
+ */
+export const imageCommandActions = {
+  imageInsert: 'insert',
+  imageRename: 'rename',
+  imageRemove: 'remove',
+} as const satisfies Record<string, ImageCommand>;
 
 /** Title command with no row target: the existing creation route owns defaults. */
 export const dataCreateCommand = 'dataAddDataset';
@@ -201,6 +218,8 @@ export class SidebarViews implements vscode.Disposable {
     for (const [id, action] of Object.entries(dataCommandActions))
       register(id, (input) => this.dataAction(input, action));
     register(dataCreateCommand, () => this.dataCreateDataset());
+    for (const [id, command] of Object.entries(imageCommandActions))
+      register(id, (input) => this.imageAction(input, command));
     register('filter', async () => {
       const query = await vscode.window.showInputBox({
         title: 'Filter Components',
@@ -402,6 +421,52 @@ export class SidebarViews implements vscode.Disposable {
     void vscode.window.showInformationMessage(route.notice);
   }
 
+  /**
+   * Embedded image definition row → typed definition intent. The new name of a rename is
+   * asked here with the report's own validation; the capture, reference analysis and
+   * refusal listing are the same ones the host edit applies.
+   */
+  private async imageAction(
+    input: Row | undefined,
+    command: ImageCommand,
+  ): Promise<void> {
+    const row = this.checked(input);
+    if (!row.node || row.node.kind !== 'embedded-image')
+      throw new Error('Choose an embedded image in Report Data.');
+    const current = () => {
+      const evaluation = this.host.evaluation;
+      if (!evaluation)
+        throw new Error('Open an editable report to change embedded images.');
+      return { root: evaluation.syntax.root, report: evaluation.projection };
+    };
+    let newName: string | undefined;
+    if (command === 'rename') {
+      const name = row.node.name ?? '';
+      const context = current();
+      // Refuse before asking when the definition cannot be renamed at all.
+      checkImageCommand(row.node, 'rename', context);
+      newName = await vscode.window.showInputBox({
+        title: 'Rename Embedded Image',
+        prompt: `New name for embedded image "${name}". Items that reference it by name are updated.`,
+        value: name,
+        validateInput: (value) =>
+          value === name ? null : imageNameProblem(value, name, current()),
+      });
+      if (newName === undefined || newName === name) return;
+      // The input box can stay open while the report or the tree moves on.
+      this.checked(row);
+    }
+    const route = imageRoute(row.node, command, current(), newName);
+    const outcome = await this.host.dispatch(route.intent, route.targetIds, {
+      beforeDispatch: this.stillCurrent(row),
+    });
+    if (outcome.status !== 'accepted')
+      throw new Error(
+        outcome.reason ?? 'The embedded image action was cancelled.',
+      );
+    void vscode.window.showInformationMessage(route.notice);
+  }
+
   /** Title action with no row: the existing creation route supplies its defaults. */
   private async dataCreateDataset(): Promise<void> {
     const route = datasetCreateRoute();
@@ -488,6 +553,7 @@ export class SidebarViews implements vscode.Disposable {
         provider.view.description === report ? undefined : report;
       if (provider.view.message !== message) provider.view.message = message;
       provider.insertionReason = insertionReason(context.state);
+      provider.editable = context.state === 'editable';
       provider.scene = evaluation?.scene ?? null;
       const selection = this.host.selection;
       provider.pending = this.host.pendingTargets;
@@ -682,6 +748,8 @@ class NativeView implements vscode.TreeDataProvider<Row>, vscode.Disposable {
   pending: ReadonlySet<string> = new Set();
   pendingComponents: ReadonlySet<string> = new Set();
   insertionReason: string | null = null;
+  /** The accepted report is editable: the only state that exposes image commands. */
+  editable = false;
   scene: import('@rdlc/report-model/scene').DesignScene | null = null;
   constructor(readonly kind: 'structure' | 'data' | 'components') {
     this.view = vscode.window.createTreeView(`rdlcCode.${kind}`, {
@@ -886,11 +954,15 @@ class NativeView implements vscode.TreeDataProvider<Row>, vscode.Disposable {
         row.node,
         this.owningTable(row),
         this.scene,
+        this.editable,
       );
       item.contextValue = contextValue;
       item.description = [
         this.pending.has(id) ? 'Pending' : '',
         primary ? 'Primary' : selected ? 'Selected' : '',
+        row.node.kind === 'embedded-image'
+          ? embeddedImageSummary(row.node)
+          : '',
         // Only inspect/source-only rows claim it; the projection reason stays in the tooltip.
         contextValue === 'rdlcCode.source' ? 'Source only' : '',
       ]
@@ -908,7 +980,9 @@ class NativeView implements vscode.TreeDataProvider<Row>, vscode.Disposable {
             ? 'symbol-field'
             : row.node.kind === 'textbox'
               ? 'symbol-string'
-              : 'symbol-structure',
+              : row.node.kind === 'image' || row.node.kind === 'embedded-image'
+                ? 'file-media'
+                : 'symbol-structure',
       );
       item.accessibilityInformation = {
         label: `${row.label}${item.description ? `, ${item.description}` : ''}${this.selection.mode === 'body' && selected ? `, ${this.selection.targetIds.length} selected` : ''}`,

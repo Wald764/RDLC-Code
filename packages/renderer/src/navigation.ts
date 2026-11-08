@@ -20,6 +20,7 @@ const kinds: Readonly<Record<string, NavigationNode['kind']>> = {
   PageHeader: 'header',
   PageFooter: 'footer',
   Textbox: 'textbox',
+  Image: 'image',
   Tablix: 'table',
   Table: 'table',
   TablixBody: 'table-body',
@@ -107,7 +108,13 @@ export function projectNavigation(
         foreign || kind === 'container',
       ),
     );
-    if (foreign || kind === 'textbox' || kind === 'preserved') return;
+    if (
+      foreign ||
+      kind === 'textbox' ||
+      kind === 'image' ||
+      kind === 'preserved'
+    )
+      return;
     node.children.forEach((child) => visit(child, node.id, depth + 1));
   };
   visit(root, null, 0);

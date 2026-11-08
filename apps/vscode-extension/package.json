@@ -112,7 +112,7 @@
         },
         {
           "command": "rdlcCode.sidebar.source",
-          "when": "viewItem =~ /^rdlcCode\\.(body|editable|group|source|dataset|field)/",
+          "when": "viewItem =~ /^rdlcCode\\.(body|editable|group|source|dataset|field)|dataEmbeddedImage\\./",
           "group": "navigation"
         },
         {
@@ -163,6 +163,21 @@
         {
           "command": "rdlcCode.sidebar.dataDelete",
           "when": "view == rdlcCode.data && viewItem =~ /^rdlcCode\\.(dataset|field)$/",
+          "group": "destructive@1"
+        },
+        {
+          "command": "rdlcCode.sidebar.imageInsert",
+          "when": "view == rdlcCode.data && viewItem =~ /dataEmbeddedImage\\.displayable/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "rdlcCode.sidebar.imageRename",
+          "when": "view == rdlcCode.data && viewItem =~ /dataEmbeddedImage\\./",
+          "group": "navigation@2"
+        },
+        {
+          "command": "rdlcCode.sidebar.imageRemove",
+          "when": "view == rdlcCode.data && viewItem =~ /dataEmbeddedImage\\.unreferenced/",
           "group": "destructive@1"
         }
       ]
@@ -219,6 +234,18 @@
       {
         "command": "rdlcCode.sidebar.dataDelete",
         "title": "RDLC Code: Delete"
+      },
+      {
+        "command": "rdlcCode.sidebar.imageInsert",
+        "title": "RDLC Code: Insert Embedded Image"
+      },
+      {
+        "command": "rdlcCode.sidebar.imageRename",
+        "title": "RDLC Code: Rename Embedded Image"
+      },
+      {
+        "command": "rdlcCode.sidebar.imageRemove",
+        "title": "RDLC Code: Remove Embedded Image"
       },
       {
         "command": "rdlcCode.sidebar.dataAddDataset",

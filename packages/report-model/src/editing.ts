@@ -58,6 +58,8 @@ export const authoringFields = {
   createImage: ['placement'],
   setImageProperty: ['property', 'value'],
   replaceImagePicture: ['scope'],
+  renameEmbeddedImage: ['definition', 'newName'],
+  removeEmbeddedImage: ['definition'],
   deleteTextbox: ['confirm'],
   deleteImage: ['confirm'],
   createTable: ['left', 'top'],
@@ -78,7 +80,9 @@ export const authoringFields = {
 } as const;
 /**
  * Optional string payload fields per action. `createImage` never carries a file path,
- * URI or bytes: the host owns the file chooser and the file read.
+ * URI or bytes: the host owns the file chooser and the file read. `definition` names an
+ * existing embedded image to insert without the chooser. `renameEmbeddedImage` and
+ * `removeEmbeddedImage` carry only definition names; the target item is the report.
  */
 export const authoringOptionalFields = {
   createImage: ['left', 'top', 'definition'],

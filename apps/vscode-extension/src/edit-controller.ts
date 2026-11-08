@@ -51,10 +51,15 @@ import { planCreateTextbox } from '@rdlc/xml-serializer/authoring';
 import {
   planCreateImage,
   planImageProperty,
+  planRemoveDefinition,
+  planRenameDefinition,
   planReplacePicture,
 } from '@rdlc/xml-serializer/images';
 import {
   allocateDefinitionName,
+  rewritableReferences,
+  validateDefinitionMutation,
+  validateDefinitionName,
   validateImageCapability,
   validateImageProperty,
 } from '@rdlc/validation/images';
@@ -752,6 +757,156 @@ export function planImageReplacement(
   }
 }
 
+/** Fixed text for any definition planning or verification failure; no error text. */
+export const imageDefinitionFailureMessage =
+  'The embedded image could not be changed safely; inspect the report source.';
+
+/**
+ * Plan the rename or removal of an embedded image definition (FR-021, FR-022). The
+ * target is the report. A rename rewrites the definition `Name` and every constant
+ * `Value` reference in one composed plan; a removal is one patch (the whole
+ * `EmbeddedImages` collection when the definition is its last entry). Both are refused
+ * with `IMAGE_RENAME_BLOCKED` / `IMAGE_REMOVE_BLOCKED`, listing the blocking items, when
+ * an expression or any other reference cannot be rewritten (or, for a removal, when any
+ * item references the definition). Renaming to the current name changes nothing.
+ */
+export function planImageDefinition(
+  snapshot: DocumentSnapshot,
+  syntax: XmlSyntaxDocument,
+  report: ReportProjection,
+  intent: AuthoringIntent,
+): PlanOutcome {
+  const root = syntax.root;
+  if (!root) return { ok: false, diagnostics: syntax.diagnostics };
+  const payload = intent.payload;
+  if (
+    payload.action !== 'renameEmbeddedImage' &&
+    payload.action !== 'removeEmbeddedImage'
+  )
+    return {
+      ok: false,
+      diagnostics: [authoringError(root, 'Not a definition edit.')],
+    };
+  const fail = (message: string, code: string): PlanOutcome => ({
+    ok: false,
+    diagnostics: [
+      diagnostic(
+        code,
+        message,
+        code === IMAGE_TARGET_STALE ? 'stale-edit' : 'unsupported',
+        root.range,
+      ),
+    ],
+  });
+  if (snapshot.version !== intent.baseVersion || report.status !== 'editable')
+    return fail(
+      'Stale or unsupported report; refresh and retry.',
+      'STALE_EDIT',
+    );
+  if (intent.targetId !== root.id)
+    return fail(
+      'Select the report to change its embedded images.',
+      'EDIT_REFUSED',
+    );
+  const rename = payload.action === 'renameEmbeddedImage';
+  const matches = report.embeddedImages.filter(
+    (entry) => entry.name === payload.definition,
+  );
+  if (matches.length === 0)
+    return fail(
+      'The embedded image no longer exists; refresh and retry.',
+      IMAGE_TARGET_STALE,
+    );
+  const current = matches[0]!;
+  const newName = rename ? payload.newName : '';
+  if (rename && newName === current.name)
+    return {
+      ok: true,
+      plan: patchPlan(snapshot, []),
+      candidate: snapshot.source,
+      changed: false,
+    };
+  if (rename) {
+    const errors = validateDefinitionName({
+      newName,
+      existingNames: report.embeddedImages
+        .filter((entry) => entry !== current)
+        .map((entry) => entry.name),
+      range: current.nameRange,
+    });
+    if (errors.length) return { ok: false, diagnostics: errors };
+  }
+  const blocked = validateDefinitionMutation({
+    operation: rename ? 'rename' : 'remove',
+    root,
+    definitions: report.embeddedImages,
+    images: report.images,
+    name: current.name,
+    ...(rename ? { newName } : {}),
+  });
+  if (blocked.length) return { ok: false, diagnostics: blocked };
+  try {
+    const references = rewritableReferences(report.images, current.name);
+    const plan = rename
+      ? planRenameDefinition({
+          snapshot,
+          definition: current,
+          newName,
+          references,
+        })
+      : planRemoveDefinition(snapshot, root, current);
+    const index = report.embeddedImages.indexOf(current);
+    const candidate = verifyCandidate(snapshot, plan, (next) => {
+      const projected = projectReport(next);
+      if (
+        projected.status !== 'editable' ||
+        projected.images.length !== report.images.length
+      )
+        return false;
+      // Every other image keeps its definition and constant value, byte for byte.
+      const imagesKept = report.images.every((before, position) => {
+        const after = projected.images[position]!;
+        const repointed = references.includes(before);
+        return (
+          after.name === before.name &&
+          (repointed
+            ? after.definition === newName &&
+              after.value?.kind === 'constant' &&
+              after.value.text === newName
+            : after.definition === before.definition &&
+              JSON.stringify(after.value) === JSON.stringify(before.value))
+        );
+      });
+      if (!imagesKept) return false;
+      const expected = report.embeddedImages
+        .map((entry) =>
+          entry === current ? (rename ? newName : null) : entry.name,
+        )
+        .filter((name): name is string => name !== null);
+      return (
+        projected.embeddedImages.length === expected.length &&
+        projected.embeddedImages.every(
+          (entry, position) =>
+            entry.name === expected[position] &&
+            entry.encodedSize ===
+              report.embeddedImages[
+                position + (!rename && position >= index ? 1 : 0)
+              ]!.encodedSize,
+        )
+      );
+    }).source;
+    return {
+      ok: true,
+      plan,
+      candidate,
+      changed: candidate !== snapshot.source,
+    };
+  } catch {
+    // Underlying error text may quote source text, including the picture payload (FR-025).
+    return fail(imageDefinitionFailureMessage, 'EDIT_REFUSED');
+  }
+}
+
 export function planAuthoringIntent(
   snapshot: DocumentSnapshot,
   syntax: XmlSyntaxDocument,
@@ -771,6 +926,11 @@ export function planAuthoringIntent(
     return intent.targetId === root.id
       ? planImageCreation(snapshot, syntax, report, payload)
       : fail('Select the report to insert an image.');
+  if (
+    payload.action === 'renameEmbeddedImage' ||
+    payload.action === 'removeEmbeddedImage'
+  )
+    return planImageDefinition(snapshot, syntax, report, intent);
   const dataset =
     report.datasets.find(
       (dataset) =>

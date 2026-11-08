@@ -526,43 +526,46 @@ metadata and reference counts, and supports rename, remove and insert-existing.
 
 ### Batch B9: Sidebar views
 
-- [ ] T073 [P] [US4] Write the failing tests first.
+- [X] T073 [P] [US4] Write the failing tests first.
   - In `packages/renderer/src/structure.test.ts`, `Image` items get kind `image` and appear
     in source order with their capability state.
   - In `packages/renderer/src/data.test.ts`:
     - definitions have format, encoded size, pixels, reference count and context values;
     - no label or tooltip contains a payload.
-- [ ] T074 [P] [US4] Write the failing tests first in `packages/xml-serializer/src/images.test.ts`.
+- [X] T074 [P] [US4] Write the failing tests first in `packages/xml-serializer/src/images.test.ts`.
   - `planRenameDefinition` renames the definition and all constant references in one
     composed plan.
   - `planRemoveDefinition` produces a single removal.
-- [ ] T075 [P] [US4] Write the failing tests first in `tests/vscode/sidebar-data.test.ts`.
+- [X] T075 [P] [US4] Write the failing tests first in `tests/vscode/sidebar-data.test.ts`.
   - The `imageRename`, `imageRemove` and `imageInsert` commands, including their blocked
     cases (an expression reference; a referenced definition).
   - In `tests/vscode/sidebar-context.test.ts`, activating an image node reveals and selects
     it on the canvas.
-- [ ] T076 [US4] Add `'image'` to `NavigationNode['kind']` in
+- [X] T076 [US4] Add `'image'` to `NavigationNode['kind']` in
   `packages/report-model/src/navigation.ts`, and map `Image: 'image'` in
   `packages/renderer/src/structure.ts` (lines 15-27).
-- [ ] T077 [US4] Extend the embedded-image metadata in `packages/renderer/src/data.ts`
+- [X] T077 [US4] Extend the embedded-image metadata in `packages/renderer/src/data.ts`
   (around line 295) with reference counts and the context values
   `dataEmbeddedImage.displayable`, `.referenced` and `.unreferenced`.
-- [ ] T078 [US4] Implement `planRenameDefinition` and `planRemoveDefinition` in
+- [X] T078 [US4] Implement `planRenameDefinition` and `planRemoveDefinition` in
   `packages/xml-serializer/src/images.ts`.
-- [ ] T079 [US4] Implement `validateDefinitionMutation` in `packages/validation/src/images.ts`.
+- [X] T079 [US4] Implement `validateDefinitionMutation` in `packages/validation/src/images.ts`.
   It returns `IMAGE_RENAME_BLOCKED` or `IMAGE_REMOVE_BLOCKED` together with the list of
   blocking items.
-- [ ] T080 [US4] Add the `renameEmbeddedImage` and `removeEmbeddedImage` intents to
+- [X] T080 [US4] Add the `renameEmbeddedImage` and `removeEmbeddedImage` intents to
   `packages/report-model/src/editing.ts` and `protocol.ts`, and dispatch them in
   `apps/vscode-extension/src/edit-controller.ts`.
-- [ ] T081 [US4] In `apps/vscode-extension/src/sidebar/views.ts`, give image nodes the
+- [X] T081 [US4] In `apps/vscode-extension/src/sidebar/views.ts`, give image nodes the
   `file-media` ThemeIcon and their context values (`structureContextValue`, line 875).
-- [ ] T082 [US4] Add the image commands.
+- [X] T082 [US4] Add the image commands.
   - Register `rdlcCode.sidebar.imageInsert`, `imageRename` (`showInputBox` with name
     validation) and `imageRemove` in `apps/vscode-extension/src/sidebar/actions.ts`.
   - Contribute the commands and menus in `apps/vscode-extension/package.json`.
-- [ ] T083 [US4] **Gate B9**. Run `pnpm qa:integration`. Then run the review. Then commit
+- [X] T083 [US4] **Gate B9**. Run `pnpm qa:integration`. Then run the review. Then commit
   `:sparkles: feat(sidebar): list and manage images in Report Structure and Report Data`.
+  Gate note: node 847/847 and designer suites pass; extension host 15/15 files pass under
+  `env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE -u EGL_PLATFORM -u XAUTHORITY xvfb-run -a`.
+  Rename/remove also block on gauge, indicator and map image elements; names are capped at 256.
 
 ---
 

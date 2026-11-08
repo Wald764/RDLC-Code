@@ -9,12 +9,20 @@ import {
   IMAGE_PIXELS_EXCEEDED,
   IMAGE_TOO_LARGE,
   dimensionLimit,
+  embeddedImageNameMaxLength,
   pixelLimit,
   rawImageLimit,
 } from '@rdlc/report-model/images';
 import type { ImageRefusal, ValidatedPicture } from '@rdlc/report-model/images';
 import {
+  IMAGE_REMOVE_BLOCKED,
+  IMAGE_RENAME_BLOCKED,
+} from '@rdlc/report-model/images';
+import {
   allocateDefinitionName,
+  findDefinitionBlockers,
+  validateDefinitionMutation,
+  validateDefinitionName,
   validateImageCapability,
   validateImageProperty,
   crc32,
@@ -841,6 +849,35 @@ test('file stems and definition names ignore directories before the extension', 
   }
 });
 
+test('allocateDefinitionName caps names at embeddedImageNameMaxLength', () => {
+  const long = `${'a'.repeat(300)}.png`;
+  const first = allocateDefinitionName(long, []);
+  assert.equal(first, 'a'.repeat(embeddedImageNameMaxLength));
+  const second = allocateDefinitionName(long, [first]);
+  assert.equal(second, `${'a'.repeat(embeddedImageNameMaxLength - 2)}_1`);
+  assert.ok(second.length <= embeddedImageNameMaxLength);
+  const taken = [first];
+  for (let n = 1; n <= 12; n++) {
+    const next = allocateDefinitionName(long, taken);
+    assert.ok(next.length <= embeddedImageNameMaxLength, next);
+    assert.match(next, /^[A-Za-z][A-Za-z0-9_]*$/);
+    assert.ok(!taken.includes(next), next);
+    taken.push(next);
+  }
+  assert.equal(taken[10], `${'a'.repeat(embeddedImageNameMaxLength - 3)}_10`);
+});
+
+test('allocateDefinitionName strips a trailing underscore left by the cut', () => {
+  const max = embeddedImageNameMaxLength;
+  const fileName = `${'a'.repeat(max - 1)}_b.png`;
+  const first = allocateDefinitionName(fileName, []);
+  assert.equal(first, 'a'.repeat(max - 1));
+  assert.equal(
+    allocateDefinitionName(fileName, [first]),
+    `${'a'.repeat(max - 2)}_1`,
+  );
+});
+
 test('allocateDefinitionName is case-sensitive', () => {
   assert.equal(allocateDefinitionName('logo.png', ['Logo']), 'logo');
   assert.equal(allocateDefinitionName('Logo.png', ['logo']), 'Logo');
@@ -995,4 +1032,326 @@ test('validateImageProperty diagnostics never echo a payload-sized value', () =>
   ];
   assert.equal(diagnostics.length, 3);
   assert.ok(!JSON.stringify(diagnostics).includes('iVBORw0KGgo'));
+});
+
+// --- US4: definition rename and removal guards --------------------------------
+
+const imagesFixture = (name: string) =>
+  readFileSync(`tests/fixtures/images/${name}`, 'utf8');
+
+function guard(source: string, operation: 'rename' | 'remove', name: string) {
+  const syntax = parse({ uri: 'fixture:guard', version: 1, source, eol: '\n' });
+  const projection = projectReport(syntax);
+  return {
+    syntax,
+    projection,
+    diagnostics: validateDefinitionMutation({
+      operation,
+      root: syntax.root,
+      definitions: projection.embeddedImages,
+      images: projection.images,
+      name,
+    }),
+  };
+}
+
+test('rename is allowed when every reference is a constant Embedded Value', () => {
+  const source = imagesFixture('authored.rdlc');
+  for (const name of ['logo', 'photo', 'unused'])
+    assert.deepEqual(guard(source, 'rename', name).diagnostics, [], name);
+});
+
+test('removal is blocked while an item references the definition, listing every item', () => {
+  const source = imagesFixture('authored.rdlc');
+  const logo = guard(source, 'remove', 'logo');
+  assert.deepEqual(
+    logo.diagnostics.map((entry) => entry.code),
+    [IMAGE_REMOVE_BLOCKED, IMAGE_REMOVE_BLOCKED, IMAGE_REMOVE_BLOCKED],
+  );
+  assert.deepEqual(
+    logo.diagnostics.map((entry) => entry.itemId),
+    ['LogoAutoSize', 'LogoFit', 'Tagged'].map(
+      (name) => logo.projection.images.find((i) => i.name === name)!.node.id,
+    ),
+  );
+  for (const [index, name] of ['LogoAutoSize', 'LogoFit', 'Tagged'].entries()) {
+    assert.ok(logo.diagnostics[index]!.message.includes(`"${name}"`));
+    assert.ok(logo.diagnostics[index]!.message.includes('"logo"'));
+    assert.deepEqual(
+      [
+        logo.diagnostics[index]!.range.start,
+        logo.diagnostics[index]!.range.end,
+      ],
+      [
+        logo.projection.images.find((i) => i.name === name)!.node.range.start,
+        logo.projection.images.find((i) => i.name === name)!.node.range.end,
+      ],
+    );
+  }
+  assert.deepEqual(guard(source, 'remove', 'unused').diagnostics, []);
+});
+
+test('an expression Value blocks rename and removal of every definition, naming the item', () => {
+  const source = imagesFixture('preserved.rdlc');
+  for (const operation of ['rename', 'remove'] as const) {
+    const result = guard(source, operation, 'logo');
+    const expression = result.diagnostics.find((entry) =>
+      entry.message.includes('"ExpressionPicture"'),
+    );
+    assert.ok(expression, `${operation}: the expression item is listed`);
+    assert.equal(
+      expression.code,
+      operation === 'rename' ? IMAGE_RENAME_BLOCKED : IMAGE_REMOVE_BLOCKED,
+    );
+    assert.match(expression.message, /expression/);
+    // An unreferenced definition is blocked too: the expression could name it.
+    assert.ok(
+      guard(source, operation, 'bitmap').diagnostics.some((entry) =>
+        entry.message.includes('"ExpressionPicture"'),
+      ),
+      `${operation}: bitmap`,
+    );
+  }
+  // External and Database images never name an embedded definition.
+  const without = source.replace(
+    /<Image Name="ExpressionPicture">[\s\S]*?<\/Image>/,
+    '',
+  );
+  assert.deepEqual(guard(without, 'rename', 'logo').diagnostics, []);
+  assert.deepEqual(guard(without, 'rename', 'bitmap').diagnostics, []);
+  // The constant reference from a table cell is rewritable for rename and blocks removal.
+  assert.deepEqual(
+    guard(without, 'remove', 'logo').diagnostics.map(
+      (d) => d.message.match(/"(\w+)" still/)?.[1],
+    ),
+    ['CellPicture'],
+  );
+});
+
+test('an unknown Source or a structured Value cannot be rewritten safely', () => {
+  const source = imagesFixture('authored.rdlc');
+  const unknownSource = source.replace(
+    '<Source>Embedded</Source>\n            <Value>photo</Value>',
+    '<Source>=IIf(True, "Embedded", "External")</Source>\n            <Value>photo</Value>',
+  );
+  assert.notEqual(unknownSource, source);
+  const rename = guard(unknownSource, 'rename', 'photo').diagnostics;
+  assert.equal(rename.length, 1);
+  assert.match(rename[0]!.message, /cannot be rewritten safely/);
+  const structured = source
+    .replace('<Value>unused</Value>', '<Value>unused</Value>')
+    .replace('<Value>photo</Value>', '<Value><x:Odd/></Value>');
+  assert.ok(
+    guard(structured, 'rename', 'unused').diagnostics.some((d) =>
+      /cannot be rewritten safely/.test(d.message),
+    ),
+    'a structured Value could hide any name',
+  );
+});
+
+test('a BackgroundImage that could name the definition blocks and names its owner', () => {
+  const source = imagesFixture('authored.rdlc').replace(
+    '<Image Name="PhotoClip">',
+    '<Image Name="PhotoClip"><Style><BackgroundImage><Source>Embedded</Source><Value>unused</Value></BackgroundImage></Style>',
+  );
+  for (const operation of ['rename', 'remove'] as const) {
+    const result = guard(source, operation, 'unused').diagnostics;
+    assert.equal(result.length, 1, operation);
+    assert.match(result[0]!.message, /background image of "PhotoClip"/);
+  }
+  assert.deepEqual(guard(source, 'rename', 'logo').diagnostics, []);
+  const external = source.replace(
+    '<Source>Embedded</Source><Value>unused</Value>',
+    '<Source>External</Source><Value>unused</Value>',
+  );
+  assert.deepEqual(guard(external, 'rename', 'unused').diagnostics, []);
+});
+
+test('unknown, repeated or missing definitions are blocked', () => {
+  const source = imagesFixture('authored.rdlc');
+  const missing = guard(source, 'remove', 'ghost').diagnostics;
+  assert.equal(missing.length, 1);
+  assert.equal(missing[0]!.code, IMAGE_REMOVE_BLOCKED);
+  const repeated = source.replace(
+    '<EmbeddedImage Name="unused">',
+    '<EmbeddedImage Name="photo">',
+  );
+  const result = guard(repeated, 'rename', 'photo').diagnostics;
+  assert.equal(result.length, 1);
+  assert.match(result[0]!.message, /more than once/);
+});
+
+test('a long list of blockers is capped and summarized', () => {
+  const items = Array.from(
+    { length: 25 },
+    (_, index) =>
+      `<Image Name="Many${index}"><Source>Embedded</Source><Value>unused</Value></Image>`,
+  ).join('');
+  const source = imagesFixture('authored.rdlc').replace(
+    '<ReportItems>',
+    `<ReportItems>${items}`,
+  );
+  const result = guard(source, 'remove', 'unused').diagnostics;
+  assert.equal(result.length, 21);
+  assert.match(result.at(-1)!.message, /5 more items/);
+  assert.equal(result.at(-1)!.itemId, undefined);
+});
+
+test('blocker messages never carry picture data', () => {
+  const source = imagesFixture('authored.rdlc');
+  const logo = guard(source, 'remove', 'logo');
+  const payloads = [...source.matchAll(/<ImageData>([^<]{40,})</g)].map(
+    (match) => match[1]!.trim().slice(0, 40),
+  );
+  assert.ok(payloads.length >= 3);
+  const text = JSON.stringify(logo.diagnostics);
+  for (const payload of payloads) assert.ok(!text.includes(payload));
+  assert.equal(
+    findDefinitionBlockers({
+      operation: 'remove',
+      root: logo.syntax.root,
+      images: logo.projection.images,
+      name: 'logo',
+    }).length,
+    3,
+  );
+});
+
+test('validateDefinitionName accepts a free CLS name and names the rule otherwise', () => {
+  const range = { start: 0, end: 0 };
+  assert.deepEqual(
+    validateDefinitionName({
+      newName: 'brand',
+      existingNames: ['logo'],
+      range,
+    }),
+    [],
+  );
+  for (const newName of ['logo', '', '1abc', 'has space', 'a<b']) {
+    const result = validateDefinitionName({
+      newName,
+      existingNames: ['logo'],
+      range,
+    });
+    assert.equal(result.length, 1, JSON.stringify(newName));
+    assert.equal(result[0]!.code, IMAGE_PROPERTY_INVALID);
+    assert.ok(!result[0]!.message.includes(newName) || newName === '');
+  }
+});
+
+/** Gauge elements that name `logo` while no Image item of the report does. */
+const gaugeFixture = () =>
+  imagesFixture('authored.rdlc').replace(
+    /<Image Name="[^>]*>[\s\S]*<\/Image>\s*<\/ReportItems>/,
+    '<GaugePanel Name="Dial"><LinearGauges><LinearGauge Name="Level"><LinearPointers><LinearPointer><PointerImage><Source>Embedded</Source><Value>logo</Value></PointerImage></LinearPointer></LinearPointers></LinearGauge></LinearGauges><StateIndicators><StateIndicator Name="Light"><IndicatorImage><Source>Embedded</Source><Value>logo</Value></IndicatorImage></StateIndicator></StateIndicators></GaugePanel></ReportItems>',
+  );
+
+test('PointerImage and IndicatorImage block rename and removal like a BackgroundImage', () => {
+  const source = gaugeFixture();
+  assert.equal(
+    guard(source, 'remove', 'photo').projection.images.length,
+    0,
+    'no Image item references anything',
+  );
+  for (const operation of ['rename', 'remove'] as const) {
+    const result = guard(source, operation, 'logo').diagnostics;
+    assert.equal(result.length, 2, operation);
+    assert.match(result[0]!.message, /The PointerImage of "Level"/);
+    assert.match(result[1]!.message, /The IndicatorImage of "Light"/);
+    assert.ok(result.every((entry) => entry.itemId !== undefined));
+    assert.ok(result.every((entry) => !entry.message.includes('iVBOR')));
+  }
+  assert.deepEqual(guard(source, 'remove', 'unused').diagnostics, []);
+  // External and Database sources never name an embedded definition.
+  for (const kind of ['External', 'Database'])
+    assert.deepEqual(
+      guard(
+        source.replaceAll('<Source>Embedded', `<Source>${kind}`),
+        'remove',
+        'logo',
+      ).diagnostics,
+      [],
+      kind,
+    );
+});
+
+test('every image element blocks, and an expression Value always does', () => {
+  const source = imagesFixture('authored.rdlc').replace(
+    '<Image Name="PhotoClip">',
+    '<Rectangle Name="Box"><CapImage><Source>Embedded</Source><Value>=Fields!P.Value</Value></CapImage></Rectangle><Image Name="PhotoClip">',
+  );
+  for (const operation of ['rename', 'remove'] as const)
+    for (const name of ['logo', 'photo', 'unused'])
+      assert.ok(
+        guard(source, operation, name).diagnostics.some((entry) =>
+          /The CapImage of "Box"/.test(entry.message),
+        ),
+        `${operation} ${name}`,
+      );
+});
+
+test('findDefinitionBlockers reports image elements with their element name', () => {
+  const syntax = parse({
+    uri: 'fixture:blockers',
+    version: 1,
+    source: gaugeFixture(),
+    eol: '\n',
+  });
+  const projection = projectReport(syntax);
+  const blockers = findDefinitionBlockers({
+    operation: 'rename',
+    root: syntax.root,
+    images: projection.images,
+    name: 'logo',
+  });
+  assert.deepEqual(
+    blockers.map((entry) => [entry.kind, entry.element, entry.name]),
+    [
+      ['element', 'PointerImage', 'Level'],
+      ['element', 'IndicatorImage', 'Light'],
+    ],
+  );
+});
+
+test('a rename that would capture an item pointing at a missing definition is refused', () => {
+  const source = imagesFixture('authored.rdlc').replace(
+    '<Image Name="PhotoClip">',
+    '<Image Name="Dangling"><Source>Embedded</Source><Value>brand</Value></Image><Rectangle Name="Box"><PointerImage><Source>Embedded</Source><Value>brand</Value></PointerImage></Rectangle><Image Name="PhotoClip">',
+  );
+  const syntax = parse({
+    uri: 'fixture:capture',
+    version: 1,
+    source,
+    eol: '\n',
+  });
+  const projection = projectReport(syntax);
+  const run = (newName: string) =>
+    validateDefinitionMutation({
+      operation: 'rename',
+      root: syntax.root,
+      definitions: projection.embeddedImages,
+      images: projection.images,
+      name: 'unused',
+      newName,
+    });
+  const result = run('brand');
+  assert.equal(result.length, 2);
+  assert.ok(result.every((entry) => entry.code === IMAGE_RENAME_BLOCKED));
+  assert.match(result[0]!.message, /"Dangling" already references/);
+  assert.match(result[1]!.message, /"Box" already references/);
+  assert.ok(result.every((entry) => !entry.message.includes('brand')));
+  assert.deepEqual(run('fresh'), []);
+});
+
+test('definition names are 1 to 256 characters', () => {
+  const range = { start: 0, end: 0 };
+  const check = (newName: string) =>
+    validateDefinitionName({ newName, existingNames: [], range });
+  assert.equal(embeddedImageNameMaxLength, 256);
+  assert.deepEqual(check('a'.repeat(256)), []);
+  const long = check('a'.repeat(257));
+  assert.equal(long.length, 1);
+  assert.equal(long[0]!.code, IMAGE_PROPERTY_INVALID);
+  assert.ok(!long[0]!.message.includes('a'.repeat(20)));
+  assert.equal(check('').length, 1);
 });

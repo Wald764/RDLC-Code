@@ -9,6 +9,8 @@ import { applyPlan } from './patches.js';
 import {
   planCreateImage,
   planImageProperty,
+  planRemoveDefinition,
+  planRenameDefinition,
   planReplacePicture,
   type CreateImageRequest,
 } from './images.js';
@@ -492,5 +494,230 @@ test('planReplacePicture all scope refuses a structured ImageData', () => {
       mime: 'image/png',
       base64: pngBase64,
     }),
+  );
+});
+
+// --- US4: definition rename and removal -------------------------------------
+
+const referencesOf = (
+  projection: ReturnType<typeof projectReport>,
+  name: string,
+) =>
+  projection.images.filter(
+    (entry) =>
+      entry.source === 'Embedded' &&
+      entry.value?.kind === 'constant' &&
+      entry.value.text === name,
+  );
+
+test('planRenameDefinition renames the definition and every constant reference in one composed plan', () => {
+  const source = authored();
+  const { snapshot, projection } = projectionOfSource(source);
+  const definition = projection.embeddedImages.find(
+    (entry) => entry.name === 'logo',
+  )!;
+  const references = referencesOf(projection, 'logo');
+  assert.equal(references.length, 3);
+  const result = planRenameDefinition({
+    snapshot,
+    definition,
+    newName: 'brand',
+    references,
+  });
+  const candidate = apply(source, result);
+  assertOnlyFootprintChanged(source, result, candidate);
+  // One patch for the Name attribute and one per referencing Value.
+  assert.equal(result.patches.length, 4);
+  assert.ok(candidate.includes('<EmbeddedImage Name="brand">'));
+  assert.ok(!candidate.includes('<EmbeddedImage Name="logo">'));
+  assert.equal(candidate.match(/<Value>brand<\/Value>/g)?.length, 3);
+  assert.ok(!candidate.includes('<Value>logo</Value>'));
+  const projected = projectReport(parse(snapshotOf(candidate)));
+  assert.equal(projected.status, 'editable');
+  assert.deepEqual(
+    projected.embeddedImages.map((entry) => entry.name),
+    ['brand', 'photo', 'unused'],
+  );
+  assert.deepEqual(projected.embeddedImages[0]!.references, [
+    'LogoAutoSize',
+    'LogoFit',
+    'Tagged',
+  ]);
+  assert.deepEqual(
+    projected.images.map((entry) => [entry.name, entry.definition]),
+    [
+      ['LogoAutoSize', 'brand'],
+      ['LogoFit', 'brand'],
+      ['PhotoFitProportional', 'photo'],
+      ['PhotoClip', 'photo'],
+      ['Tagged', 'brand'],
+    ],
+  );
+  // Untouched XML is byte-identical: payloads, other items, unknown children.
+  const payload = (text: string, name: string) =>
+    text.slice(
+      text.indexOf(`<EmbeddedImage Name="${name}">`),
+      text.indexOf('</EmbeddedImage>', text.indexOf(`Name="${name}"`)),
+    );
+  assert.equal(payload(candidate, 'photo'), payload(source, 'photo'));
+  assert.equal(payload(candidate, 'unused'), payload(source, 'unused'));
+  assert.ok(candidate.includes('<FutureThing level="2">kept</FutureThing>'));
+  assert.ok(candidate.includes('<x:Opaque keep="1">preserve</x:Opaque>'));
+  // The payload bytes of the renamed definition are untouched too.
+  assert.equal(
+    payload(candidate, 'brand').replace('Name="brand"', 'Name="logo"'),
+    payload(source, 'logo'),
+  );
+});
+
+test('planRenameDefinition of an unreferenced definition is a single patch', () => {
+  const source = authored();
+  const { snapshot, projection } = projectionOfSource(source);
+  const result = planRenameDefinition({
+    snapshot,
+    definition: projection.embeddedImages.find(
+      (entry) => entry.name === 'unused',
+    )!,
+    newName: 'spare',
+    references: [],
+  });
+  assert.equal(result.patches.length, 1);
+  const candidate = apply(source, result);
+  assertOnlyFootprintChanged(source, result, candidate);
+  assert.equal(
+    candidate,
+    source.replace(
+      '<EmbeddedImage Name="unused">',
+      '<EmbeddedImage Name="spare">',
+    ),
+  );
+});
+
+test('planRenameDefinition escapes the new name in the attribute and the Value', () => {
+  const source = authored();
+  const { snapshot, projection } = projectionOfSource(source);
+  const result = planRenameDefinition({
+    snapshot,
+    definition: projection.embeddedImages.find(
+      (entry) => entry.name === 'photo',
+    )!,
+    newName: 'a&b',
+    references: referencesOf(projection, 'photo'),
+  });
+  const candidate = apply(source, result);
+  assert.ok(candidate.includes('<EmbeddedImage Name="a&amp;b">'));
+  assert.equal(candidate.match(/<Value>a&amp;b<\/Value>/g)?.length, 2);
+  const projected = projectReport(parse(snapshotOf(candidate)));
+  assert.deepEqual(projected.embeddedImages[1]!.name, 'a&b');
+  assert.deepEqual(projected.embeddedImages[1]!.references.length, 2);
+});
+
+test('planRenameDefinition refuses a reference whose Value is structured', () => {
+  const source = authored().replace(
+    '<Value>logo</Value>',
+    '<Value><x:Odd/></Value>',
+  );
+  const { snapshot, projection } = projectionOfSource(source);
+  const definition = projection.embeddedImages.find(
+    (entry) => entry.name === 'logo',
+  )!;
+  // The structured Value is not a constant reference, so a caller passing it anyway is refused.
+  assert.throws(() =>
+    planRenameDefinition({
+      snapshot,
+      definition,
+      newName: 'brand',
+      references: [projection.images[0]!],
+    }),
+  );
+});
+
+test('planRemoveDefinition produces a single removal and leaves everything else byte-identical', () => {
+  const source = authored();
+  const { snapshot, projection, root } = projectionOfSource(source);
+  const unused = projection.embeddedImages.find(
+    (entry) => entry.name === 'unused',
+  )!;
+  const result = planRemoveDefinition(snapshot, root, unused);
+  assert.equal(result.patches.length, 1);
+  assert.equal(result.patches[0]!.replacement, '');
+  assert.deepEqual(
+    [result.patches[0]!.start, result.patches[0]!.end],
+    [unused.node.range.start, unused.node.range.end],
+  );
+  const candidate = apply(source, result);
+  assertOnlyFootprintChanged(source, result, candidate);
+  assert.equal(
+    candidate,
+    source.slice(0, unused.node.range.start) +
+      source.slice(unused.node.range.end),
+  );
+  assert.equal(candidate.match(/<EmbeddedImages>/g)?.length, 1);
+  const projected = projectReport(parse(snapshotOf(candidate)));
+  assert.equal(projected.status, 'editable');
+  assert.deepEqual(
+    projected.embeddedImages.map((entry) => entry.name),
+    ['logo', 'photo'],
+  );
+  assert.equal(projected.images.length, 5);
+});
+
+test('planRemoveDefinition of the last definition removes the empty EmbeddedImages container', () => {
+  const created = plan(load('blank.rdlc'), { definition, item }).candidate;
+  // Drop the only item so that the definition is unreferenced.
+  const source = created.replace(itemXml('Image1', 'logo'), '');
+  const { snapshot, projection, root } = projectionOfSource(source);
+  assert.equal(projection.embeddedImages.length, 1);
+  const result = planRemoveDefinition(
+    snapshot,
+    root,
+    projection.embeddedImages[0]!,
+  );
+  assert.equal(result.patches.length, 1);
+  const candidate = apply(source, result);
+  assertOnlyFootprintChanged(source, result, candidate);
+  assert.ok(!candidate.includes('<EmbeddedImage'));
+  assert.equal(
+    candidate,
+    source.replace(/<EmbeddedImages>[\s\S]*<\/EmbeddedImages>/, ''),
+    'only the container goes',
+  );
+  const projected = projectReport(parse(snapshotOf(candidate)));
+  assert.equal(projected.status, 'editable');
+  assert.deepEqual(projected.embeddedImages, []);
+});
+
+test('planRemoveDefinition keeps the container when other definitions remain', () => {
+  const source = authored();
+  const { snapshot, projection, root } = projectionOfSource(source);
+  const result = planRemoveDefinition(
+    snapshot,
+    root,
+    projection.embeddedImages.find((entry) => entry.name === 'logo')!,
+  );
+  const candidate = apply(source, result);
+  assert.ok(candidate.includes('<EmbeddedImages>'));
+  assert.deepEqual(
+    projectReport(parse(snapshotOf(candidate))).embeddedImages.map(
+      (entry) => entry.name,
+    ),
+    ['photo', 'unused'],
+  );
+});
+
+test('planRemoveDefinition refuses to drop a container that holds unknown content', () => {
+  const source = authored()
+    .replace(/<EmbeddedImage Name="photo">[\s\S]*?<\/EmbeddedImage>\s*/, '')
+    .replace(
+      /<EmbeddedImage Name="unused">[\s\S]*?<\/EmbeddedImage>/,
+      '<x:Keep/>',
+    );
+  const { snapshot, projection, root } = projectionOfSource(source);
+  assert.deepEqual(
+    projection.embeddedImages.map((entry) => entry.name),
+    ['logo'],
+  );
+  assert.throws(() =>
+    planRemoveDefinition(snapshot, root, projection.embeddedImages[0]!),
   );
 });

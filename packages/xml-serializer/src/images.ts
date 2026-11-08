@@ -194,3 +194,59 @@ export function planReplacePicture(
   );
   return composePlans(snapshot, plans);
 }
+
+/**
+ * Renames an `EmbeddedImage` and repoints every constant reference to it: the `Name`
+ * attribute of the definition plus the `Value` scalar of each given image item, as one
+ * composed plan. The caller passes the references (`Source` Embedded with a constant
+ * `Value` equal to the old name); a structured `Value` is refused by the scalar patch.
+ * Payloads, other definitions and every other byte of the items are untouched.
+ */
+export function planRenameDefinition(input: {
+  readonly snapshot: DocumentSnapshot;
+  readonly definition: EmbeddedImageDefinition;
+  readonly newName: string;
+  readonly references: readonly ImageItem[];
+}): PatchPlan {
+  const { snapshot, definition, newName, references } = input;
+  return composePlans(snapshot, [
+    patchPlan(snapshot, [renameNode(snapshot, definition.node, newName)]),
+    ...references.map((image) =>
+      patchPlan(snapshot, [setScalar(snapshot, image.node, 'Value', newName)]),
+    ),
+  ]);
+}
+
+/**
+ * Removes one `EmbeddedImage` as a single patch. When it is the only entry of its
+ * `EmbeddedImages` collection, the whole collection goes instead, because MS-RDL 2.306
+ * requires at least one entry in a present collection (2.305 makes the collection itself
+ * optional). A collection that holds anything besides this definition is preservation-
+ * only when emptied: the plan is refused rather than leaving an invalid collection or
+ * dropping unknown content.
+ */
+export function planRemoveDefinition(
+  snapshot: DocumentSnapshot,
+  root: XmlNode,
+  definition: EmbeddedImageDefinition,
+): PatchPlan {
+  const container = child(root, 'EmbeddedImages');
+  if (!container || !container.children.includes(definition.node))
+    throw new Error('The embedded image is not in the report collection.');
+  const others = container.children.filter(
+    (entry) => entry !== definition.node,
+  );
+  if (others.length === 0)
+    return patchPlan(snapshot, [sourcePatch(snapshot, container.range, '')]);
+  const entries = others.filter(
+    (entry) =>
+      entry.expandedName.namespaceUri ===
+        definition.node.expandedName.namespaceUri &&
+      entry.expandedName.localName === 'EmbeddedImage',
+  );
+  if (entries.length === 0)
+    throw new Error('Unknown EmbeddedImages content is preservation-only.');
+  return patchPlan(snapshot, [
+    sourcePatch(snapshot, definition.node.range, ''),
+  ]);
+}

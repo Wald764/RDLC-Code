@@ -5,6 +5,9 @@ export const dimensionLimit = 16384;
 /** Maximum width x height of a picture, in pixels. */
 export const pixelLimit = 40_000_000;
 
+/** Longest `EmbeddedImage` Name; an empty or longer one is rsInvalidEmbeddedImageNameLength (MS-RDL 6.40). */
+export const embeddedImageNameMaxLength = 256;
+
 export const IMAGE_FORMAT_UNSUPPORTED = 'IMAGE_FORMAT_UNSUPPORTED';
 export const IMAGE_DATA_INVALID = 'IMAGE_DATA_INVALID';
 export const IMAGE_TOO_LARGE = 'IMAGE_TOO_LARGE';
