@@ -1130,9 +1130,10 @@ test('an expression Value blocks rename and removal of every definition, naming 
 
 test('an unknown Source or a structured Value cannot be rewritten safely', () => {
   const source = imagesFixture('authored.rdlc');
+  // Whitespace between the tags is captured so CRLF checkouts match too.
   const unknownSource = source.replace(
-    '<Source>Embedded</Source>\n            <Value>photo</Value>',
-    '<Source>=IIf(True, "Embedded", "External")</Source>\n            <Value>photo</Value>',
+    /<Source>Embedded<\/Source>(\s*<Value>photo<\/Value>)/,
+    '<Source>=IIf(True, "Embedded", "External")</Source>$1',
   );
   assert.notEqual(unknownSource, source);
   const rename = guard(unknownSource, 'rename', 'photo').diagnostics;

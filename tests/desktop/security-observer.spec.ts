@@ -216,6 +216,36 @@ async function reportJourney(
     throw new Error(
       'RDLC Code: Open Designer is not registered in the window.',
     );
+  // Feature 006 (SC-004): the image fixtures run through the same observed
+  // journey. Pictures are decoded from the report's own bytes, placeholders are
+  // never loaded, and no file is read beyond the allowlist (no chooser opens).
+  const authored = await openReportShowing(
+    driver,
+    images.authored,
+    '.item[data-kind="image"][data-image-state="picture"][aria-label="Image LogoFit"]',
+  );
+  await expect
+    .poll(() =>
+      authored
+        .locator('.item[data-kind="image"][aria-label="Image LogoFit"] img')
+        .evaluate(
+          (image: HTMLImageElement) => image.complete && image.naturalWidth > 0,
+        ),
+    )
+    .toBe(true);
+  const preserved = await openReportShowing(
+    driver,
+    images.preserved,
+    '.item[data-kind="image"][data-image-state="placeholder"][aria-label="Image GhostPicture"]',
+  );
+  await expect(preserved.locator('.item[data-kind="image"] img')).toHaveCount(
+    0,
+  );
+  // Every later step addresses the single designer frame (driver.designerFrame
+  // is strict about ambiguity), so the image designers are closed first and the
+  // hostile fixture below is the only designer left open.
+  await closeAllDesigners(driver);
+
   const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
   await driver.page.keyboard.press(`${modifier}+p`);
   const quickOpen = driver.page.locator(
@@ -245,32 +275,31 @@ async function reportJourney(
       .click();
   await expect(textbox).toBeVisible();
   await textbox.click();
+}
 
-  // Feature 006 (SC-004): the image fixtures run through the same observed
-  // journey. Pictures are decoded from the report's own bytes, placeholders are
-  // never loaded, and no file is read beyond the allowlist (no chooser opens).
-  const authored = await openReportShowing(
-    driver,
-    images.authored,
-    '.item[data-kind="image"][data-image-state="picture"][aria-label="Image LogoFit"]',
-  );
+/** Designer webviews currently hosting `rdlc-editor`; detached frames are ignored. */
+async function designerFrameCount(driver: DesktopDriver): Promise<number> {
+  let count = 0;
+  for (const frame of driver.page.frames()) {
+    if (frame === driver.page.mainFrame() || frame.isDetached()) continue;
+    const hosted = await frame
+      .locator('rdlc-editor')
+      .count()
+      .catch(() => 0);
+    if (hosted > 0) count++;
+  }
+  return count;
+}
+
+/** Close every editor and wait until no designer webview remains. */
+async function closeAllDesigners(driver: DesktopDriver): Promise<void> {
+  await driver.command('View: Close All Editors');
   await expect
-    .poll(() =>
-      authored
-        .locator('.item[data-kind="image"][aria-label="Image LogoFit"] img')
-        .evaluate(
-          (image: HTMLImageElement) => image.complete && image.naturalWidth > 0,
-        ),
-    )
-    .toBe(true);
-  const preserved = await openReportShowing(
-    driver,
-    images.preserved,
-    '.item[data-kind="image"][data-image-state="placeholder"][aria-label="Image GhostPicture"]',
-  );
-  await expect(preserved.locator('.item[data-kind="image"] img')).toHaveCount(
-    0,
-  );
+    .poll(() => designerFrameCount(driver), {
+      message: 'every designer webview is disposed',
+      timeout: 20_000,
+    })
+    .toBe(0);
 }
 
 /** Quick-open a report, open its designer and return the frame that shows `selector`. */

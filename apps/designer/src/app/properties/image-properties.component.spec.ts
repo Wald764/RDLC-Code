@@ -6,6 +6,7 @@ import {
   ImagePropertiesComponent,
   type ImageGeometryCommit,
 } from './image-properties.component';
+import { defaultViewState } from '../editor/viewport';
 
 const assetKey = 'a'.repeat(64);
 const full = [
@@ -84,6 +85,23 @@ function mount(
 }
 
 describe('image properties', () => {
+  it('opens the Picture section with the sizing select under the default view state', () => {
+    const { fixture, root, control } = mount();
+    fixture.componentRef.setInput(
+      'expanded',
+      defaultViewState.inspectorExpanded,
+    );
+    fixture.detectChanges();
+    const picture = [...root.querySelectorAll('details')].find(
+      (details) =>
+        details.querySelector('summary')?.textContent?.trim() === 'Picture',
+    );
+    expect(picture).toBeTruthy();
+    expect(picture!.open).toBe(true);
+    expect(picture!.contains(control('sizing'))).toBe(true);
+    expect(control<HTMLSelectElement>('sizing')).not.toBeNull();
+  });
+
   it('renders every field with the current accepted values', () => {
     const { root, control } = mount();
     expect(root.querySelector('form')?.getAttribute('aria-label')).toBe(

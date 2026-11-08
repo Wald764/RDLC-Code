@@ -226,7 +226,7 @@ describe('per-view state restore', () => {
       inspectorExpanded: {
         general: true,
         position: true,
-        appearance: false,
+        appearance: true,
         typography: true,
         border: false,
         data: true,

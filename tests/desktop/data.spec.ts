@@ -63,6 +63,12 @@ interface OracleEntry {
   readonly category: string;
   /** Expected properties/author eligibility; absent means the oracle decides nothing. */
   readonly authoring?: boolean;
+  /**
+   * Expected "Source only" cue when it differs from `!authoring`: an editable
+   * report manages embedded images from Report Data (dataEmbeddedImage.* rows),
+   * so they carry no cue although their properties/author facts stay refused.
+   */
+  readonly sidebarSourceOnly?: boolean;
 }
 interface Oracle {
   readonly categories: readonly {
@@ -417,11 +423,12 @@ test('US3.1-category-contents', async () => {
           `${name} rendered during the walk`,
         ).toBeGreaterThan(0);
         if (entry.authoring === undefined) continue;
+        const sourceOnly = entry.sidebarSourceOnly ?? !entry.authoring;
         for (const label of labels)
           expect(
             /Source only/.test(label),
-            `${label} authoring=${entry.authoring}`,
-          ).toBe(!entry.authoring);
+            `${label} authoring=${entry.authoring} sourceOnly=${sourceOnly}`,
+          ).toBe(sourceOnly);
       }
 
       // No connection string, query, default value or image payload reaches the

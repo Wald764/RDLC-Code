@@ -255,9 +255,10 @@ async function imageInsert(): Promise<void> {
     chooser,
   );
   // A definition that is not a displayable picture cannot be inserted.
+  // Fixtures may be checked out with CRLF: the whitespace between the tags is kept.
   const gif = source.replace(
-    '<MIMEType>image/png</MIMEType>\n      <ImageData>',
-    '<MIMEType>image/gif</MIMEType>\n      <ImageData>',
+    /<MIMEType>image\/png<\/MIMEType>(\s*)<ImageData>/,
+    '<MIMEType>image/gif</MIMEType>$1<ImageData>',
   );
   assert.notEqual(gif, source);
   await withNativeViews(gif, async (harness) => {

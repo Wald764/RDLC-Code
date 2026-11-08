@@ -296,16 +296,17 @@ test('planImageProperty replaces Value and keeps unknown children byte-identical
   const { candidate } = property(source, 'Tagged', 'value', 'photo');
   assert.equal(
     candidate,
+    // Whitespace between the tags is captured so CRLF checkouts match too.
     source.replace(
-      '<Value>logo</Value>\n            <MIMEType>image/png</MIMEType>\n            <Sizing>Fit</Sizing>\n            <Top>2.85in',
-      '<Value>photo</Value>\n            <MIMEType>image/png</MIMEType>\n            <Sizing>Fit</Sizing>\n            <Top>2.85in',
+      /<Value>logo<\/Value>(\s*<MIMEType>image\/png<\/MIMEType>\s*<Sizing>Fit<\/Sizing>\s*<Top>2\.85in)/,
+      '<Value>photo</Value>$1',
     ),
   );
   assert.ok(candidate.includes('<x:Opaque keep="1">preserve</x:Opaque>'));
 });
 
 test('planImageProperty inserts an absent Sizing element as the last child', () => {
-  const source = authored().replace(/\n\s*<Sizing>AutoSize<\/Sizing>/, '');
+  const source = authored().replace(/\s*<Sizing>AutoSize<\/Sizing>/, '');
   const { result, candidate } = property(
     source,
     'LogoAutoSize',
@@ -361,9 +362,10 @@ test('planImageProperty removing an absent ToolTip is an empty plan', () => {
 });
 
 test('planImageProperty refuses a structured ToolTip instead of rewriting it', () => {
+  // Whitespace between the tags is captured so CRLF checkouts match too.
   const source = authored().replace(
-    '<Source>Embedded</Source>\n            <Value>logo</Value>\n            <MIMEType>image/png</MIMEType>\n            <Sizing>Fit</Sizing>\n            <Top>0.9in',
-    '<Source>Embedded</Source>\n            <Value>logo</Value>\n            <ToolTip><x:Rich/></ToolTip>\n            <Sizing>Fit</Sizing>\n            <Top>0.9in',
+    /(<Source>Embedded<\/Source>\s*<Value>logo<\/Value>\s*)<MIMEType>image\/png<\/MIMEType>(\s*<Sizing>Fit<\/Sizing>\s*<Top>0\.9in)/,
+    '$1<ToolTip><x:Rich/></ToolTip>$2',
   );
   const { snapshot, image } = imageNamed(source, 'LogoFit');
   assert.throws(() =>

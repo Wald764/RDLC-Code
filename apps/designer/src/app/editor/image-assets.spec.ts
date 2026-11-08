@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DesignScene } from '@rdlc/report-model/scene';
 import {
+  decodeBase64,
   ImageAssetCache,
   imageAssetKeys,
   type ImageAssetEnvironment,
@@ -306,5 +307,95 @@ describe('imageAssetKeys', () => {
     };
     expect([...imageAssetKeys(scene)]).toEqual(['k1']);
     expect(imageAssetKeys(null).size).toBe(0);
+  });
+});
+
+describe('decodeBase64', () => {
+  // Plain arrays: jsdom and Node disagree on the Uint8Array realm.
+  const text = (value: string) => [...value].map((char) => char.charCodeAt(0));
+  const bytes = (value: Uint8Array | null) => (value ? [...value] : null);
+
+  it('decodes unpadded and padded payloads of every remainder', () => {
+    expect(bytes(decodeBase64(''))).toEqual([]);
+    expect(bytes(decodeBase64('TWFu'))).toEqual(text('Man'));
+    expect(bytes(decodeBase64('TWE='))).toEqual(text('Ma'));
+    expect(bytes(decodeBase64('TQ=='))).toEqual(text('M'));
+    // Unpadded input is accepted, as with atob.
+    expect(bytes(decodeBase64('TWE'))).toEqual(text('Ma'));
+    expect(bytes(decodeBase64('TQ'))).toEqual(text('M'));
+  });
+
+  it('decodes the whole alphabet including + and /', () => {
+    expect(bytes(decodeBase64('+/+/'))).toEqual([0xfb, 0xff, 0xbf]);
+    expect(bytes(decodeBase64('/9j/'))).toEqual([0xff, 0xd8, 0xff]);
+  });
+
+  it('matches atob byte for byte on the PNG and JPEG payloads', () => {
+    for (const data of [payload, jpegPayload]) {
+      const expected = Uint8Array.from(atob(data), (char) =>
+        char.charCodeAt(0),
+      );
+      expect(bytes(decodeBase64(data))).toEqual([...expected]);
+    }
+  });
+
+  it('ignores ASCII whitespace like atob', () => {
+    expect(bytes(decodeBase64(' TW\r\nFu\t'))).toEqual(text('Man'));
+    expect(bytes(decodeBase64('TW E='))).toEqual(text('Ma'));
+  });
+
+  it('rejects invalid input', () => {
+    for (const bad of [
+      'T',
+      'TWFuT',
+      '*WFu',
+      'TW-u',
+      'TWFu\u00e9',
+      'TQ=',
+      'T===',
+      'TQ===',
+      '=TWF',
+      'TQ==TQ==',
+      'TW=u',
+      'TWFu=',
+    ])
+      expect(decodeBase64(bad), bad).toBeNull();
+  });
+
+  it('agrees with atob on accept/reject for a spread of inputs', () => {
+    for (const input of [
+      '',
+      'T',
+      'TQ',
+      'TQ=',
+      'TQ==',
+      'TQ===',
+      'TWE=',
+      'T=Q=',
+      'a b c d',
+    ]) {
+      let reference: Uint8Array | null;
+      try {
+        reference = Uint8Array.from(atob(input), (char) => char.charCodeAt(0));
+      } catch {
+        reference = null;
+      }
+      expect(bytes(decodeBase64(input)), input).toEqual(
+        reference && [...reference],
+      );
+    }
+  });
+
+  it('decodes a 5 MiB payload without pathological slowdown', () => {
+    const groups = Math.ceil((5 * 1024 * 1024) / 3);
+    const data = 'TWFu'.repeat(groups);
+    const started = performance.now();
+    const decoded = decodeBase64(data);
+    const elapsed = performance.now() - started;
+    expect(decoded?.length).toBe(groups * 3);
+    expect(String.fromCharCode(...decoded!.subarray(0, 3))).toBe('Man');
+    // Generous bound: it only guards against pathological (quadratic)
+    // behaviour, not against normal CI timing variance.
+    expect(elapsed).toBeLessThan(5000);
   });
 });

@@ -331,7 +331,8 @@
             "displayable": false,
             "mime": "image/png"
           },
-          "authoring": false
+          "authoring": false,
+          "sidebarSourceOnly": false
         },
         {
           "key": "img-odd",
@@ -349,7 +350,8 @@
             "references": 0,
             "displayable": false
           },
-          "authoring": false
+          "authoring": false,
+          "sidebarSourceOnly": false
         },
         {
           "key": "img-empty",
@@ -368,7 +370,8 @@
             "displayable": false,
             "mime": "image/gif"
           },
-          "authoring": false
+          "authoring": false,
+          "sidebarSourceOnly": false
         }
       ]
     },

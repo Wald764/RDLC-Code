@@ -252,6 +252,48 @@ async function visibleDesigner(page: Page, selector: string): Promise<Frame> {
   return shown!;
 }
 
+/** Frames currently hosting a designer; detached webview frames are ignored. */
+async function designerFrameCount(page: Page): Promise<number> {
+  let count = 0;
+  for (const frame of page.frames()) {
+    if (frame === page.mainFrame() || frame.isDetached()) continue;
+    const hosted = await frame
+      .locator('rdlc-editor')
+      .count()
+      .catch(() => 0);
+    if (hosted > 0) count++;
+  }
+  return count;
+}
+
+/**
+ * Close the active editor (the designer just used) and wait until exactly one
+ * designer webview is left: `designerFrame()` and `capture()` are strict about
+ * ambiguity and a retained hidden frame would make them throw.
+ */
+async function closeActiveDesigner(
+  ctx: Ctx,
+  remaining = 'report.rdlc',
+): Promise<void> {
+  await ctx.driver.command('View: Close Editor');
+  await expect
+    .poll(() => designerFrameCount(ctx.page), {
+      message: 'exactly one designer webview remains',
+      timeout: 20_000,
+    })
+    .toBe(1);
+  // The remaining active editor must be the expected report, so closing the
+  // wrong editor fails loudly instead of capturing another document.
+  const activeTab = ctx.page.locator(
+    '.part.editor .tabs-container .tab.active',
+  );
+  await expect(activeTab, 'one active editor tab remains').toHaveCount(1);
+  await expect(
+    activeTab,
+    `the remaining active editor is ${remaining}`,
+  ).toContainText(remaining);
+}
+
 /**
  * Reveal the RDLC container, wait until the target view is rendered, then focus
  * it. The reveal and the focus are separate host round trips: visibility is the
@@ -978,6 +1020,9 @@ test('US2-manipulate', async () => {
         'one Undo removes the pasted item and its definition',
         'other.rdlc',
       );
+      // Two designers are open here: leave only the main report's before the
+      // capture, which refuses an ambiguous frame.
+      await closeActiveDesigner(ctx);
       await ctx.driver.capture('images-us2-manipulate');
     },
   );
