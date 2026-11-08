@@ -289,3 +289,73 @@ test('an unnamed image labels itself with the generic fallback', () => {
   assert.equal(unnamed.kind, 'image');
   assert.equal(unnamed.label, 'Image');
 });
+
+/**
+ * FR-024 rule for the scene: it carries no source text of an image at all. No `Value`,
+ * `ToolTip` or expression text, no URL, no path and no payload; an item is its name,
+ * bounds, sizing, a placeholder reason and metadata about the definition.
+ */
+test('rendering preserved.rdlc fetches nothing, resolves no path and evaluates no expression', () => {
+  const fetched: unknown[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = ((...args: unknown[]) => {
+    fetched.push(args);
+    throw new Error('network access is forbidden');
+  }) as typeof fetch;
+  let design: ReturnType<typeof imageScene>;
+  try {
+    design = imageScene('preserved.rdlc');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.deepEqual(fetched, []);
+  const strings: Array<[string, string]> = [];
+  const collect = (value: unknown, path: string) => {
+    if (typeof value === 'string') strings.push([path, value]);
+    else if (typeof value === 'object' && value !== null)
+      for (const [key, entry] of Object.entries(value))
+        collect(entry, `${path}.${key}`);
+  };
+  collect(design, '$');
+  assert.ok(strings.length > 0);
+  for (const [where, text] of strings) {
+    // No URL, no resolved path, no expression or evaluated text.
+    assert.ok(!/(?:https?|file|data|blob):/i.test(text), `${where}: ${text}`);
+    assert.ok(!text.includes('example.invalid'), where);
+    assert.ok(!text.includes(process.cwd()), where);
+    assert.ok(!text.includes('tests/fixtures'), where);
+    assert.ok(!/^(?:[A-Za-z]:[\\/]|\.{0,2}\/|\\\\)/.test(text), where);
+    for (const fragment of [
+      'Fields!',
+      'Parameters!',
+      'IIf',
+      'UseLogo',
+      'Photo.Value',
+    ])
+      assert.ok(!text.includes(fragment), `${where}: ${fragment}`);
+  }
+  // The preserved items have no asset to load, so nothing could be fetched by the view.
+  for (const name of [
+    'ExternalPicture',
+    'DatabasePicture',
+    'ExpressionPicture',
+    'GhostPicture',
+  ]) {
+    const item = imageItem(design, name);
+    assert.equal(item.display?.state, 'placeholder', name);
+    assert.deepEqual(
+      Object.keys(item.display!).sort(),
+      ['reason', 'state'],
+      name,
+    );
+    assert.equal(item.label, name);
+    assert.equal(item.text, undefined, name);
+  }
+  assert.equal(
+    design.items.some(
+      (item) => item.kind === 'image' && item.display?.state === 'picture',
+    ),
+    false,
+    'no preserved item is displayed as a picture',
+  );
+});

@@ -424,32 +424,34 @@ fetched.
 
 ### Batch B7: Preservation hardening
 
-- [ ] T054 [P] [US5] Write the failing tests first in `tests/roundtrip/images.test.ts`.
+- [X] T054 [P] [US5] Write the failing tests first in `tests/roundtrip/images.test.ts`.
   - On both fixtures, apply unrelated edits (a textbox text edit, a move of a non-image
     item, a textbox insert, an image insert).
   - Assert that every `Image` and `EmbeddedImage` source range, the unknown children and
     the foreign-namespace attributes are byte-identical.
-- [ ] T055 [P] [US5] Write the failing tests first in `tests/compatibility/images.test.ts`.
+- [X] T055 [P] [US5] Write the failing tests first in `tests/compatibility/images.test.ts`.
   They assert the placeholder reason for each preserved item: `source-preserved`,
   `value-expression`, `format-unsupported`, `mime-mismatch`, `data-invalid` and
   `reference-missing`.
-- [ ] T056 [P] [US5] Write the failing tests first in `tests/vscode/images.test.ts`.
+- [X] T056 [P] [US5] Write the failing tests first in `tests/vscode/images.test.ts`.
   - Moving and resizing the existing `authored.rdlc` item that has an unknown child keeps
     that child byte-identical.
   - An item that references a missing definition is geometry-only and can be moved.
   - A preservation-only item refuses mutation with the existing diagnostic.
-- [ ] T057 [US5] Complete the reason and capability mapping in
+- [X] T057 [US5] Complete the reason and capability mapping in
   `packages/xml-parser/src/project-images.ts`. It must cover `image/x-png`, a MIME/content
   mismatch, an expression `MIMEType` and the geometry-only state.
-- [ ] T058 [US5] Add `imageReasonLabel(reason)` to `packages/report-model/src/images.ts`.
+- [X] T058 [US5] Add `imageReasonLabel(reason)` to `packages/report-model/src/images.ts`.
   It returns human-readable placeholder and diagnostic text with no payload, and is used by
   the designer placeholder from T026.
-- [ ] T059 [US5] Add a test to `packages/renderer/src/render.test.ts` and
+- [X] T059 [US5] Add a test to `packages/renderer/src/render.test.ts` and
   `packages/xml-parser/src/project-images.test.ts`. Projecting and rendering
   `preserved.rdlc` must produce no URL, resolve no path and evaluate no expression
   (FR-024). Assert this on the output objects.
-- [ ] T060 [US5] **Gate B7**. Run `pnpm qa:integration`. Then run the review. Then commit
+- [X] T060 [US5] **Gate B7**. Run `pnpm qa:integration`. Then run the review. Then commit
   `:white_check_mark: test(roundtrip): prove preservation of unsupported and existing images`.
+  Gate note: node 773/773 and designer suites pass; extension host 15/15 files pass after the new
+  `tests/vscode/images.test.ts` cases were made to show their document before native undo.
 
 ---
 

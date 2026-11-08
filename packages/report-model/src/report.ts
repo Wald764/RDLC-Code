@@ -4,6 +4,7 @@ import type { Diagnostic } from './diagnostics.js';
 import type {
   ImageFormat,
   ImagePixels,
+  ImagePlaceholderReason,
   ImageReason,
   ImageSizing,
 } from './images.js';
@@ -198,11 +199,7 @@ export interface ImageItem {
   readonly definition: string | null;
   readonly capabilities: readonly string[];
   /** Placeholder reason; `null` when the picture can be displayed. */
-  readonly reason:
-    | ImageReason
-    | 'source-preserved'
-    | 'reference-missing'
-    | null;
+  readonly reason: ImagePlaceholderReason | null;
 }
 /** Region remains in-place in source; never detached for regeneration. */
 export interface PreservedRegion {

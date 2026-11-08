@@ -152,6 +152,15 @@ rationale and the alternatives rejected. No `NEEDS CLARIFICATION` item remains o
 - **Rationale**: Hashing decoded bytes is robust to base64 line wrapping. The spec's
   example of the `_1` suffix pattern requires a small name allocator alongside
   `uniqueName`.
+- **See also R10**: identity by picture hash applies to displayable definitions only. R10
+  generalises clipboard identity to hashless definitions (a digest of the exact source with
+  the `Name` removed), so preserved definitions such as GIF, BMP, `image/x-png` or malformed
+  data are carried and reused on paste. Import deduplication here never reuses them.
+- **MIME decision (US5)**: `image/x-png` is also listed among the `ReportMIMEType` values
+  (MS-RDL 2.2.10). Only `image/png` and `image/jpeg` are written and displayed
+  (FR-004), so a definition declaring any other type, `image/x-png` included, projects as
+  `mime-mismatch`, is preserved as written and its items are geometry-only. An expression
+  `MIMEType` is never evaluated and projects as `value-expression`.
 
 ## R9. Editing model and atomicity
 

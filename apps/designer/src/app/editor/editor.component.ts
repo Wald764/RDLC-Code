@@ -63,7 +63,8 @@ import { explainRefusal, HostAdapter } from './host-adapter';
 import { IconComponent, type IconName } from './icon.component';
 import {
   imagePendingLabel,
-  imagePlaceholderLabels,
+  imageReasonLabel,
+  type ImagePlaceholderReason,
 } from './image-placeholder-labels';
 import {
   emptySelection,
@@ -146,7 +147,7 @@ type ImageItemView =
   | { readonly state: 'pending'; readonly label: string }
   | {
       readonly state: 'placeholder' | 'undecodable';
-      readonly reason: keyof typeof imagePlaceholderLabels;
+      readonly reason: ImagePlaceholderReason;
       readonly label: string;
     };
 const leftTabs = ['components', 'structure'] as const;
@@ -253,7 +254,7 @@ export class EditorComponent {
       return {
         state: 'placeholder',
         reason: display.reason,
-        label: imagePlaceholderLabels[display.reason],
+        label: imageReasonLabel(display.reason),
       };
     const asset = this.host.images.view(display.assetKey);
     if (asset.state === 'ready')
@@ -267,7 +268,7 @@ export class EditorComponent {
       ? {
           state: 'undecodable',
           reason: 'data-invalid',
-          label: imagePlaceholderLabels['data-invalid'],
+          label: imageReasonLabel('data-invalid'),
         }
       : { state: 'pending', label: imagePendingLabel };
   }

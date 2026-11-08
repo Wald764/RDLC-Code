@@ -118,6 +118,11 @@ function projectDefinition(
         reason = 'pixels-exceeded';
     }
   }
+  // MS-RDL 2.2.10 also lists `image/x-png` among the ReportMIMEType values. Only
+  // `image/png` and `image/jpeg` are written and displayed (FR-004), so any other
+  // declared type, `image/x-png` included, is a `mime-mismatch`: the definition is
+  // preserved as written and the item is geometry-only. An expression MIMEType is never
+  // evaluated and reports `value-expression`. The format itself comes from the content.
   if (reason === null && format !== 'other') {
     if (mimeText !== null && isExpression(mimeText))
       reason = 'value-expression';

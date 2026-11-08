@@ -2,7 +2,7 @@ import type { ResolvedGeometry } from './geometry.js';
 import type {
   ImageFormat,
   ImagePixels,
-  ImageReason,
+  ImagePlaceholderReason,
   ImageSizing,
 } from './images.js';
 
@@ -42,7 +42,7 @@ export type SceneImageDisplay =
   | {
       readonly state: 'placeholder';
       /** The projection reason; the scene never invents one. */
-      readonly reason: ImageReason | 'source-preserved' | 'reference-missing';
+      readonly reason: ImagePlaceholderReason;
     };
 /** Facts about the referenced definition; every field is `null` when none resolves. */
 export interface SceneImageMetadata {

@@ -19,6 +19,7 @@ import {
   IMAGE_REPORT_BUDGET,
   IMAGE_TARGET_STALE,
   IMAGE_TOO_LARGE,
+  imageReasonLabel,
   type ImageMime,
   type ImagePixels,
   type ImageRefusal,
@@ -428,7 +429,11 @@ export function planImageCreation(
       );
     if (!existing.displayable || !existing.pixels)
       return fail(
-        `Embedded image "${existing.name}" cannot be displayed and cannot be inserted.`,
+        `Embedded image "${existing.name}" cannot be inserted: ${
+          existing.reason
+            ? imageReasonLabel(existing.reason)
+            : 'it cannot be displayed'
+        }.`,
         existing.reason ? reasonCodes[existing.reason] : IMAGE_DATA_INVALID,
       );
     value = existing.name;

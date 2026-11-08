@@ -36,6 +36,36 @@ export type ImageReason =
   | 'mime-mismatch'
   | 'value-expression';
 
+/** Reasons an image item or definition is not displayed, as the scene carries them. */
+export type ImagePlaceholderReason =
+  | ImageReason
+  | 'source-preserved'
+  | 'reference-missing';
+
+const mebibyte = 1024 * 1024;
+
+/**
+ * Human-readable text per reason, for placeholders and diagnostics. Exhaustive on
+ * purpose: a new reason fails type checking here until it has wording. The text names
+ * the reason only: never a payload, a URL, a path or an expression (FR-024, FR-025).
+ */
+export const imageReasonLabels: Readonly<
+  Record<ImagePlaceholderReason, string>
+> = {
+  'format-unsupported': 'Unsupported image format; only PNG and JPEG display',
+  'data-invalid': 'Image data is invalid',
+  'too-large': `Image is larger than ${rawImageLimit / mebibyte} MiB`,
+  'pixels-exceeded': `Image is over ${dimensionLimit} px on a side or ${pixelLimit / 1_000_000} megapixels`,
+  'mime-mismatch': 'Image type is unsupported or does not match its data',
+  'value-expression': 'Image uses an expression, which is never evaluated',
+  'source-preserved': 'Image is preserved as written and never loaded',
+  'reference-missing': 'Embedded image not found',
+};
+
+export function imageReasonLabel(reason: ImagePlaceholderReason): string {
+  return imageReasonLabels[reason];
+}
+
 export type ImageSizing = 'AutoSize' | 'Fit' | 'FitProportional' | 'Clip';
 
 export type ImageFormat = 'png' | 'jpeg';

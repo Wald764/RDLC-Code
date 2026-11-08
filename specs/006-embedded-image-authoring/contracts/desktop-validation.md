@@ -46,7 +46,7 @@ Any other failure of these tests is critical.
 |---|---|
 | `blank.rdlc` | Supported report with no `EmbeddedImages` |
 | `authored.rdlc` | PNG and JPEG definitions, items in each sizing mode, and one unused definition |
-| `preserved.rdlc` | External, Database and expression `Value` items; GIF, BMP and `image/x-png` definitions; malformed base64; a missing reference; unknown children; a foreign-namespace attribute; an image in a table cell |
+| `preserved.rdlc` | External, Database and expression `Value` items; GIF, BMP and `image/x-png` definitions; malformed base64; a missing reference; an image in a table cell. The roundtrip test injects unknown children and a foreign-namespace attribute at test time |
 | `many.rdlc` | 50 embedded images (generated deterministically by the fixture script) |
 | `pictures/` | Small `logo.png` and `photo.jpg` files; `spoofed.png` (JPEG bytes); `truncated.png`; `bad-crc.png`; `huge-dims.png` (header only); `over-5mib.jpg` (generated at test time, not committed) |
 

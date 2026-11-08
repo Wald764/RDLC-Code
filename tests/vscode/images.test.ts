@@ -165,6 +165,9 @@ export async function run(): Promise<void> {
   await staleSnapshot();
   await disposedDuringChooser();
   await nativeCreateAuthorization();
+  await existingItemKeepsUnknownContent();
+  await missingDefinitionIsGeometryOnly();
+  await preservationOnlyRefusesMutation();
 }
 
 async function insertPngThenJpeg(): Promise<void> {
@@ -638,5 +641,208 @@ async function nativeCreateAuthorization(): Promise<void> {
       for (const subscription of subscriptions) subscription.dispose();
       session.dispose();
     }
+  }
+}
+
+const geometryElement = /\s*<(Top|Left|Height|Width)>[^<]*<\/\1>/g;
+const withoutGeometry = (xml: string) => xml.replace(geometryElement, '');
+
+/** The source text of one projected image item. */
+function itemText(document: vscode.TextDocument, name: string): string {
+  const found = project(document).images.find((entry) => entry.name === name);
+  assert.ok(found, name);
+  return document.getText().slice(found.node.range.start, found.node.range.end);
+}
+
+/** Sends a layout edit for the named images and waits for its result. */
+async function layout(
+  designer: ReturnType<typeof view>,
+  document: vscode.TextDocument,
+  names: readonly string[],
+  payload: Record<string, unknown>,
+): Promise<Result> {
+  const projection = project(document);
+  const targetIds = names.map(
+    (name) => projection.images.find((entry) => entry.name === name)!.node.id,
+  );
+  const requestId = `layout-${Math.random().toString(36).slice(2, 10)}`;
+  designer.session.receive({
+    protocol: 2,
+    kind: 'edit',
+    requestId,
+    baseVersion: document.version,
+    operation: 'layout',
+    payload: { targetIds, unit: 'pt', ...payload },
+  } as never);
+  await until(
+    () =>
+      designer.messages.some(
+        (m) => m.kind === 'editResult' && m.requestId === requestId,
+      ),
+    'layout settles',
+  );
+  const result = designer.messages.find(
+    (m): m is Result => m.kind === 'editResult' && m.requestId === requestId,
+  )!;
+  assert.ok(validateMessage(result), 'result satisfies the shared protocol');
+  return result;
+}
+
+const embeddedImagesOf = (text: string) =>
+  /<EmbeddedImages>[\s\S]*<\/EmbeddedImages>/.exec(text)![0];
+
+/**
+ * US5 scenario 4: an existing item with an unknown child element and a foreign attribute
+ * moves and resizes like an authored one, and keeps both byte-identical.
+ */
+async function existingItemKeepsUnknownContent(): Promise<void> {
+  const document = await open(
+    readFileSync(join(fixtures, 'authored.rdlc'), 'utf8'),
+  );
+  await vscode.window.showTextDocument(document);
+  const original = document.getText();
+  const designer = view(document, new FakeImageSource());
+  try {
+    const before = itemText(document, 'Tagged');
+    for (const fragment of [
+      'x:flag="1"',
+      '<FutureThing level="2">kept</FutureThing>',
+      '<x:Opaque keep="1">preserve</x:Opaque>',
+    ])
+      assert.ok(before.includes(fragment), fragment);
+    assert.ok(project(document).images.some((i) => i.name === 'Tagged'));
+
+    const moved = await layout(designer, document, ['Tagged'], {
+      action: 'move',
+      dxPt: 9,
+      dyPt: 7,
+    });
+    assert.deepEqual([moved.accepted, moved.changed], [true, true]);
+    const afterMove = document.getText();
+    assert.notEqual(itemText(document, 'Tagged'), before);
+    assert.equal(
+      withoutGeometry(itemText(document, 'Tagged')),
+      withoutGeometry(before),
+    );
+
+    const geometry = project(document).images.find((i) => i.name === 'Tagged')!;
+    assert.ok(geometry.capabilities.includes('image'), 'still editable');
+    const resized = await layout(designer, document, ['Tagged'], {
+      action: 'resize',
+      handle: 'se',
+      xPt: 400,
+      yPt: 400,
+    });
+    assert.deepEqual([resized.accepted, resized.changed], [true, true]);
+    const afterResize = document.getText();
+    const tagged = itemText(document, 'Tagged');
+    assert.equal(withoutGeometry(tagged), withoutGeometry(before));
+    for (const fragment of [
+      'x:flag="1"',
+      '<FutureThing level="2">kept</FutureThing>',
+      '<x:Opaque keep="1">preserve</x:Opaque>',
+    ])
+      assert.ok(tagged.includes(fragment), fragment);
+    assert.equal(embeddedImagesOf(afterResize), embeddedImagesOf(original));
+    // Every other item is byte-identical.
+    for (const name of ['LogoAutoSize', 'LogoFit', 'PhotoClip'])
+      assert.ok(afterResize.includes(itemTextOf(original, name)), name);
+
+    await history(document, 'undo', afterMove);
+    await history(document, 'undo', original);
+  } finally {
+    designer.dispose();
+  }
+}
+
+function itemTextOf(source: string, name: string): string {
+  const found = projectReport(
+    parse({ uri: 'fixture:text', version: 1, source, eol: '\n' }),
+  ).images.find((entry) => entry.name === name)!;
+  return source.slice(found.node.range.start, found.node.range.end);
+}
+
+/** An item whose definition is missing is geometry-only: it moves, and keeps its reason. */
+async function missingDefinitionIsGeometryOnly(): Promise<void> {
+  const document = await open(
+    readFileSync(join(fixtures, 'preserved.rdlc'), 'utf8'),
+  );
+  await vscode.window.showTextDocument(document);
+  const original = document.getText();
+  const designer = view(document, new FakeImageSource());
+  try {
+    const ghost = project(document).images.find(
+      (entry) => entry.name === 'GhostPicture',
+    )!;
+    assert.equal(ghost.reason, 'reference-missing');
+    assert.deepEqual(ghost.capabilities, [
+      'name',
+      'left',
+      'top',
+      'width',
+      'height',
+    ]);
+    const before = itemText(document, 'GhostPicture');
+    const result = await layout(designer, document, ['GhostPicture'], {
+      action: 'move',
+      dxPt: 12,
+      dyPt: 0,
+    });
+    assert.deepEqual([result.accepted, result.changed], [true, true]);
+    const moved = document.getText();
+    assert.notEqual(itemText(document, 'GhostPicture'), before);
+    assert.equal(
+      withoutGeometry(itemText(document, 'GhostPicture')),
+      withoutGeometry(before),
+    );
+    assert.equal(embeddedImagesOf(moved), embeddedImagesOf(original));
+    const after = project(document).images.find(
+      (entry) => entry.name === 'GhostPicture',
+    )!;
+    assert.equal(after.reason, 'reference-missing');
+    assert.equal(after.definition, null);
+    await history(document, 'undo', original);
+  } finally {
+    designer.dispose();
+  }
+}
+
+/** A preservation-only item refuses mutation with the existing layout diagnostic. */
+async function preservationOnlyRefusesMutation(): Promise<void> {
+  const document = await open(
+    readFileSync(join(fixtures, 'preserved.rdlc'), 'utf8'),
+  );
+  await vscode.window.showTextDocument(document);
+  const original = document.getText();
+  const designer = view(document, new FakeImageSource());
+  try {
+    const version = document.version;
+    for (const name of [
+      'ExternalPicture',
+      'DatabasePicture',
+      'ExpressionPicture',
+    ]) {
+      assert.deepEqual(
+        project(document).images.find((entry) => entry.name === name)!
+          .capabilities,
+        [],
+        name,
+      );
+      const result = await layout(designer, document, [name], {
+        action: 'move',
+        dxPt: 5,
+        dyPt: 5,
+      });
+      assert.equal(result.accepted, false, name);
+      assert.equal(result.changed, false, name);
+      assert.equal(result.reason, 'LAYOUT_REFUSED', name);
+      assert.equal(result.diagnostics[0]?.code, 'LAYOUT_REFUSED', name);
+      assert.match(result.diagnostics[0]!.message, /is locked/, name);
+      assert.equal(document.getText(), original, name);
+      assert.equal(document.version, version, name);
+      assert.equal(document.isDirty, false, name);
+    }
+  } finally {
+    designer.dispose();
   }
 }

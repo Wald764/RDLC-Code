@@ -14,7 +14,12 @@ import type { ReportProjection } from './report.js';
 import { sizeUnits, type SizeUnit } from './geometry.js';
 import { clipboardActions, type ClipboardAction } from './clipboard.js';
 import { decodeImageData, sniffFormat } from './image-data.js';
-import { rawImageLimit, type ImageAsset, type ImageMime } from './images.js';
+import {
+  imageReasonLabels,
+  rawImageLimit,
+  type ImageAsset,
+  type ImageMime,
+} from './images.js';
 import {
   structureKinds,
   validateAcceptedNavigation,
@@ -471,16 +476,8 @@ function sceneItem(value: unknown): boolean {
   );
 }
 const imageSizings = ['AutoSize', 'Fit', 'FitProportional', 'Clip'];
-const imageReasons = [
-  'format-unsupported',
-  'data-invalid',
-  'too-large',
-  'pixels-exceeded',
-  'mime-mismatch',
-  'value-expression',
-  'source-preserved',
-  'reference-missing',
-];
+/** Every reason a placeholder may carry: the keys of the exhaustive label map. */
+const imageReasons = Object.keys(imageReasonLabels);
 function pixels(value: unknown): boolean {
   return (
     record(value) &&

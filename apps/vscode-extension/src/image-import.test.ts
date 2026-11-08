@@ -11,6 +11,7 @@ import {
   IMAGE_TARGET_STALE,
   IMAGE_TOO_LARGE,
   dimensionLimit,
+  imageReasonLabel,
   pixelLimit,
   rawImageLimit,
 } from '@rdlc/report-model/images';
@@ -506,10 +507,12 @@ test('a missing or undisplayable definition is refused', () => {
     create({ definition: 'nope' }),
   );
   assert.equal(!missing.ok && missing.diagnostics[0]?.code, IMAGE_TARGET_STALE);
+  // A real picture in an unsupported format: its base64 must never reach a message.
+  const gif = Buffer.from(picture('gif.gif')).toString('base64');
   const broken = evaluate(
     report('collision.rdlc').replace(
       /<ImageData>[^<]*<\/ImageData>/,
-      '<ImageData>AAAA</ImageData>',
+      `<ImageData>${gif}</ImageData>`,
     ),
   );
   const refused = planImageCreation(
@@ -519,6 +522,15 @@ test('a missing or undisplayable definition is refused', () => {
     create({ definition: 'logo' }),
   );
   assert.equal(!refused.ok && refused.diagnostics[0]?.code !== undefined, true);
+  // The message names the reason in words, and never the payload.
+  const reason = broken.projection.embeddedImages[0]!.reason!;
+  assert.ok(
+    !refused.ok &&
+      refused.diagnostics[0]!.message.includes(imageReasonLabel(reason)),
+  );
+  const message = refused.ok ? '' : refused.diagnostics[0]!.message;
+  for (let at = 0; at + 24 <= gif.length; at += 12)
+    assert.ok(!message.includes(gif.slice(at, at + 24)), `slice ${at}`);
 });
 
 test('exactly one of a file or a definition is required', async () => {

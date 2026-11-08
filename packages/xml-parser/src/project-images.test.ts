@@ -683,3 +683,102 @@ test('a report without EmbeddedImages projects empty collections', () => {
   assert.deepEqual(projection.images, []);
   assert.deepEqual(projection.embeddedImages, []);
 });
+
+/** Every string in a value, skipping the XML nodes that legitimately hold the source. */
+function stringsOf(value: unknown, path = '$'): Array<[string, string]> {
+  if (typeof value === 'string') return [[path, value]];
+  if (typeof value !== 'object' || value === null) return [];
+  return Object.entries(value).flatMap(([key, entry]) =>
+    key === 'node' ? [] : stringsOf(entry, `${path}.${key}`),
+  );
+}
+
+/**
+ * FR-024 rule for the projection of preserved images. Nothing is fetched, opened, resolved
+ * from a path or evaluated. The only source text an image projection carries is inert: the
+ * constant `Value` text and the `ToolTip` text, kept exactly as written and never
+ * interpreted. An expression `Value` is `{kind:'expression'}` with no text at all.
+ */
+test('projecting preserved.rdlc fetches nothing, resolves no path and evaluates no expression', () => {
+  const source = fixture('preserved.rdlc');
+  const syntax = syntaxOf(source);
+  const fetched: unknown[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = ((...args: unknown[]) => {
+    fetched.push(args);
+    throw new Error('network access is forbidden');
+  }) as typeof fetch;
+  let result: ReturnType<typeof projectImages>;
+  let projection: ReturnType<typeof projectReport>;
+  try {
+    result = projectImages(syntax.root, { digest: sha256 });
+    projection = projectReport(syntax, { digest: sha256 });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.deepEqual(fetched, []);
+
+  const outputs = [
+    result,
+    projection.images,
+    projection.embeddedImages,
+    projection.diagnostics,
+  ];
+  const strings = outputs.flatMap((output) => stringsOf(output));
+
+  // No URL: the one literal URL of the fixture survives only as the inert constant text
+  // of the External item, and is never a definition, a name or a diagnostic.
+  const url = /(?:https?|file|data|blob):/i;
+  const external = item(result.images, 'ExternalPicture');
+  assert.equal(external.source, 'External');
+  assert.deepEqual(
+    [
+      ...new Set(
+        strings.filter(([, text]) => url.test(text)).map(([, t]) => t),
+      ),
+    ],
+    ['http://example.invalid/pictures/logo.png'],
+  );
+  assert.equal(
+    strings
+      .filter(([, text]) => url.test(text))
+      .every(([where]) => where.endsWith('.value.text')),
+    true,
+  );
+  assert.equal(external.definition, null);
+  assert.equal(external.reason, 'source-preserved');
+  assert.deepEqual(projection.diagnostics, []);
+
+  // No resolved path: no absolute, relative or working-directory path appears anywhere.
+  for (const [where, text] of strings) {
+    assert.ok(!text.includes(process.cwd()), where);
+    assert.ok(!text.includes('tests/fixtures'), where);
+    assert.ok(
+      !/^(?:[A-Za-z]:[\\/]|\.{0,2}\/|\\\\)/.test(text),
+      `${where}: ${text}`,
+    );
+  }
+
+  // No evaluated expression: expression values keep no text and bind to no definition,
+  // whatever the expression would have returned ("logo" or "photo" here).
+  for (const name of ['DatabasePicture', 'ExpressionPicture']) {
+    const entry = item(result.images, name);
+    assert.deepEqual(entry.value, { kind: 'expression' }, name);
+    assert.equal(entry.definition, null, name);
+    assert.deepEqual(entry.capabilities, [], name);
+  }
+  for (const [where, text] of strings)
+    for (const fragment of [
+      'Fields!',
+      'Parameters!',
+      'IIf',
+      'UseLogo',
+      'Photo.Value',
+    ])
+      assert.ok(!text.includes(fragment), `${where}: ${fragment}`);
+  assert.deepEqual(
+    result.embeddedImages.find((entry) => entry.name === 'logo')!.references,
+    ['CellPicture'],
+    'no expression result adds a reference',
+  );
+});
