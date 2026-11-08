@@ -42,7 +42,7 @@
  *   default, and this file does not claim T063 complete.
  */
 import { test, expect } from 'playwright/test';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
   copyFile,
@@ -72,6 +72,7 @@ import {
   unclassifiedNetworkEvents,
 } from './offline-assertions.js';
 import {
+  chooseFile,
   closeTrustEditor,
   commandAvailable,
   grantWorkspaceTrust,
@@ -149,6 +150,11 @@ const COPIED_FIXTURES: readonly (readonly [string, string])[] = [
   ['unsafe-dtd.rdlc', 'xml/unsafe-dtd.rdlc'],
   ['preserved.rdlc', 'datasets/preserved.rdlc'],
   ['local.rdlc', 'datasets/local.rdlc'],
+  // Feature 006: authored pictures, preservation-only images and a report
+  // without EmbeddedImages that receives one real import (SC-004).
+  ['images-authored.rdlc', 'images/authored.rdlc'],
+  ['images-preserved.rdlc', 'images/preserved.rdlc'],
+  ['images-blank.rdlc', 'images/blank.rdlc'],
 ];
 const DATA_SETS =
   '<DataSets><DataSet Name="Orders"><Fields><Field Name="Id"><DataField>Id</DataField>' +
@@ -282,6 +288,12 @@ interface FixtureSet {
   readonly configDir: string;
   readonly hostile: { readonly path: string; readonly source: string };
   readonly canary: { readonly path: string; readonly name: string };
+  /**
+   * The picture an author chooses in the file chooser. Its folder holds this
+   * one file and lies outside every allowlist root: the observer allows exactly
+   * this read (`AllowedAccess.importFiles`) and nothing around it.
+   */
+  readonly importFile: string;
   readonly probePath: string;
   readonly env: Record<'TMPDIR' | 'XDG_CONFIG_HOME', string | undefined>;
 }
@@ -326,6 +338,16 @@ async function createFixtureSet(root: string): Promise<FixtureSet> {
     'rdlc offline canary: this file must never be read\n',
     'utf8',
   );
+  const importDir = await mkdtemp(join(OS_TMPDIR, 'rdlc-import-'));
+  // A unique name keeps the read observable in sanitized event targets.
+  const importFile = join(
+    importDir,
+    `pick-${randomBytes(4).toString('hex')}.png`,
+  );
+  await copyFile(
+    resolve(root, 'tests/fixtures/images/pictures/logo.png'),
+    importFile,
+  );
   const tmpDir = await mkdtemp(join(OS_TMPDIR, 'rdlc-desktop-tmp-'));
   const configDir = join(tmpDir, 'xdg-config');
   await mkdir(configDir, { recursive: true });
@@ -361,6 +383,7 @@ async function createFixtureSet(root: string): Promise<FixtureSet> {
     configDir,
     hostile: { path: hostilePath, source: await readText(hostilePath) },
     canary: { path: canaryPath, name: canaryName },
+    importFile,
     probePath,
     env,
   };
@@ -373,6 +396,7 @@ async function destroyFixtureSet(set: FixtureSet): Promise<void> {
   await rm(set.dir, { recursive: true, force: true, maxRetries: 3 });
   await rm(set.tmpDir, { recursive: true, force: true, maxRetries: 3 });
   await rm(dirname(set.canary.path), { recursive: true, force: true });
+  await rm(dirname(set.importFile), { recursive: true, force: true });
 }
 
 /** The product extension folders installed in a packaged profile. */
@@ -413,7 +437,8 @@ function loadedExtensionDirs(driver: DesktopDriver): string[] {
  * dedicated tmp dir (including XDG_CONFIG_HOME), the own fixture copy and the
  * fontconfig cache may be written; the VS Code install, the loaded extension
  * sources and the X authority stay read-only. The canary directory and the OS
- * tmp root are deliberately absent.
+ * tmp root are deliberately absent. The only addition for feature 006 is the
+ * exact file the author picks in the image file chooser.
  */
 function allowedAccess(driver: DesktopDriver, set: FixtureSet): AllowedAccess {
   const install = dirname(driver.identity.executablePath);
@@ -432,6 +457,8 @@ function allowedAccess(driver: DesktopDriver, set: FixtureSet): AllowedAccess {
       ...extensionDirs,
       process.env['XAUTHORITY'] ?? join(home, '.Xauthority'),
     ],
+    // The one user-chosen import file; every other rule is unchanged.
+    importFiles: [set.importFile],
     exec: [install],
     ...(process.env['PATH'] ? { path: process.env['PATH'] } : {}),
   };
@@ -716,17 +743,27 @@ async function ensureDesigner(driver: DesktopDriver): Promise<Frame> {
   return driver.designerFrame();
 }
 
+/**
+ * The hostile fixture's external Image: since feature 006 it is a preservation-only
+ * `image` item (a labelled placeholder that is never loaded), no longer an
+ * unsupported `preserved` one.
+ */
 const UNSUPPORTED_IMAGE =
-  '[data-kind="preserved"][aria-label="Image (unsupported)"]';
+  '.item[data-kind="image"][data-image-state="placeholder"][aria-label="Image CanaryImage"]';
 
 /**
- * The designer frame that shows the hostile fixture, identified by its content.
- * Neither the frame `ensureDesigner` returns nor `designerFrame` can be trusted
- * here: right after `Open Designer` the only frame can still be the retained
- * one of a previously opened report, and once the new one exists both are
- * present (the old one hidden), so the frames are scanned again on every read.
+ * The designer frame that shows `selector`, identified by its content. Neither
+ * the frame `ensureDesigner` returns nor `designerFrame` can be trusted when
+ * several reports were opened: right after `Open Designer` the only frame can
+ * still be the retained one of a previously opened report, and once the new one
+ * exists both are present (the old one hidden), so the frames are scanned again
+ * on every read and only a visible match counts.
  */
-async function hostileDesigner(driver: DesktopDriver): Promise<Frame> {
+async function designerShowing(
+  driver: DesktopDriver,
+  selector: string,
+  message: string,
+): Promise<Frame> {
   const { page } = driver;
   let shown: Frame | null = null;
   await expect
@@ -737,7 +774,8 @@ async function hostileDesigner(driver: DesktopDriver): Promise<Frame> {
           if (frame === page.mainFrame()) continue;
           if (
             await frame
-              .locator(UNSUPPORTED_IMAGE)
+              .locator(selector)
+              .first()
               .isVisible()
               .catch(() => false)
           ) {
@@ -747,13 +785,42 @@ async function hostileDesigner(driver: DesktopDriver): Promise<Frame> {
         }
         return false;
       },
-      {
-        message: 'a designer frame shows the hostile fixture Image',
-        timeout: 45_000,
-      },
+      { message, timeout: 45_000 },
     )
     .toBe(true);
   return shown!;
+}
+
+/** The designer frame that shows the hostile fixture. */
+const hostileDesigner = (driver: DesktopDriver): Promise<Frame> =>
+  designerShowing(
+    driver,
+    UNSUPPORTED_IMAGE,
+    'a designer frame shows the hostile fixture Image',
+  );
+
+/** A displayed (decoded, not placeholder) picture item of the image fixtures. */
+const PICTURE = (label: string): string =>
+  `.item[data-kind="image"][data-image-state="picture"][aria-label="Image ${label}"]`;
+/** A preservation-only placeholder item of the image fixtures. */
+const PLACEHOLDER = (label: string): string =>
+  `.item[data-kind="image"][data-image-state="placeholder"][aria-label="Image ${label}"]`;
+
+/** Open a report in its own designer and return the frame that shows `shows`. */
+async function openImageReport(
+  driver: DesktopDriver,
+  path: string,
+  shows: string,
+): Promise<Frame> {
+  await openFixture(driver, path);
+  if (!(await commandAvailable(driver.page, DESIGNER_COMMAND)))
+    throw new Error(`${DESIGNER_COMMAND} is not registered in the window.`);
+  await driver.command(DESIGNER_COMMAND);
+  return designerShowing(
+    driver,
+    shows,
+    `a designer frame shows ${basename(path)}`,
+  );
 }
 
 async function focusView(
@@ -1022,6 +1089,109 @@ async function journeyDataEditing(env: JourneyContext): Promise<void> {
   await expect(fieldType).toHaveValue('text');
   await savedSource(driver, env.hostile, expected);
   await undoSaved(env);
+}
+
+/** A picture item that has really been decoded and painted by the webview. */
+async function expectDecoded(item: Locator): Promise<void> {
+  await expect(item).toBeVisible();
+  await expect
+    .poll(() =>
+      item
+        .locator('img')
+        .first()
+        .evaluate(
+          (image: HTMLImageElement) => image.complete && image.naturalWidth > 0,
+        ),
+    )
+    .toBe(true);
+}
+
+/**
+ * SC-004 under host observation: display and inspection of authored pictures,
+ * preservation-only placeholders, and one real import through the file chooser.
+ * The author's file read is the only one the observer allows (`importFiles`);
+ * nothing is fetched, resolved or evaluated, and every report ends as expected.
+ */
+async function imageJourney(
+  driver: DesktopDriver,
+  fixture: FixtureSet,
+  root: string,
+): Promise<void> {
+  const origin = (name: string): Promise<string> =>
+    readFile(resolve(root, 'tests/fixtures/images', name), 'utf8');
+  const authoredPath = join(fixture.dir, 'images-authored.rdlc');
+  const preservedPath = join(fixture.dir, 'images-preserved.rdlc');
+  const blankPath = join(fixture.dir, 'images-blank.rdlc');
+
+  // Display and inspection of embedded pictures: bytes decoded in the webview
+  // from the report itself, no request, no file read.
+  const authored = await openImageReport(
+    driver,
+    authoredPath,
+    PICTURE('LogoFit'),
+  );
+  await expectDecoded(authored.locator(PICTURE('LogoFit')));
+  await focusView(driver, 'Report Data');
+  await expect(
+    driver.page.getByRole('treeitem', { name: /^EmbeddedImage: logo/ }),
+  ).toBeVisible();
+  await authored.locator(PICTURE('LogoFit')).click();
+  await expect(
+    authored.locator('dl[aria-label="Picture metadata"]'),
+  ).toContainText('PNG');
+  expect(await readText(authoredPath)).toBe(await origin('authored.rdlc'));
+
+  // External, Database, expression, GIF/BMP, malformed and missing pictures stay
+  // labelled placeholders: nothing is loaded, resolved or evaluated.
+  const preserved = await openImageReport(
+    driver,
+    preservedPath,
+    PLACEHOLDER('GhostPicture'),
+  );
+  await expect(preserved.locator('.item[data-kind="image"]')).toHaveCount(8);
+  await expect(preserved.locator('.item[data-kind="image"] img')).toHaveCount(
+    0,
+  );
+  expect(await readText(preservedPath)).toBe(await origin('preserved.rdlc'));
+
+  // One real import: the Image row opens the file chooser, the author types the
+  // path of the picture and accepts it. One Undo restores the report exactly.
+  const blank = await openImageReport(
+    driver,
+    blankPath,
+    '.item[data-kind="textbox"]',
+  );
+  const before = await origin('blank.rdlc');
+  expect(await readText(blankPath)).toBe(before);
+  await filterComponents(driver, 'Image');
+  await driver.page.getByRole('treeitem', { name: /^Image, Insert/ }).click();
+  await chooseFile(driver.page, fixture.importFile);
+  await expect(
+    blank.locator('.feedback').getByText('Created Image1.', { exact: true }),
+  ).toHaveCount(1);
+  await expectDecoded(blank.locator(PICTURE('Image1')));
+  const dirty = driver.page.locator('.monaco-workbench .tab.dirty');
+  await expect
+    .poll(
+      async () => {
+        const text = await readText(blankPath);
+        if (/<EmbeddedImage Name="[^"]+">/.test(text)) return true;
+        if ((await dirty.count()) > 0)
+          await driver.page.keyboard.press(`${MOD}+s`);
+        return false;
+      },
+      { timeout: 45_000 },
+    )
+    .toBe(true);
+  const created = await readText(blankPath);
+  expect(created.match(/<ImageData>/g)).toHaveLength(1);
+  expect(created).toContain(
+    (
+      await readFile(resolve(root, 'tests/fixtures/images/pictures/logo.png'))
+    ).toString('base64'),
+  );
+  await blank.getByRole('button', { name: 'Undo', exact: true }).click();
+  await savedSource(driver, blankPath, before);
 }
 
 const JOURNEY_RUNNERS: Record<
@@ -1365,6 +1535,7 @@ test('SC-009-monitored-offline', async () => {
   const capability = await gatedCapability(root, 'SC-009-monitored-offline');
   const windows: ObservationWindow[] = [];
   let journeys: string[] = [];
+  let importRead: SecurityObservation['native']['events'] = [];
   const controls: {
     webview: { loopback: string; blocked: string } | null;
     hostProbe: boolean;
@@ -1531,6 +1702,35 @@ test('SC-009-monitored-offline', async () => {
       (await readText(fixture.hostile.path)) === fixture.hostile.source,
       'the hostile fixture did not end byte-identical to its original source.',
     );
+    // Feature 006 (SC-004): pictures are displayed, inspected and imported with
+    // zero network requests and no file read except the author's chosen file.
+    windows.push(
+      await observationWindow(driver, capability, root, fixture, () =>
+        imageJourney(driver, fixture, root),
+      ),
+    );
+    const imageWindow = windows[2]!;
+    assertCleanWindow(
+      failures,
+      'SC-009 image window',
+      imageWindow,
+      fixture.canary.name,
+    );
+    record(
+      failures,
+      imageWindow.reportRequests.length === 0,
+      `the image journeys issued ${imageWindow.reportRequests.length} report-surface request(s): ${imageWindow.reportRequests.slice(0, 5).join(', ')}`,
+    );
+    importRead = imageWindow.observation.native.events.filter(
+      (event) =>
+        event.channel === 'file' &&
+        event.target.includes(basename(fixture.importFile)),
+    );
+    record(
+      failures,
+      importRead.length > 0 && importRead.every((event) => !event.unexpected),
+      `the user-chosen import file read was ${importRead.length ? 'classified unexpected' : 'not observed'}, so the file-read check is vacuous or too wide.`,
+    );
     record(
       failures,
       journeys.length === ALL_JOURNEYS.length,
@@ -1554,6 +1754,12 @@ test('SC-009-monitored-offline', async () => {
         loopback: loopbackEvidence,
         windows: windows.map(summarizeWindow),
         journeys: { count: journeys.length, names: journeys },
+        images: {
+          assertion: 'SC-004',
+          statement:
+            'Authored pictures, preservation-only placeholders and one real import ran in their own observed window: zero report-surface requests and no unexpected file read; the only extra allowance is the exact user-chosen import file.',
+          importReadEvents: importRead.length,
+        },
         observationRecordsSha256: sha256(observationRecords(windows)),
         sanitization: sanitizationResult(windows),
         ...scopeRecord(),
@@ -1576,8 +1782,13 @@ interface PayloadPattern {
 }
 
 /** Query/expression/connect payloads that must never reach routine output. */
-function payloadPatterns(fixture: FixtureSet): PayloadPattern[] {
+function payloadPatterns(
+  fixture: FixtureSet,
+  imagePayload: string,
+): PayloadPattern[] {
   return [
+    // Feature 006: embedded picture bytes never reach labels, tooltips or aria.
+    { label: 'embedded-image-payload', value: imagePayload },
     { label: 'hostile-connect-string', value: fixture.canary.path },
     {
       label: 'hostile-image-url',
@@ -1602,6 +1813,7 @@ test('FR-014-no-fetch', async () => {
     samples: [] as string[],
     matches: [] as { where: string; label: string }[],
     tooltipObserved: false,
+    imageTooltipObserved: false,
   };
   let session: OfflineSession | null = null;
   try {
@@ -1670,9 +1882,70 @@ test('FR-014-no-fetch', async () => {
           text: await hover.innerText(),
         });
         await driver.page.keyboard.press('Escape');
+
+        // Feature 006: authored and preservation-only pictures are inspected
+        // as inert bytes; their routine output carries no payload either.
+        const authoredPath = join(fixture.dir, 'images-authored.rdlc');
+        const authored = await openImageReport(
+          driver,
+          authoredPath,
+          PICTURE('LogoFit'),
+        );
+        await expectDecoded(authored.locator(PICTURE('LogoFit')));
+        await focusView(driver, 'Report Data');
+        const logoRow = driver.page.getByRole('treeitem', {
+          name: /^EmbeddedImage: logo/,
+        });
+        await expect(logoRow).toBeVisible();
+        samples.push({
+          where: 'workbench-aria-images',
+          text: await driver.page.ariaSnapshot(),
+        });
+        samples.push({
+          where: 'designer-aria-images',
+          text: await authored.locator('body').ariaSnapshot(),
+        });
+        await logoRow.hover();
+        const imageHover = driver.page.locator('.monaco-hover');
+        await imageHover.waitFor({ state: 'visible', timeout: 10_000 });
+        scan.imageTooltipObserved = true;
+        samples.push({
+          where: 'embedded-image-tooltip',
+          text: await imageHover.innerText(),
+        });
+        await driver.page.keyboard.press('Escape');
+
+        const preservedImagesPath = join(fixture.dir, 'images-preserved.rdlc');
+        const preservedImages = await openImageReport(
+          driver,
+          preservedImagesPath,
+          PLACEHOLDER('GhostPicture'),
+        );
+        await expect(
+          preservedImages.locator('.item[data-kind="image"] img'),
+        ).toHaveCount(0);
+        samples.push({
+          where: 'designer-aria-placeholders',
+          text: await preservedImages.locator('body').ariaSnapshot(),
+        });
+        for (const [name, origin] of [
+          ['images-authored.rdlc', 'authored.rdlc'],
+          ['images-preserved.rdlc', 'preserved.rdlc'],
+        ] as const)
+          expect(await readText(join(fixture.dir, name))).toBe(
+            await readFile(
+              resolve(root, 'tests/fixtures/images', origin),
+              'utf8',
+            ),
+          );
       }),
     );
-    const patterns = payloadPatterns(fixture);
+    const patterns = payloadPatterns(
+      fixture,
+      (await readFile(resolve(root, 'tests/fixtures/images/pictures/logo.png')))
+        .toString('base64')
+        .slice(0, 64),
+    );
     scan.patterns = patterns.map(
       (pattern) => `${pattern.label}:${sha256(pattern.value).slice(0, 16)}`,
     );
@@ -1685,6 +1958,11 @@ test('FR-014-no-fetch', async () => {
       failures,
       scan.tooltipObserved,
       'the data source routine tooltip was never shown, so its payload scan is vacuous.',
+    );
+    record(
+      failures,
+      scan.imageTooltipObserved,
+      'the embedded image routine tooltip was never shown, so its payload scan is vacuous.',
     );
     record(
       failures,

@@ -236,7 +236,9 @@ test('embedded image actions are scoped to definition rows by their context valu
   for (const value of [referenced, unused, undisplayable])
     assert.equal(matches('rdlcCode.sidebar.imageRename', value), true, value);
   assert.equal(matches('rdlcCode.sidebar.imageRemove', unused), true);
-  assert.equal(matches('rdlcCode.sidebar.imageRemove', referenced), false);
+  // Offered on every definition row; the pre-check refuses referenced ones (FR-022).
+  for (const value of [referenced, undisplayable])
+    assert.equal(matches('rdlcCode.sidebar.imageRemove', value), true, value);
   for (const command of imageActions)
     for (const value of [
       'rdlcCode.source',

@@ -138,6 +138,18 @@ export const INFORMATIONAL_TEST_RULES: readonly InformationalTestRule[] = [
     justification:
       'Only the hosted-runner latency budget (95 of 100 selection samples within 200 ms) is informational; any other assertion failure in this test (selection correctness, source bytes, spinbutton) stays critical.',
   },
+  {
+    id: 'image-latency-budget',
+    file: 'images.spec.ts',
+    titles: ['SC-006-timing'],
+    failure: [
+      expectFailure('toBeLessThanOrEqual', '<=\\s*100'),
+      expectFailure('toBeLessThanOrEqual', '<=\\s*1000'),
+    ],
+    anchors: ['.toBeLessThanOrEqual(100)', '.toBeLessThanOrEqual(1000)'],
+    justification:
+      'Runner speed is not a product defect. Only the hosted-runner latency budgets (selection and move feedback within 100 ms, a 5 MiB picture shown within 1 s) are informational; any other assertion failure in this test (item count, displayed picture, source bytes) stays critical.',
+  },
 ];
 
 /**

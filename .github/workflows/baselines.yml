@@ -64,11 +64,12 @@ jobs:
           CI: 'true'
           RDLC_ALLOW_CI_BASELINE_UPDATE: '1'
         run: xvfb-run -a -s "-screen 0 1440x1000x24" pnpm test:e2e --update-baselines
-      # --update-baselines only runs bootstrap.spec.ts, so the theme references
-      # are written by the same Playwright configuration directly. visual.spec.ts
+      # --update-baselines only runs bootstrap.spec.ts, so the theme and image
+      # references (themes/ and images/) are written by the same Playwright
+      # configuration directly. visual.spec.ts
       # skips its missing-reference gate only while RDLC_DESKTOP_UPDATE_BASELINES
       # is true and still checks the environment against the metadata just written.
-      - name: Generate the theme references
+      - name: Generate the theme and image references
         env:
           RDLC_DESKTOP_ROOT: ${{ github.workspace }}
           RDLC_DESKTOP_ARTIFACT_DIR: ${{ github.workspace }}/.vscode-test/desktop-artifacts/baseline-themes
@@ -77,7 +78,7 @@ jobs:
         run: >
           xvfb-run -a -s "-screen 0 1440x1000x24"
           pnpm exec playwright test --config tests/desktop/playwright.config.ts
-          --update-snapshots=all visual.spec.ts --grep "US6.2-themes"
+          --update-snapshots=all visual.spec.ts --grep "US6.2-themes|US-IMG-"
       - name: Record the reference environment next to the references
         run: |
           cp .vscode-test/desktop-artifacts/reference-environment.txt tests/desktop/baselines/reference-environment.txt

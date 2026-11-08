@@ -177,7 +177,7 @@
         },
         {
           "command": "rdlcCode.sidebar.imageRemove",
-          "when": "view == rdlcCode.data && viewItem =~ /dataEmbeddedImage\\.unreferenced/",
+          "when": "view == rdlcCode.data && viewItem =~ /dataEmbeddedImage\\./",
           "group": "destructive@1"
         }
       ]

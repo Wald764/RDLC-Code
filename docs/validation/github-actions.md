@@ -70,12 +70,13 @@ reference. The bootstrap reference captures only the designer root (`rdlc-editor
 inside the webview), never the whole window, because the Explorer tree and the
 breadcrumb carry random fixture names and checkout-dependent folders.
 
-| File under `tests/desktop/baselines/`               | Consumed by                                                    |
-| --------------------------------------------------- | -------------------------------------------------------------- |
-| `bootstrap/bootstrap.png`                           | `bootstrap.spec.ts` in the Linux 1.142.0 `desktop` `core` jobs |
-| `bootstrap/bootstrap.metadata.json`                 | `visual.spec.ts` (all three tests) in the `visual` job         |
-| `themes/<theme>-{activitybar,sidebar,designer}.png` | `visual.spec.ts` `US6.2-themes` in the `visual` job            |
-| `reference-environment.txt` (informational record)  | Humans only                                                    |
+| File under `tests/desktop/baselines/`                                             | Consumed by                                                                          |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `bootstrap/bootstrap.png`                                                         | `bootstrap.spec.ts` in the Linux 1.142.0 `desktop` `core` jobs                       |
+| `bootstrap/bootstrap.metadata.json`                                               | `visual.spec.ts` (every visual test) in the `visual` job                             |
+| `themes/<theme>-{activitybar,sidebar,designer}.png`                               | `visual.spec.ts` `US6.2-themes` in the `visual` job                                  |
+| `images/sizing-{AutoSize,Fit,FitProportional,Clip}.png`, `images/placeholder.png` | `visual.spec.ts` `US-IMG-sizing-<mode>` and `US-IMG-placeholder` in the `visual` job |
+| `reference-environment.txt` (informational record)                                | Humans only                                                                          |
 
 The metadata records the observed OS image id (`ubuntu-24.04`, from `/etc/os-release`,
 not the runner `ImageVersion`), VS Code version, build and executable hash, locale,
@@ -88,11 +89,12 @@ To regenerate:
 1. Run the manual **Desktop baselines** workflow (`.github/workflows/baselines.yml`,
    `workflow_dispatch`) on the branch. It repeats the provisioning of the `visual`
    job, runs `pnpm test:e2e --update-baselines` (bootstrap reference and metadata,
-   with `RDLC_ALLOW_CI_BASELINE_UPDATE=1`), generates the theme references with
-   Playwright `--update-snapshots=all`, uploads the `desktop-baselines` artifact and
+   with `RDLC_ALLOW_CI_BASELINE_UPDATE=1`), generates the theme and image references
+   (`US6.2-themes` and `US-IMG-*`) with Playwright `--update-snapshots=all`, uploads the `desktop-baselines` artifact and
    then re-runs `pnpm test:visual` in comparison mode as a stability check.
 2. Download `desktop-baselines`, review the images, extract it so its files land at
-   `tests/desktop/baselines/`, and commit them.
+   `tests/desktop/baselines/` (the image references under
+   `tests/desktop/baselines/images/`), and commit them.
 
 The workflow never commits or pushes, and `ci.yml` never updates references.
 Generating on a developer machine is refused unless the platform and VS Code version

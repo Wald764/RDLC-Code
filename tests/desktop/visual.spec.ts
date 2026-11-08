@@ -1159,3 +1159,145 @@ test('SC-006-contrast', async () => {
     },
   );
 });
+
+/* ------------------------------------------------------------------ *
+ * Feature 006 (SC-007): the four sizing modes and the placeholder state
+ * ------------------------------------------------------------------ */
+
+type SizingMode = 'AutoSize' | 'Fit' | 'FitProportional' | 'Clip';
+
+/** The `images-authored` item that carries each mode (one per mode). */
+const SIZING_ITEMS: Readonly<Record<SizingMode, string>> = {
+  AutoSize: 'LogoAutoSize',
+  Fit: 'LogoFit',
+  FitProportional: 'PhotoFitProportional',
+  Clip: 'PhotoClip',
+};
+
+/** The reference of the item whose `Sizing` is `mode`, shown by the real designer. */
+async function sizingCase(mode: SizingMode): Promise<void> {
+  const reference = `images/sizing-${mode}.png`;
+  await session(
+    { 'images.rdlc': { fixture: 'images-authored' } },
+    async (ctx) => {
+      const { page } = ctx;
+      const source = await readFile(ctx.path('images.rdlc'));
+      await assertReferenceEnvironment(ctx);
+      requireBaselines([reference]);
+      await palette(page, 'View: Show RDLC Code');
+      await openReport(ctx, 'images.rdlc');
+      const frame = await openDesigner(ctx);
+
+      const item = frame.locator(
+        `.item[data-kind="image"][aria-label="Image ${SIZING_ITEMS[mode]}"]`,
+      );
+      // The mode under test is the authored one, and the picture is really
+      // decoded and painted before a single pixel is compared.
+      await expect(item).toHaveAttribute('data-sizing', mode);
+      await expect(item).toHaveAttribute('data-image-state', 'picture');
+      await expect
+        .poll(
+          () =>
+            item
+              .locator('img')
+              .evaluate(
+                (image: HTMLImageElement) =>
+                  image.complete && image.naturalWidth > 0,
+              ),
+          { message: `the ${mode} picture is decoded` },
+        )
+        .toBe(true);
+      await page.mouse.move(0, 0);
+      await expect(item, `${mode} sizing reference`).toHaveScreenshot(
+        ['images', `sizing-${mode}.png`],
+        { ...TOLERANCES },
+      );
+
+      // Display never edits the report.
+      expect(
+        (await readFile(ctx.path('images.rdlc'))).equals(source),
+        `displaying the ${mode} image leaves the authored report untouched`,
+      ).toBe(true);
+      await writeRecord(ctx, `visual-images-sizing-${mode}.json`, {
+        assertion: `tests/desktop/visual.spec.ts::US-IMG-sizing-${mode}`,
+        environment: ctx.environment,
+        tolerances: TOLERANCES,
+        baselines: [reference],
+        item: SIZING_ITEMS[mode],
+      });
+      await ctx.driver.capture(`us-img-sizing-${mode.toLowerCase()}`);
+    },
+  );
+}
+
+test('US-IMG-sizing-AutoSize', async () => {
+  await sizingCase('AutoSize');
+});
+
+test('US-IMG-sizing-Fit', async () => {
+  await sizingCase('Fit');
+});
+
+test('US-IMG-sizing-FitProportional', async () => {
+  await sizingCase('FitProportional');
+});
+
+test('US-IMG-sizing-Clip', async () => {
+  await sizingCase('Clip');
+});
+
+test('US-IMG-placeholder', async () => {
+  const reference = 'images/placeholder.png';
+  await session(
+    { 'images.rdlc': { fixture: 'images-preserved' } },
+    async (ctx) => {
+      const { page } = ctx;
+      const source = await readFile(ctx.path('images.rdlc'));
+      await assertReferenceEnvironment(ctx);
+      requireBaselines([reference]);
+      await palette(page, 'View: Show RDLC Code');
+      await openReport(ctx, 'images.rdlc');
+      const frame = await openDesigner(ctx);
+
+      // External, Database, expression, GIF, BMP, x-png, malformed and missing:
+      // eight labelled placeholders at their declared bounds, nothing loaded.
+      const images = frame.locator('.item[data-kind="image"]');
+      await expect(images).toHaveCount(8);
+      await expect(
+        frame.locator(
+          '.item[data-kind="image"][data-image-state="placeholder"]',
+        ),
+      ).toHaveCount(8);
+      await expect(frame.locator('.item[data-kind="image"] img')).toHaveCount(
+        0,
+      );
+      const labels = await frame
+        .locator('.item[data-kind="image"] .image-placeholder')
+        .evaluateAll((nodes) =>
+          nodes.map((node) => (node.textContent ?? '').trim()),
+        );
+      expect(
+        labels.every((label) => label.length > 0),
+        'every placeholder names its reason',
+      ).toBe(true);
+      await page.mouse.move(0, 0);
+      await expect(
+        frame.locator('.body'),
+        'placeholder reference',
+      ).toHaveScreenshot(['images', 'placeholder.png'], { ...TOLERANCES });
+
+      expect(
+        (await readFile(ctx.path('images.rdlc'))).equals(source),
+        'displaying the preserved images leaves the report untouched',
+      ).toBe(true);
+      await writeRecord(ctx, 'visual-images-placeholder.json', {
+        assertion: 'tests/desktop/visual.spec.ts::US-IMG-placeholder',
+        environment: ctx.environment,
+        tolerances: TOLERANCES,
+        baselines: [reference],
+        placeholders: labels.length,
+      });
+      await ctx.driver.capture('us-img-placeholder');
+    },
+  );
+});

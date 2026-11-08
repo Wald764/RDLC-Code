@@ -56,6 +56,7 @@ const SUITES: Record<string, readonly string[]> = {
     'accessibility.spec.ts',
     'layout.spec.ts',
     'offline.spec.ts',
+    'images.spec.ts',
   ],
   context: ['context.spec.ts'],
   visual: ['visual.spec.ts', 'layout.spec.ts'],
@@ -71,6 +72,7 @@ const SUITES: Record<string, readonly string[]> = {
     'accessibility.spec.ts',
     'layout.spec.ts',
     'offline.spec.ts',
+    'images.spec.ts',
     'context.spec.ts',
   ],
 };

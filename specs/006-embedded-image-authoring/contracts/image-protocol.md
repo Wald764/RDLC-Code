@@ -50,7 +50,7 @@ read-only file system) and source-only status apply before the file chooser open
 |---|---|---|
 | `rdlcCode.sidebar.imageInsert` | Data, `dataEmbeddedImage.displayable` | Native `author` action with `createImage {placement:'default', definition}`; no file chooser |
 | `rdlcCode.sidebar.imageRename` | Data, `dataEmbeddedImage.*` | `showInputBox` (same name rule) → native `author` action with `renameEmbeddedImage` |
-| `rdlcCode.sidebar.imageRemove` | Data, `dataEmbeddedImage.unreferenced` | Native `author` action with `removeEmbeddedImage` |
+| `rdlcCode.sidebar.imageRemove` | Data, `dataEmbeddedImage.*` (referenced definitions are refused with the referencing items listed) | Native `author` action with `removeEmbeddedImage` |
 
 The three commands check the same reference analysis as the host edit before dispatching, so a refusal reaches the author as a warning that lists the blocking items. The native `author` payload accepts the optional fields of `authoringOptionalFields` (here `definition`).
 

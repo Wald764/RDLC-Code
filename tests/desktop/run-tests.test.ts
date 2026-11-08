@@ -431,7 +431,7 @@ test('Desktop modes preserve pnpm separators and reject ambiguous or unknown fla
 
 test('CI groups partition the functional journeys without dropping one', () => {
   const all = requiredDesktopSuites(desktopArguments([], {}));
-  assert.equal(all.length, 11);
+  assert.equal(all.length, 12);
   const parts = Object.keys(DESKTOP_GROUPS).map((group) =>
     requiredDesktopSuites(
       desktopArguments(['--packaged'], { RDLC_DESKTOP_GROUP: group }),

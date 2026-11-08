@@ -38,9 +38,10 @@ local `.rdlc` picker. VS Code owns view placement, hiding and restoration.
   contained-content acknowledgement and reference checks.
 - Data lists datasets/fields, parameters, embedded images and data sources.
   Tooltips contain allowlisted metadata, never image payloads, query text or
-  connection strings. Parameters, images and data sources remain inspection-only.
-- Components shares the compact designer's eleven-kind catalog. Textbox, Table
-  and Dataset activate existing automatic creation. The title **Filter Components**
+  connection strings. Parameters and data sources remain inspection-only; embedded
+  images are managed as described under [Embedded images](#embedded-images).
+- Components shares the compact designer's eleven-kind catalog. Textbox, Table,
+  Dataset and Image activate existing automatic creation. The title **Filter Components**
   action matches labels without case sensitivity; Escape retains the previous
   filter, and **Clear Filter** recovers an empty result.
 - The designer starts with its duplicate navigation closed. Its **Components**
@@ -63,7 +64,7 @@ step; cancelled, refused and no-op actions leave the document and history unchan
 | Action                         | Pointer / keyboard                                                                 |
 | ------------------------------ | ---------------------------------------------------------------------------------- |
 | Select, add/remove             | Click; Shift+click; marquee on blank canvas; item list; Ctrl/Cmd+A selects all     |
-| Move / resize                  | Drag an item; drag one of eight handles (textboxes and whole tables)               |
+| Move / resize                  | Drag an item; drag one of eight handles (textboxes, images and whole tables)       |
 | Align / distribute             | Toolbar: six alignments to the primary item; horizontal/vertical distribution (≥3) |
 | Nudge                          | Arrow keys 1pt, Shift+arrow 10pt (canvas focus; snapping ignored)                  |
 | Snap bypass                    | Hold Alt while dragging; grid and guide visibility/snapping toggle independently   |
@@ -79,6 +80,46 @@ Duplicate offsets 10pt and does not touch the clipboard. Clipboard reuse works
 within one VS Code window and refuses selections whose dependencies, scopes,
 names or foreign metadata cannot be proven safe; Copy then explains why.
 
+### Embedded images
+
+Pictures are authored as embedded images only: the bytes are stored as base64 in
+the report's `EmbeddedImages` collection and an `Image` item references them by
+name. Nothing is linked, fetched or resolved.
+
+- **Insert**: choose **Image** in Components (click, or the compact designer's HTML drag onto
+  the body, since native tree drag is unavailable), then
+  pick a local PNG or JPEG in the native file dialog. Cancelling, or a refusal,
+  leaves the report and its history unchanged. Insertion adds the definition and
+  the item as one Undo step; a picture identical to an existing definition reuses it.
+- **Display**: the picture appears on the canvas using the item's Sizing mode
+  (AutoSize, Fit, FitProportional or Clip).
+- **Manipulate**: select, move, resize, delete, copy, paste, duplicate and
+  cross-report paste work as for other items. Delete keeps the definition; copies
+  share it instead of duplicating the data.
+- **Inspector**: Name, geometry, Sizing, the embedded image (pick another or
+  replace the picture from a local file), ToolTip.
+- **Sidebar**: Report Structure lists image items and Report Data lists the
+  definitions with format, size and usage. Use **RDLC Code: Insert Embedded Image**,
+  **RDLC Code: Rename Embedded Image** (references are rewritten in one step) and
+  **RDLC Code: Remove Embedded Image** (a definition still referenced by items is
+  refused, with those items listed).
+
+| Limit                     | Value                        |
+| ------------------------- | ---------------------------- |
+| Formats                   | PNG and JPEG                 |
+| Raw file size per picture | 5 MiB                        |
+| Pixels per side           | 16,384                       |
+| Total pixels per picture  | 40 megapixels                |
+| Report size after import  | 16 MiB visual-parsing budget |
+
+A picture beyond a limit, in another format or not readable is refused with the
+limit named, and the report is not changed. Images that cannot be authored are
+preserved byte for byte and shown as labelled placeholders with source access:
+external and database sources, expression values, GIF, BMP or x-png data, malformed
+or oversized payloads, missing definitions and images in unsupported containers.
+Unrelated edits and saves leave them, unknown children and foreign attributes
+untouched. Pictures are decoded only for display inside the isolated webview.
+
 ## Supported authoring profile
 
 - RDL namespace `http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition`,
@@ -89,6 +130,8 @@ names or foreign metadata cannot be proven safe; Copy then explains why.
   date/time metadata. No data is loaded or queried.
 - Supported unmerged, static-column tables: cell text/bindings, columns, row
   groups, group subtotals and explicitly dataset-wide report totals using Sum.
+- Body images with an embedded PNG or JPEG source and a constant definition name,
+  within the limits above.
 - Keyboard-accessible authoring controls and normal VS Code document services.
 
 The XML TextDocument is authoritative. Visual changes use validated, minimal,
@@ -99,9 +142,9 @@ See the [compatibility contract](specs/001-rdlc-vscode-editor/contracts/compatib
 ## Boundaries and evidence
 
 This is an authoring surface, not a report renderer: expressions, embedded code,
-queries and external resources are not executed. Images, charts, rich text,
-matrices, spanning cells, unknown field types and unsupported structures are
-preservation-only. Unsupported versions, multiple sections, required unknown
+queries and external resources are not executed. External, database and
+expression-based images, charts, rich text, matrices, spanning cells, unknown
+field types and unsupported structures are preservation-only. Unsupported versions, multiple sections, required unknown
 extensions, malformed XML and parser-budget limits retain source access.
 Visual parsing currently has 16 MiB / depth 256 / 100,000-element budgets;
 they do not truncate source or restrict native source editing.

@@ -218,8 +218,8 @@ rationale and the alternatives rejected. No `NEEDS CLARIFICATION` item remains o
     shown for every report (inspection, FR-021); only an editable report gets the context
     values, any other keeps the row `rdlcCode.source` (FR-026). The reference
     count covers `Image` items and every other `*Image` element with a constant `Value`
-    (`PointerImage`, `IndicatorImage`, `BackgroundImage`...), so Remove is hidden for a
-    definition they use.
+    (`PointerImage`, `IndicatorImage`, `BackgroundImage`...), so Remove, offered on every
+    definition row, is refused with the referencing items listed for a definition they use.
   - **Commands**: new `rdlcCode.sidebar.imageRename`, `imageRemove` and `imageInsert`,
     registered in `sidebar/actions.ts` and contributed in `apps/vscode-extension/package.json`.
     Rename uses `showInputBox` with the same name validation (CLS identifier, unique,

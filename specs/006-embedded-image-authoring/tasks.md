@@ -571,10 +571,10 @@ metadata and reference counts, and supports rename, remove and insert-existing.
 
 ## Phase 8: Polish and Cross-Cutting (Batch B10: E2E, visual, offline, docs), then the final PR
 
-- [ ] T084 [P] In `tests/desktop/driver.ts`, set `"files.simpleDialog.enable": true` in the
+- [X] T084 [P] In `tests/desktop/driver.ts`, set `"files.simpleDialog.enable": true` in the
   provisioned user settings, and add a `chooseFile(page, absolutePath)` helper that drives
   the quick-input dialog (research R5).
-- [ ] T085 Create `tests/desktop/images.spec.ts` with one journey per story. They are critical
+- [X] T085 Create `tests/desktop/images.spec.ts` with one journey per story. They are critical
   by default:
   - `US1-insert-undo`: click and drop, PNG and JPEG, cancel, one refusal, Undo and Redo,
     source-byte checks. It also records the elapsed time as SC-001 evidence.
@@ -586,37 +586,41 @@ metadata and reference counts, and supports rename, remove and insert-existing.
     byte identity and the placeholders.
   - `SC-006-timing`: on `many.rdlc`, the selection and move feedback takes 100 ms or
     less, and a 5 MiB picture appears in less than 1 s.
-- [ ] T086 [P] Add these cases to `tests/desktop/visual.spec.ts`:
+- [X] T086 [P] Add these cases to `tests/desktop/visual.spec.ts`:
   `US-IMG-sizing-AutoSize`, `US-IMG-sizing-Fit`, `US-IMG-sizing-FitProportional`,
   `US-IMG-sizing-Clip` and `US-IMG-placeholder`.
   - Use `authored.rdlc` and `preserved.rdlc` through the manifest ids.
   - Follow the existing pinned-reference baseline process (`--update-baselines` on the
     reference image) and document the generation step in the PR.
-- [ ] T087 [P] Add the image fixtures to the existing fixture loops of
+- [X] T087 [P] Add the image fixtures to the existing fixture loops of
   `tests/desktop/offline.spec.ts` and `tests/desktop/security-observer.spec.ts`.
   - Allow only the user-chosen import file read in `tests/desktop/security-observer.ts`,
     and leave every other rule unchanged.
   - Assert zero network requests (SC-004).
-- [ ] T088 [P] In `tests/desktop/qa-classification.ts`, classify
+- [X] T088 [P] In `tests/desktop/qa-classification.ts`, classify
   `images.spec.ts::SC-006-timing` as informational for the latency-budget signature only,
   with the justification "Runner speed is not a product defect", mirroring `SC-003-timing`.
   Cover it in `qa-classification.test.ts`.
-- [ ] T089 [P] Create `tests/performance/images.test.ts`. For `many.rdlc`, the projection
+- [X] T089 [P] Create `tests/performance/images.test.ts`. For `many.rdlc`, the projection
   and the scene render stay within a budget recorded in the test, and the payload is never
   copied into the scene.
-- [ ] T090 Create `tests/desktop/coverage-006.json` following
+- [X] T090 Create `tests/desktop/coverage-006.json` following
   [contracts/desktop-validation.md](contracts/desktop-validation.md).
   - Add rows US1.1–US5.4 and SC-001–SC-008, and reference only test titles that now exist.
   - Check it with `tests/desktop/coverage-assertions.test.ts`.
-- [ ] T091 [P] Update the documentation in English: the feature list and limits in
+- [X] T091 [P] Update the documentation in English: the feature list and limits in
   `README.md`, the CSP and isolation note in `docs/` where isolation is described, and
   `THIRD_PARTY_NOTICES.md`, which needs no change because no dependency was added (state
   this in the PR).
-- [ ] T092 **Gate B10**.
+- [X] T092 **Gate B10**.
   1. `general` runs `pnpm qa:integration` on the final HEAD.
   2. `quality-review` runs a feature-wide review against spec.md, plan.md, the contracts and
      `git diff main...HEAD`.
   3. Commit `:white_check_mark: test(desktop): cover embedded image journeys, visuals and isolation`.
+  Gate note: `pnpm qa:integration` passes on the final HEAD (extension host 15/15 under xvfb).
+  Desktop, visual and offline journeys are CI-only; the five `images/` baselines come from
+  the `Desktop baselines` workflow. Remove is offered on every definition and refused with the
+  referencing items listed (FR-022).
 - [ ] T093 Push `feat/006-embedded-image-authoring` and open **one** PR to `main`.
   - The body includes the summary, the batch list B0–B10 and the locally verified evidence
     with commands.

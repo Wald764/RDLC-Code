@@ -324,6 +324,7 @@ export const DESKTOP_GROUPS = {
     'accessibility.spec.ts',
     'layout.spec.ts',
     'offline.spec.ts',
+    'images.spec.ts',
   ],
   context: ['context.spec.ts'],
 } as const;
