@@ -400,6 +400,16 @@ test('the strict gate reports missing repetitions and skips outside the document
   assert.deepEqual(strictProblems(entry([pass, pass, pass], 3)), []);
   // Allowed skips count as repetitions.
   assert.deepEqual(strictProblems(entry([allowed, allowed, allowed], 3)), []);
+  // A cell whose only test is an allowed skip measured nothing: it is neither
+  // incomplete nor failing, and its rate is null rather than a division by zero.
+  const unmeasured = entry([allowed, allowed, allowed], 3);
+  assert.equal(unmeasured.complete, true);
+  assert.deepEqual(failingRows(unmeasured), []);
+  assert.deepEqual(unmeasured.rows, []);
+  assert.deepEqual(
+    unmeasured.neverRan.map((row) => [row.runs, row.failureRate]),
+    [[0, null]],
+  );
   assert.match(
     strictProblems(entry([pass, pass], 3)).join(';'),
     /2 execution\(s\) for 3/,

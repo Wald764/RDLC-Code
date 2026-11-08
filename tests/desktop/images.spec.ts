@@ -270,12 +270,34 @@ async function designerFrameCount(page: Page): Promise<number> {
  * Close the active editor (the designer just used) and wait until exactly one
  * designer webview is left: `designerFrame()` and `capture()` are strict about
  * ambiguity and a retained hidden frame would make them throw.
+ *
+ * `closing` names a report whose every editor must go: its designer and the
+ * text editor opened before it (closing the designer alone re-activates that
+ * text tab). They are closed one by one, only while the active tab is one of
+ * them, so the wrong editor is never closed.
  */
 async function closeActiveDesigner(
   ctx: Ctx,
   remaining = 'report.rdlc',
+  closing?: string,
 ): Promise<void> {
-  await ctx.driver.command('View: Close Editor');
+  const tabs = ctx.page.locator('.part.editor .tabs-container .tab');
+  const activeTab = ctx.page.locator(
+    '.part.editor .tabs-container .tab.active',
+  );
+  if (closing) {
+    // Each close waits for its tab to disappear before the next one, so a
+    // stale active tab can never make the next close hit another editor.
+    const mine = tabs.filter({ hasText: closing });
+    for (let left = await mine.count(); left > 0; left = await mine.count()) {
+      await expect(
+        activeTab,
+        `the active editor is ${closing} while it is still open`,
+      ).toContainText(closing);
+      await ctx.driver.command('View: Close Editor');
+      await expect(mine, `${closing} editors are closed`).toHaveCount(left - 1);
+    }
+  } else await ctx.driver.command('View: Close Editor');
   await expect
     .poll(() => designerFrameCount(ctx.page), {
       message: 'exactly one designer webview remains',
@@ -284,9 +306,6 @@ async function closeActiveDesigner(
     .toBe(1);
   // The remaining active editor must be the expected report, so closing the
   // wrong editor fails loudly instead of capturing another document.
-  const activeTab = ctx.page.locator(
-    '.part.editor .tabs-container .tab.active',
-  );
   await expect(activeTab, 'one active editor tab remains').toHaveCount(1);
   await expect(
     activeTab,
@@ -1021,8 +1040,9 @@ test('US2-manipulate', async () => {
         'other.rdlc',
       );
       // Two designers are open here: leave only the main report's before the
-      // capture, which refuses an ambiguous frame.
-      await closeActiveDesigner(ctx);
+      // capture, which refuses an ambiguous frame. The other report's text
+      // editor goes with its designer, or it would stay the active tab.
+      await closeActiveDesigner(ctx, 'report.rdlc', 'other.rdlc');
       await ctx.driver.capture('images-us2-manipulate');
     },
   );

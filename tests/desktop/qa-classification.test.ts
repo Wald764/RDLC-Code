@@ -18,6 +18,7 @@ import {
   expectedChecks,
   matchInformationalRule,
   skipAllowed,
+  stripFailureDetail,
   testId,
 } from './qa-classification.js';
 
@@ -411,6 +412,30 @@ test('only the latency budgets of images SC-006-timing are informational; correc
       failed('toBeLessThanOrEqual', '<= 100', '142'),
     ).severity,
     'critical',
+  );
+});
+
+test('stripFailureDetail keeps only the assertion message', () => {
+  const bare = 'Error: x\n\nExpected: <= 1000\nReceived: 1651';
+  assert.equal(stripFailureDetail(bare), bare);
+  assert.equal(
+    stripFailureDetail(`${bare}\n\n  1 | a\n> 2 | b\n    at c (d:1:1)`),
+    bare,
+  );
+  assert.equal(stripFailureDetail(`${bare}\n    at c (d:1:1)`), bare);
+  assert.equal(
+    stripFailureDetail(`\u001b[31m${bare}\u001b[39m\n\n> 2 | b`),
+    bare,
+  );
+  // A code-frame-looking line without the leading blank line is not cut.
+  assert.equal(stripFailureDetail('  612 | ).toBe(1);'), '  612 | ).toBe(1);');
+  assert.equal(
+    classifyTest(
+      'images.spec.ts',
+      'SC-006-timing',
+      `Error: ms\n\nexpect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 1000\nReceived:    1651\n\n  1665 |   a\n> 1666 |   b\n    at x (y:1:1)`,
+    ).severity,
+    'informational',
   );
 });
 

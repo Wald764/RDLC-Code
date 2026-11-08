@@ -18,6 +18,7 @@ import {
   alignModes,
   type AuthoringRequest,
   type EditIntent,
+  type ImageScalarProperty,
   type LayoutIntent,
 } from '@rdlc/report-model/editing';
 import {
@@ -2999,7 +3000,32 @@ export class EditorComponent {
       'The draft is being applied; activate the native action again afterward.',
     );
     const property = draft.control.dataset['property'];
-    if (property)
+    const imageForm = draft.control.closest('rdlc-image-properties')
+      ? draft.control.form
+      : null;
+    const targetId = this.selected()?.id;
+    if (property && imageForm && targetId !== undefined) {
+      // An image field applies through its own intents, never a textbox `setProperty`.
+      const value = draft.control.value;
+      if (['left', 'top', 'width', 'height'].includes(property))
+        this.imageGeometry({
+          property: property as ImageGeometryCommit['property'],
+          value,
+          targetId,
+        });
+      else
+        this.sendAuthor(
+          {
+            targetId,
+            payload: {
+              action: 'setImageProperty',
+              property: property as ImageScalarProperty,
+              value,
+            },
+          },
+          imageForm,
+        );
+    } else if (property)
       this.sendCommit({
         property: property as TextboxCommit['property'],
         value: draft.control.value,
@@ -3059,6 +3085,7 @@ export class EditorComponent {
     const snapshot = this.host.snapshot();
     if (!snapshot || snapshot.status !== 'editable') return false;
     const requestId = crypto.randomUUID();
+    const previousRefusal = this.refusedForm;
     this.refusedForm = form ? { requestId, form } : null;
     if (form)
       for (const control of form.querySelectorAll('[aria-invalid]'))
@@ -3072,6 +3099,8 @@ export class EditorComponent {
       },
       nativeRequestId,
     );
+    // A request the host did not take can never be refused: keep the earlier annotation.
+    if (!accepted && form) this.refusedForm = previousRefusal;
     const created = (Object.keys(creationActions) as CreationKind[]).find(
       (kind) => creationActions[kind] === request.payload.action,
     );
@@ -3104,6 +3133,39 @@ export class EditorComponent {
     if (edit.targetId !== undefined && edit.targetId !== this.selected()?.id)
       return;
     this.sendCommit(edit);
+  }
+
+  /**
+   * Inspector authoring requests: an image field commit (Enter/change) is routed like a
+   * textbox `commit`, every other request keeps `author`.
+   */
+  inspectorRequest(request: AuthoringRequest): void {
+    if (request.payload.action === 'setImageProperty')
+      this.imageProperty(request);
+    else this.author(request);
+  }
+
+  /**
+   * An image scalar field commit. Like `commit`, never while a draft decision or pointer
+   * action is pending, and never for an older version's item; the field's own draft is the
+   * edit being committed, but an unapplied draft elsewhere is still held. An Enter that
+   * is followed by `change` emits twice: the host's pending request drops the second.
+   */
+  private imageProperty(request: AuthoringRequest): void {
+    if (this.conflict() || this.pointerGuard || this.host.pending()) return;
+    if (
+      request.targetId !== undefined &&
+      request.targetId !== this.selected()?.id
+    )
+      return;
+    const form = this.element.nativeElement.querySelector<HTMLFormElement>(
+      'rdlc-image-properties form',
+    );
+    const draft = this.draft();
+    const own = !!draft && !!form && draft.control.form === form;
+    if (this.held(() => this.sendAuthor(request, form), own ? form : null))
+      return;
+    this.sendAuthor(request, form);
   }
 
   /**

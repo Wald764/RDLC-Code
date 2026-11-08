@@ -14,6 +14,7 @@ import {
   DESKTOP_CELL_CHECKS,
   EXPECTED_MATRIX,
   VISUAL_CELL_CHECKS,
+  classifyTest,
   expectedChecks,
   type CellCheck,
 } from '../tests/desktop/qa-classification.js';
@@ -1296,6 +1297,89 @@ test('collectTests never reports a flaky or unexpected test as passed', () => {
   }
   assert.equal(collectTests({}), null);
   assert.equal(collectTests({ suites: [null] }), null);
+});
+
+test('a failed test is classified from the bare assertion, not its code frame or stack', () => {
+  const esc = (code: string, text: string) =>
+    `\u001b[${code}m${text}\u001b[39m`;
+  const assertion = (matcher: string, expected: string, received: string) =>
+    `Error: ${'5 MiB picture ms'}\n\nexpect(received).${matcher}(expected)\n\nExpected: ${expected}\nReceived:    ${esc('31', received)}`;
+  const frame = (line: number, source: string) =>
+    `\n\n  ${line - 2} |       expect(a, 'a').toBe(1);\n  ${line - 1} |       expect(b, 'b').toBe(2);\n> ${line} | ${source}\n       |   ^\n  ${line + 1} |     },\n    at D:\\a\\tests\\desktop\\images.spec.ts:${line}:44\n    at session (D:\\a\\tests\\desktop\\images.spec.ts:147:5)`;
+  // The real shape of Playwright 1.x: `error.message` is bare, while
+  // `errors[].message` appends the code frame and the stack.
+  const failing = (clean: string, source: string, line: number) => ({
+    suites: [
+      {
+        file: 'images.spec.ts',
+        specs: [
+          {
+            id: 'images-1',
+            title: 'SC-006-timing',
+            file: 'images.spec.ts',
+            tests: [
+              {
+                expectedStatus: 'passed',
+                status: 'unexpected',
+                results: [
+                  {
+                    status: 'failed',
+                    error: { message: clean },
+                    errors: [{ message: `${clean}${frame(line, source)}` }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  const classify = (value: unknown) => {
+    const [entry] = collectTests(value)!;
+    return {
+      entry: entry!,
+      severity: classifyTest(entry!.file, entry!.title, entry!.errorMessages)
+        .severity,
+    };
+  };
+  const budget = classify(
+    failing(
+      assertion('toBeLessThanOrEqual', `<= ${esc('32', '1000')}`, '1651'),
+      "expect(appeared, '5 MiB picture ms').toBeLessThanOrEqual(1000);",
+      1666,
+    ),
+  );
+  assert.equal(budget.severity, 'informational');
+  assert.equal(budget.entry.errorMessages.length, 1, 'duplicates collapse');
+  assert.ok(!/\bat D:|\| /.test(budget.entry.errorText));
+  const count = classify(
+    failing(
+      'Error: expect(locator).toHaveCount(expected) failed\n\nLocator: .item\nExpected: 50\nReceived: 49',
+      'await expect(items).toHaveCount(50);',
+      1650,
+    ),
+  );
+  assert.equal(count.severity, 'critical');
+  // A budget-looking line that only lives in the code frame never decides.
+  const quoted = classify(
+    failing(
+      'Error: expect(locator).toHaveCount(expected) failed',
+      'expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 1000\nReceived: 1651',
+      1650,
+    ),
+  );
+  assert.equal(quoted.severity, 'critical');
+  // Every distinct error must match: one non-budget error keeps it critical.
+  const mixed = failing(
+    assertion('toBeLessThanOrEqual', '<= 1000', '1651'),
+    'x',
+    10,
+  );
+  mixed.suites[0]!.specs[0]!.tests[0]!.results[0]!.errors.push({
+    message: `Error: expect(locator).toHaveCount(expected) failed${frame(20, 'y')}`,
+  });
+  assert.equal(classify(mixed).severity, 'critical');
 });
 
 // ---------------------------------------------------------------------------

@@ -5211,6 +5211,178 @@ describe('image items among body items', () => {
     });
   });
 
+  describe('image field commits', () => {
+    async function fields() {
+      const m = await mounted();
+      m.component.select(4);
+      await m.settle();
+      const field = (property: string) =>
+        m.element.querySelector<HTMLSelectElement | HTMLInputElement>(
+          `rdlc-image-properties [data-property="${property}"]`,
+        )!;
+      // A real select or typed field fires `input` (a tracked draft) before `change`.
+      const edit = (property: string, value: string) => {
+        const control = field(property);
+        control.focus();
+        control.value = value;
+        control.dispatchEvent(new Event('input', { bubbles: true }));
+        return control;
+      };
+      const answer = async (version = 2) => {
+        const sent = authored(m).at(-1) as { requestId: string };
+        m.host.ingest({
+          protocol: 2,
+          kind: 'editResult',
+          requestId: sent.requestId,
+          baseVersion: version,
+          version,
+          changed: false,
+          accepted: false,
+          mappings: [],
+          reason: 'IMAGE_PROPERTY_INVALID',
+          diagnostics: [],
+        });
+        await m.settle();
+      };
+      return { m, field, edit, answer };
+    }
+
+    it('commits a select and a text field after the input event that precedes change', async () => {
+      const { m, edit, answer } = await fields();
+      edit('sizing', 'Clip').dispatchEvent(
+        new Event('change', { bubbles: true }),
+      );
+      await m.settle();
+      expect(m.component.conflict()).toBeNull();
+      expect(authored(m).at(-1)).toMatchObject({
+        targetId: '2:7',
+        payload: {
+          action: 'setImageProperty',
+          property: 'sizing',
+          value: 'Clip',
+        },
+      });
+      expect(m.component.draft()).toBeNull();
+      await answer();
+      edit('toolTip', 'Company logo').dispatchEvent(
+        new Event('change', { bubbles: true }),
+      );
+      await m.settle();
+      expect(authored(m)).toHaveLength(2);
+      expect(authored(m).at(-1)).toMatchObject({
+        payload: { property: 'toolTip', value: 'Company logo' },
+      });
+    });
+
+    it('holds the commit behind the banner when a pointer action is under way', async () => {
+      const { m, edit } = await fields();
+      const control = edit('toolTip', 'Draft tip');
+      const other = m.element.querySelector<HTMLButtonElement>(
+        'ul[aria-label="Report items"] button',
+      )!;
+      other.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      // Native blur/change happens between pointerdown and click.
+      control.dispatchEvent(new Event('change', { bubbles: true }));
+      other.click();
+      await m.settle();
+      expect(authored(m)).toHaveLength(0);
+      expect(m.component.conflict()).not.toBeNull();
+      expect(m.element.textContent).toContain('Unapplied draft');
+      expect(m.component.selected()?.id).toBe('2:7');
+    });
+
+    it('sends once when Enter is followed by change', async () => {
+      const { m, edit, answer } = await fields();
+      const control = edit('toolTip', 'Once');
+      key(control, 'keydown', { key: 'Enter' });
+      control.dispatchEvent(new Event('change', { bubbles: true }));
+      await m.settle();
+      expect(authored(m)).toHaveLength(1);
+      await answer();
+      // The next, unrelated request is not affected by the earlier commit.
+      const replace = [
+        ...m.element.querySelectorAll<HTMLButtonElement>(
+          'rdlc-image-properties button',
+        ),
+      ].find((button) => button.textContent!.includes('Replace'))!;
+      replace.click();
+      await m.settle();
+      expect(authored(m)).toHaveLength(2);
+      expect(authored(m).at(-1)).toMatchObject({
+        payload: { action: 'replaceImagePicture' },
+      });
+    });
+
+    it('keeps a draft of another form protected', async () => {
+      const { m, edit } = await fields();
+      const foreign = document.createElement('form');
+      const input = document.createElement('input');
+      foreign.append(input);
+      m.element.append(foreign);
+      const control = edit('toolTip', 'Mine');
+      m.component.draft.set({
+        version: 2,
+        control: input as unknown as NonNullable<
+          ReturnType<typeof m.component.draft>
+        >['control'],
+      });
+      control.dispatchEvent(new Event('change', { bubbles: true }));
+      await m.settle();
+      expect(authored(m)).toHaveLength(0);
+      expect(m.component.conflict()).not.toBeNull();
+    });
+
+    it('applies and discards an image draft held behind the banner', async () => {
+      const { m, edit } = await fields();
+      const hold = async () => {
+        const control = edit('toolTip', 'Held tip');
+        const other = m.element.querySelector<HTMLButtonElement>(
+          'ul[aria-label="Report items"] button',
+        )!;
+        other.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+        control.dispatchEvent(new Event('change', { bubbles: true }));
+        other.click();
+        await m.settle();
+        return control;
+      };
+      const label = (text: string) =>
+        [...m.element.querySelectorAll('button')].find((b) =>
+          b.textContent?.includes(text),
+        ) as HTMLButtonElement;
+      const control = await hold();
+      label('Discard draft').click();
+      await m.settle();
+      expect(authored(m)).toHaveLength(0);
+      expect(m.edits()).toHaveLength(0);
+      expect(control.value).toBe('');
+      m.component.select(4);
+      await m.settle();
+      await hold();
+      label('Apply draft').click();
+      await m.settle();
+      expect(m.edits()).toHaveLength(1);
+      expect(authored(m)).toHaveLength(1);
+      expect(authored(m)[0]).toMatchObject({
+        targetId: '2:7',
+        payload: {
+          action: 'setImageProperty',
+          property: 'toolTip',
+          value: 'Held tip',
+        },
+      });
+    });
+
+    it('drops a field commit of an older item', async () => {
+      const { m, edit } = await fields();
+      const control = edit('toolTip', 'Stale');
+      m.component.select(3);
+      await m.settle();
+      control.dispatchEvent(new Event('change', { bubbles: true }));
+      await m.settle();
+      expect(authored(m)).toHaveLength(0);
+    });
+  });
+
   it('shows a geometry-only image its name and Delete image, not the preserved text', async () => {
     const m = await mounted();
     m.component.select(5);
