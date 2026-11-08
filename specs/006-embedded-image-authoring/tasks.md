@@ -627,12 +627,16 @@ metadata and reference counts, and supports rename, remove and insert-existing.
   - It states that Desktop, visual and stability checks are CI-validated, and lists any
     known unvalidated items.
   - It ends with the required attribution line.
-- [ ] T094 Monitor CI for the PR's candidate SHA and read `qa-summary-<sha>`.
+- [X] T094 Monitor CI for the PR's candidate SHA and read `qa-summary-<sha>`.
   - Diagnose each failure before re-running anything.
   - Fix it on the same branch (`implement` → targeted `general` → review if the fix is
     substantive), then push.
   - Do **not** merge or publish.
   - Report MERGEABLE or FULLY VALIDATED, plus every informational or unvalidated item.
+  Gate note: run 42494181151 on e3d4476 is MERGEABLE (`Required checks` green, no blocking
+  entry). The only informational failure is `images.spec.ts::SC-006-timing` (5 MiB picture
+  shown in 1.2–2.7 s against the 1 s budget, on every OS), so the authoring Desktop jobs and
+  the stability gate stay red and the PR is not FULLY VALIDATED.
 
 ---
 
