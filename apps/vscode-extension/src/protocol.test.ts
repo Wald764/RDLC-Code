@@ -2040,41 +2040,68 @@ test('focus probes are closed, correlated panel messages', () => {
     assert.equal(validateMessage(invalid), null);
 });
 
-const pngData = Buffer.from(
+const pngData = new Uint8Array(
   readFileSync('tests/fixtures/images/pictures/logo.png'),
-).toString('base64');
-const jpegData = Buffer.from(
+);
+const jpegData = new Uint8Array(
   readFileSync('tests/fixtures/images/pictures/photo.jpg'),
-).toString('base64');
+);
 const imageAssets = (assets: unknown) => ({
   protocol: 2,
   kind: 'imageAssets',
   assets,
 });
 
-test('imageAssets accepts PNG and JPEG assets keyed by hash', () => {
+test('imageAssets accepts PNG and JPEG bytes keyed by hash, as a typed array or an ArrayBuffer', () => {
   const message = imageAssets([
     { key: 'a'.repeat(64), mime: 'image/png', data: pngData },
     { key: 'b'.repeat(64), mime: 'image/jpeg', data: jpegData },
   ]);
-  assert.deepEqual(validateMessage(message), message);
+  assert.equal(validateMessage(message), message);
   assert.deepEqual(validateMessage(imageAssets([])), imageAssets([]));
+  // The webview may get the bare buffer, or a view onto a larger one.
+  const exact = pngData.buffer.slice(
+    pngData.byteOffset,
+    pngData.byteOffset + pngData.byteLength,
+  );
+  const larger = new Uint8Array(pngData.length + 32);
+  larger.set(pngData, 16);
+  for (const data of [exact, larger.subarray(16, 16 + pngData.length)])
+    assert.ok(
+      validateMessage(
+        imageAssets([{ key: 'a'.repeat(64), mime: 'image/png', data }]),
+      ),
+    );
 });
 
-test('imageAssets rejects unknown fields, other mimes and malformed data', () => {
+test('imageAssets rejects unknown fields, other mimes and anything that is not picture bytes', () => {
   const asset = { key: 'a'.repeat(64), mime: 'image/png', data: pngData };
+  const base64 = Buffer.from(pngData).toString('base64');
   for (const bad of [
     { ...imageAssets([asset]), extra: 1 },
     imageAssets([{ ...asset, url: 'blob:x' }]),
     imageAssets([{ ...asset, mime: 'image/gif' }]),
     imageAssets([{ ...asset, mime: 'image/svg+xml' }]),
     imageAssets([{ ...asset, mime: 'text/html' }]),
+    // Strings, plain arrays and objects are not bytes, whatever they hold.
+    imageAssets([{ ...asset, data: base64 }]),
     imageAssets([{ ...asset, data: '' }]),
-    imageAssets([{ ...asset, data: 'data:image/png;base64,' + pngData }]),
-    imageAssets([{ ...asset, data: pngData.slice(1) }]),
-    imageAssets([{ ...asset, data: pngData + '!' }]),
-    imageAssets([{ ...asset, data: 'A'.repeat(64) }]),
-    // The mime must agree with the content signature.
+    imageAssets([{ ...asset, data: [...pngData] }]),
+    imageAssets([{ ...asset, data: { ...pngData } }]),
+    imageAssets([{ ...asset, data: { length: 4 } }]),
+    imageAssets([{ ...asset, data: Buffer.from(base64).toString() }]),
+    imageAssets([{ ...asset, data: null }]),
+    imageAssets([{ ...asset, data: undefined }]),
+    imageAssets([
+      { ...asset, data: new Uint16Array(pngData.buffer.slice(0, 64)) },
+    ]),
+    imageAssets([{ ...asset, data: new DataView(pngData.buffer) }]),
+    imageAssets([{ ...asset, data: new Float32Array(16) }]),
+    // Empty, damaged signature and a signature that disagrees with the mime.
+    imageAssets([{ ...asset, data: new Uint8Array(0) }]),
+    imageAssets([{ ...asset, data: new ArrayBuffer(0) }]),
+    imageAssets([{ ...asset, data: pngData.subarray(1) }]),
+    imageAssets([{ ...asset, data: new Uint8Array(64) }]),
     imageAssets([{ ...asset, data: jpegData }]),
     imageAssets([{ ...asset, mime: 'image/jpeg' }]),
     imageAssets([{ ...asset, key: '' }]),
@@ -2086,20 +2113,107 @@ test('imageAssets rejects unknown fields, other mimes and malformed data', () =>
     imageAssets(undefined),
     { protocol: 1, kind: 'imageAssets', assets: [] },
   ])
-    assert.equal(validateMessage(bad), null, JSON.stringify(bad).slice(0, 80));
+    assert.equal(
+      validateMessage(bad),
+      null,
+      JSON.stringify(bad, (_key, value: unknown) =>
+        ArrayBuffer.isView(value) ? '[bytes]' : value,
+      ).slice(0, 80),
+    );
 });
 
-test('imageAssets carries one maximal picture, refuses a larger one and never comes from the webview', () => {
+test('imageAssets refuses lookalikes, detached and shared buffers without ever throwing', () => {
+  const asset = { key: 'a'.repeat(64), mime: 'image/png' };
+  const refuse = (data: unknown, label: string) =>
+    assert.equal(
+      validateMessage(imageAssets([{ ...asset, data }])),
+      null,
+      label,
+    );
+  const spoof = (target: object, tag: string) =>
+    Object.defineProperty(target, Symbol.toStringTag, { value: tag });
+  // Properties an object can fake are never trusted.
+  refuse(
+    { [Symbol.toStringTag]: 'Uint8Array', length: pngData.length, 0: 0x89 },
+    'plain object tagged Uint8Array',
+  );
+  refuse(
+    spoof(new Float32Array(64), 'Uint8Array'),
+    'Float32Array tagged Uint8Array',
+  );
+  refuse(
+    spoof(new Uint16Array(64), 'Uint8Array'),
+    'Uint16Array tagged Uint8Array',
+  );
+  refuse(spoof({ byteLength: 64 }, 'ArrayBuffer'), 'object tagged ArrayBuffer');
+  refuse(new Uint8ClampedArray(pngData), 'Uint8ClampedArray');
+  refuse(new Int8Array(pngData), 'Int8Array');
+  // Fakes that would make a naive reader throw.
+  refuse(Object.create(Uint8Array.prototype), 'prototype-only Uint8Array');
+  refuse(Object.create(ArrayBuffer.prototype), 'prototype-only ArrayBuffer');
+  refuse(new Proxy(new Uint8Array(pngData), {}), 'proxied Uint8Array');
+  refuse(new Proxy(pngData.buffer, {}), 'proxied ArrayBuffer');
+  const hostile = { ...asset } as Record<string, unknown>;
+  Object.defineProperty(hostile, 'data', {
+    enumerable: true,
+    get() {
+      throw new Error('boom');
+    },
+  });
+  assert.equal(
+    validateMessage(imageAssets([hostile])),
+    null,
+    'throwing getter',
+  );
+  // A detached buffer is empty, not a picture.
+  const detached = pngData.buffer.slice(0) as ArrayBuffer;
+  const view = new Uint8Array(detached);
+  structuredClone(detached, { transfer: [detached] });
+  refuse(detached, 'detached ArrayBuffer');
+  refuse(view, 'view onto a detached buffer');
+  // Shared memory could change after validation.
+  const shared = new SharedArrayBuffer(pngData.length);
+  new Uint8Array(shared).set(pngData);
+  refuse(shared, 'SharedArrayBuffer');
+  refuse(new Uint8Array(shared), 'Uint8Array on a SharedArrayBuffer');
+  // Own properties on a genuine array change nothing: the bytes are the slots'.
+  const genuine = new Uint8Array(pngData);
+  Object.defineProperty(genuine, 'length', { value: 0 });
+  assert.ok(
+    validateMessage(imageAssets([{ ...asset, data: genuine }])),
+    'a faked length on real bytes is ignored',
+  );
+});
+
+test('imageAssets carries one maximal picture, refuses a larger one, an oversized batch and never comes from the webview', () => {
   const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-  const encoded = (size: number) => {
-    const bytes = Buffer.alloc(size);
-    bytes.set(signature);
-    return bytes.toString('base64');
+  const bytes = (size: number) => {
+    const data = new Uint8Array(size);
+    data.set(signature);
+    return data;
   };
-  const message = (data: string) =>
+  const message = (data: Uint8Array) =>
     imageAssets([{ key: 'k'.repeat(64), mime: 'image/png', data }]);
-  assert.ok(validateMessage(message(encoded(5 * 1024 * 1024))));
-  assert.equal(validateMessage(message(encoded(5 * 1024 * 1024 + 3))), null);
+  assert.ok(validateMessage(message(bytes(5 * 1024 * 1024))));
+  assert.equal(validateMessage(message(bytes(5 * 1024 * 1024 + 1))), null);
+  // Two maximal pictures exceed the message envelope.
+  assert.equal(
+    validateMessage(
+      imageAssets([
+        {
+          key: 'a'.repeat(64),
+          mime: 'image/png',
+          data: bytes(5 * 1024 * 1024),
+        },
+        {
+          key: 'b'.repeat(64),
+          mime: 'image/png',
+          data: bytes(5 * 1024 * 1024),
+        },
+      ]),
+    ),
+    null,
+  );
   const binding = new DocumentBinding(
     'file:///a.rdlc',
     1,

@@ -48,7 +48,9 @@ Everything else in the isolation model above is unchanged.
 - The host sends payloads only on the dedicated `imageAssets` message, once per key
   per webview. It sends validated PNG and JPEG definitions within the import limits
   (5 MiB, 16,384 px per side, 40 megapixels) and never SVG, GIF, BMP, external,
-  database or expression-based images. The webview turns each payload into a `Blob`
+  database or expression-based images. The payload travels as bytes (`Uint8Array` or
+  `ArrayBuffer`, validated for length, signature and mime on both sides), not as a
+  base64 string. The webview turns each payload into a `Blob`
   object URL, caches it by key and revokes it when no scene item references the key.
 - Payloads never appear in logs, diagnostics, labels or tooltips. No picture is fetched,
   resolved or evaluated; the only file read is the user-chosen import file.

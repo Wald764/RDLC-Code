@@ -33,6 +33,7 @@ import {
   walkPng,
 } from './images.js';
 import { validateName } from './validate.js';
+import { compactLength } from '@rdlc/report-model/image-data';
 import { parse } from '@rdlc/xml-parser/parser';
 import { projectReport } from '@rdlc/xml-parser/project-report';
 
@@ -476,6 +477,27 @@ test('crc32 is the unsigned IEEE 802.3 checksum', () => {
   assert.equal(crc32(sample), zlibCrc32(sample));
 });
 
+test('crc32 equals the reference checksum for every length and alignment', () => {
+  const bytes = new Uint8Array(70_000);
+  let seed = 12345;
+  for (let index = 0; index < bytes.length; index++) {
+    seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+    bytes[index] = seed >>> 24;
+  }
+  for (let length = 0; length <= 40; length++)
+    for (const offset of [0, 1, 3])
+      assert.equal(
+        crc32(bytes.subarray(offset, offset + length)),
+        zlibCrc32(bytes.subarray(offset, offset + length)),
+        `length ${length} offset ${offset}`,
+      );
+  assert.equal(crc32(bytes), zlibCrc32(bytes));
+  assert.equal(
+    crc32(bytes.subarray(5, 65_537)),
+    zlibCrc32(bytes.subarray(5, 65_537)),
+  );
+});
+
 // --- adversarial JPEG walker -----------------------------------------------
 
 test('walkJpeg accepts byte stuffing and RSTn markers inside a scan', () => {
@@ -689,6 +711,65 @@ test('walkPng accepts trailing data after IEND (current behavior)', () => {
 });
 
 // --- decodeImageData -------------------------------------------------------
+
+test('decodeImageData agrees with the platform decoder around its whole-group fast path', () => {
+  const bytes = new Uint8Array(3001);
+  for (let index = 0; index < bytes.length; index++)
+    bytes[index] = (index * 37 + 11) & 0xff;
+  for (let trim = 0; trim < 4; trim++) {
+    const clean = Buffer.from(bytes.subarray(0, bytes.length - trim)).toString(
+      'base64',
+    );
+    const expected = [...Buffer.from(clean, 'base64')];
+    for (const text of [
+      clean,
+      `${clean.slice(0, 1000)}\r\n${clean.slice(1000, 2500)} \t${clean.slice(2500)}`,
+      `\n${clean}\n`,
+    ])
+      assert.deepEqual([...(decodeImageData(text) ?? [])], expected, `${trim}`);
+    assert.equal(
+      decodeImageData(`${clean.slice(0, 2000)}*${clean.slice(2001)}`),
+      null,
+    );
+    assert.equal(
+      decodeImageData(`${clean.slice(0, 2000)}\u00e9${clean.slice(2001)}`),
+      null,
+    );
+    assert.equal(decodeImageData(`${clean}A`), null);
+  }
+});
+
+test('decodeImageData and compactLength agree with the platform around indented and wrapped payloads', () => {
+  const bytes = new Uint8Array(4001);
+  for (let index = 0; index < bytes.length; index++)
+    bytes[index] = (index * 53 + 3) & 0xff;
+  for (let trim = 0; trim < 3; trim++) {
+    const clean = Buffer.from(bytes.subarray(0, bytes.length - trim)).toString(
+      'base64',
+    );
+    const expected = [...Buffer.from(clean, 'base64')];
+    const wrap = (width: number, eol: string) =>
+      clean.replace(new RegExp(`(.{${width}})`, 'g'), `$1${eol}      `);
+    for (const text of [
+      `\n      ${clean}\n    `,
+      `\r\n  ${wrap(76, '\r\n')}\r\n`,
+      wrap(64, '\n'),
+      wrap(60, '\r'),
+      // A wrap width that is not a multiple of four leaves partial groups pending.
+      wrap(57, '\n'),
+      wrap(5, ' \t'),
+    ]) {
+      assert.deepEqual([...(decodeImageData(text) ?? [])], expected);
+      assert.equal(compactLength(text), clean.length);
+    }
+    assert.equal(
+      decodeImageData(`\n  ${clean.slice(0, 1000)}\n  *${clean.slice(1001)}`),
+      null,
+    );
+    assert.equal(compactLength(''), 0);
+    assert.equal(compactLength(' \t\r\n'), 0);
+  }
+});
 
 test('decodeImageData ignores any whitespace inside base64', () => {
   const bytes = Uint8Array.from({ length: 1000 }, (_, index) => index % 256);

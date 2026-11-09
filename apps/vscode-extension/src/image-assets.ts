@@ -5,7 +5,6 @@ import {
   type ImageAsset,
   type ImageAssetsMessage,
 } from '@rdlc/report-model/protocol';
-import { decodeImageData } from '@rdlc/report-model/image-data';
 import type {
   EmbeddedImageDefinition,
   ReportProjection,
@@ -25,8 +24,7 @@ export class ImageAssetCache {
 
   /**
    * Assets of displayable PNG/JPEG definitions this webview has not yet received, each
-   * key at most once. The payload is re-encoded from the decoded bytes, so it is
-   * canonical base64 of exactly the bytes the projection validated. Keys stay unsent
+   * key at most once, as exactly the bytes the projection validated. Keys stay unsent
    * until `markSent`, so an asset that was never emitted is offered again.
    */
   take(definitions: readonly EmbeddedImageDefinition[]): ImageAsset[] {
@@ -42,15 +40,25 @@ export class ImageAssetCache {
         offered.has(hash)
       )
         continue;
-      const bytes = decodeImageData(
+      // The projection already proved this text is valid base64 of exactly `byteSize`
+      // bytes, so the native decoder (whitespace skipped) is enough: the bytes go to the
+      // webview as they are, with no re-encoding. The transport sends the whole backing
+      // ArrayBuffer of a typed array, so a view onto a larger buffer (the shared Buffer
+      // pool, which holds unrelated data) is copied into one sized to the picture.
+      const decoded = Buffer.from(
         child(definition.node, 'ImageData')?.text ?? '',
+        'base64',
       );
-      if (bytes === null) continue;
+      if (decoded.length !== definition.byteSize) continue;
       offered.add(hash);
       assets.push({
         key: hash,
         mime: definition.format === 'png' ? 'image/png' : 'image/jpeg',
-        data: Buffer.from(bytes).toString('base64'),
+        data:
+          decoded.byteOffset === 0 &&
+          decoded.buffer.byteLength === decoded.length
+            ? new Uint8Array(decoded.buffer, 0, decoded.length)
+            : new Uint8Array(decoded),
       });
     }
     return assets;
@@ -80,13 +88,13 @@ export function batchImageAssets(
     if (
       last &&
       last.length < imageAssetsPerMessage &&
-      size + asset.data.length <= imageAssetsBatchBudget
+      size + asset.data.byteLength <= imageAssetsBatchBudget
     ) {
       last.push(asset);
-      size += asset.data.length;
+      size += asset.data.byteLength;
     } else {
       batches.push([asset]);
-      size = asset.data.length;
+      size = asset.data.byteLength;
     }
   }
   return batches;

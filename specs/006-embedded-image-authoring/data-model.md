@@ -71,7 +71,7 @@ The scene never contains image bytes.
 
 ## ImageAsset (host → webview message only)
 
-Owner: `packages/report-model/src/protocol.ts`. `{ key: hash, mime: 'image/png'|'image/jpeg', data: base64 }`.
+Owner: `packages/report-model/src/protocol.ts`. `{ key: hash, mime: 'image/png'|'image/jpeg', data: Uint8Array }` (a webview may receive the bare `ArrayBuffer`).
 The host sends assets only for displayable definitions. The webview holds them as Blob
 object URLs keyed by `key` and revokes them when no item references them any longer.
 They are never logged or echoed in diagnostics.

@@ -824,3 +824,95 @@ test('references count every image element that can name a definition, not Exter
     ],
   );
 });
+
+// Facts are remembered per payload text; the answers must be the ones a cold projection gives.
+const embedded = (name: string, mime: string, data: string) =>
+  `<EmbeddedImage Name="${name}"><MIMEType>${mime}</MIMEType><ImageData>${data}</ImageData></EmbeddedImage>`;
+const reportWith = (...definitions: string[]) =>
+  `<Report xmlns="${RDL_2016}"><EmbeddedImages>${definitions.join('')}</EmbeddedImages></Report>`;
+
+test('payload facts are reused across projections without changing any answer', () => {
+  const png = picture('logo.png').toString('base64');
+  const source = reportWith(
+    embedded('One', 'image/png', png),
+    embedded('Wrong', 'image/jpeg', png),
+    embedded('Repeat', 'image/png', png),
+    embedded('One', 'image/png', png),
+  );
+  const cold = projectSource(source, { digest: sha256 });
+  const warm = projectSource(source, { digest: sha256 });
+  assert.equal(withoutNodes(warm), withoutNodes(cold));
+  assert.deepEqual(
+    warm.embeddedImages.map((d) => [d.name, d.displayable, d.reason]),
+    [
+      ['One', true, null],
+      ['Wrong', false, 'mime-mismatch'],
+      ['Repeat', true, null],
+      ['One', false, 'data-invalid'],
+    ],
+  );
+  assert.equal(warm.embeddedImages[0]!.hash, sha256(picture('logo.png')));
+  assert.equal(warm.embeddedImages[1]!.hash, null);
+});
+
+test('a digest supplied after a digest-less projection still produces the hash', () => {
+  const source = reportWith(
+    embedded('P', 'image/png', picture('logo.png').toString('base64')),
+  );
+  assert.equal(projectSource(source).embeddedImages[0]!.hash, null);
+  const calls: number[] = [];
+  const counting = (bytes: Uint8Array) => (
+    calls.push(bytes.length),
+    sha256(bytes)
+  );
+  const first = projectSource(source, { digest: counting });
+  const second = projectSource(source, { digest: counting });
+  assert.equal(first.embeddedImages[0]!.hash, sha256(picture('logo.png')));
+  assert.equal(second.embeddedImages[0]!.hash, first.embeddedImages[0]!.hash);
+  assert.equal(calls.length, 1, 'the same digest is applied once per payload');
+  // A different digest function is never answered with another one's value.
+  assert.equal(
+    projectSource(source, { digest: () => 'other' }).embeddedImages[0]!.hash,
+    'other',
+  );
+  assert.equal(projectSource(source).embeddedImages[0]!.hash, null);
+});
+
+test('a changed payload is never answered from another payload facts', () => {
+  const logo = picture('logo.png').toString('base64');
+  const edited =
+    logo.slice(0, -8) +
+    (logo.endsWith('AAAA') ? 'BBBB' : 'AAAA') +
+    logo.slice(-4);
+  for (const data of [logo, edited, logo]) {
+    const [definition] = projectSource(
+      reportWith(embedded('P', 'image/png', data)),
+      {
+        digest: sha256,
+      },
+    ).embeddedImages;
+    const bytes = Buffer.from(data, 'base64');
+    assert.equal(definition!.byteSize, bytes.length);
+    assert.equal(definition!.displayable, data === logo);
+    assert.equal(definition!.hash, data === logo ? sha256(bytes) : null);
+  }
+});
+
+test('evicting remembered facts never changes an answer', () => {
+  const logo = picture('logo.png').toString('base64');
+  const expected = (name: string) =>
+    withoutNodes(
+      projectSource(reportWith(embedded(name, 'image/png', logo)), {
+        digest: sha256,
+      }),
+    );
+  const before = expected('P');
+  // More distinct payloads than the cache keeps entries for.
+  const many = Array.from({ length: 300 }, (_, index) =>
+    embedded(`N${index}`, 'image/png', `${logo.slice(0, 20)}${index}`),
+  );
+  const flood = projectSource(reportWith(...many), { digest: sha256 });
+  assert.equal(flood.embeddedImages.length, 300);
+  assert.ok(flood.embeddedImages.every((d) => !d.displayable));
+  assert.equal(expected('P'), before);
+});

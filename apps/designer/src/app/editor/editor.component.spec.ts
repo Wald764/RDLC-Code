@@ -4318,19 +4318,21 @@ describe('clipboard reuse', () => {
 });
 
 describe('embedded image items', () => {
+  const bytesOf = (base64: string) =>
+    Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
   const payload =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAfbLI3wAAAABJRU5ErkJggg==';
   const asset = (key: string) => ({
     key,
     mime: 'image/png' as const,
-    data: payload,
+    data: bytesOf(payload),
   });
   /** A JPEG: the harness maps every JPEG blob to a URL whose decode() rejects. */
   const brokenPayload = '/9j/4AAQSkZJRgABAQEASABIAAD/2Q==';
   const broken = (key: string) => ({
     key,
     mime: 'image/jpeg' as const,
-    data: brokenPayload,
+    data: bytesOf(brokenPayload),
   });
   type SceneItem = DesignScene['items'][number];
 

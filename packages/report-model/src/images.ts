@@ -102,6 +102,9 @@ export interface ImageAsset {
   /** The picture hash. */
   readonly key: string;
   readonly mime: ImageMime;
-  /** Base64 payload. */
-  readonly data: string;
+  /**
+   * The picture bytes. The host sends a `Uint8Array`; a webview may receive it as a
+   * `Uint8Array` or as the bare `ArrayBuffer`, depending on the VS Code version.
+   */
+  readonly data: Uint8Array | ArrayBuffer;
 }

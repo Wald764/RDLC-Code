@@ -37,7 +37,7 @@ read-only file system) and source-only status apply before the file chooser open
 |---|---|---|
 | `snapshot` (existing) | The scene includes `kind:'image'` items | No bytes |
 | `snapshot.authoring` (extended) | `embeddedImages: {name, displayable, references}[]` and `images: {id, definition, toolTip}[]` (body items) | Feeds the inspector's picker, reference count and ToolTip text. No bytes, hashes or paths |
-| `imageAssets` (new) | `assets: {key, mime, data}[]` | Sent only for displayable PNG and JPEG definitions whose key the webview has not yet received. Base64 payload only. Never logged |
+| `imageAssets` (new) | `assets: {key, mime, data}[]` | Sent only for displayable PNG and JPEG definitions whose key the webview has not yet received. `data` is the picture bytes (a `Uint8Array`; the webview also accepts the bare `ArrayBuffer`), never base64, delivered through the VS Code binary `postMessage` path (engine 1.57+). Never logged |
 
 ## Webview → host native actions (sidebar)
 

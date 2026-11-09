@@ -15,7 +15,7 @@ import type { DesignScene } from './scene.js';
 import type { ReportProjection } from './report.js';
 import { sizeUnits, type SizeUnit } from './geometry.js';
 import { clipboardActions, type ClipboardAction } from './clipboard.js';
-import { decodeImageData, sniffFormat } from './image-data.js';
+import { sniffFormat } from './image-data.js';
 import {
   imageReasonLabels,
   rawImageLimit,
@@ -195,10 +195,8 @@ export interface ImageAssetsMessage {
 export const largeMessageLimit = 8 * 1024 * 1024;
 /** Most assets one `imageAssets` message may carry; hosts split larger sets. */
 export const imageAssetsPerMessage = 256;
-/** Hosts split larger sets across messages; one message never exceeds this payload. */
+/** Hosts split larger sets across messages; a message holds at most this many picture bytes (one picture may exceed it alone). */
 export const imageAssetsBatchBudget = 6 * 1024 * 1024;
-/** Longest base64 text of a picture of exactly `rawImageLimit` bytes. */
-const imageAssetEncodedLimit = Math.ceil(rawImageLimit / 3) * 4;
 const imageAssetMimes: readonly ImageMime[] = ['image/png', 'image/jpeg'];
 export type HostMessage =
   | HistoryResultMessage
@@ -531,32 +529,92 @@ function imageFields(item: Record<string, unknown>): boolean {
     (metadata.encodedSize === null || version(metadata.encodedSize))
   );
 }
+const typedArrayPrototype = Object.getPrototypeOf(
+  Uint8Array.prototype,
+) as object;
+/** Slot readers: they work across realms, ignore own properties and throw for fakes. */
+const typedArrayName = Object.getOwnPropertyDescriptor(
+  typedArrayPrototype,
+  Symbol.toStringTag,
+)!.get as (this: unknown) => string | undefined;
+const typedArrayBuffer = Object.getOwnPropertyDescriptor(
+  typedArrayPrototype,
+  'buffer',
+)!.get as (this: unknown) => unknown;
+const typedArrayOffset = Object.getOwnPropertyDescriptor(
+  typedArrayPrototype,
+  'byteOffset',
+)!.get as (this: unknown) => number;
+const typedArrayLength = Object.getOwnPropertyDescriptor(
+  typedArrayPrototype,
+  'length',
+)!.get as (this: unknown) => number;
+const arrayBufferLength = Object.getOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  'byteLength',
+)!.get as (this: unknown) => number;
+
 /**
- * Webview-side check of an `imageAssets` payload: closed fields, PNG/JPEG only, bounded
- * canonical base64 whose signature agrees with the mime, and unique keys.
+ * The picture bytes of a genuine `Uint8Array` or `ArrayBuffer` as a clean local view, or
+ * null for anything else. Only internal slots are read, never `Symbol.toStringTag`,
+ * `length` or other properties an object can fake, so a lookalike, a detached buffer, a
+ * shared buffer or another element type is refused instead of trusted or thrown on.
+ * VS Code hands a typed array back as one, or as its bare `ArrayBuffer`.
+ */
+function imageBytes(value: unknown): Uint8Array | null {
+  try {
+    if (typeof value !== 'object' || value === null) return null;
+    if (ArrayBuffer.isView(value)) {
+      if (typedArrayName.call(value) !== 'Uint8Array') return null;
+      const buffer = typedArrayBuffer.call(value);
+      arrayBufferLength.call(buffer); // throws for a shared buffer
+      return new Uint8Array(
+        buffer as ArrayBuffer,
+        typedArrayOffset.call(value),
+        typedArrayLength.call(value),
+      );
+    }
+    return new Uint8Array(
+      value as ArrayBuffer,
+      0,
+      arrayBufferLength.call(value),
+    );
+  } catch {
+    return null;
+  }
+}
+/**
+ * Check of an `imageAssets` payload, on both sides of the transport: closed fields, PNG/JPEG
+ * only, non-empty bytes within the import limit whose signature agrees with the mime,
+ * unique well-formed keys, and a bounded total. The bytes are only measured and sniffed.
  */
 export function validateImageAssets(value: unknown): value is ImageAsset[] {
-  return (
-    Array.isArray(value) &&
-    value.length <= imageAssetsPerMessage &&
-    new Set(value.map((asset) => (record(asset) ? asset.key : asset))).size ===
-      value.length &&
-    value.every(
-      (asset) =>
-        record(asset) &&
-        keys(asset, ['key', 'mime', 'data']) &&
-        id(asset.key) &&
-        imageAssetMimes.includes(asset.mime as ImageMime) &&
-        string(asset.data) &&
-        asset.data.length > 0 &&
-        asset.data.length <= imageAssetEncodedLimit &&
-        /^[A-Za-z0-9+/]+={0,2}$/.test(asset.data) &&
-        asset.data.length % 4 === 0 &&
-        sniffFormat(
-          decodeImageData(asset.data.slice(0, 16)) ?? new Uint8Array(),
-        ) === (asset.mime === 'image/png' ? 'png' : 'jpeg'),
+  if (
+    !Array.isArray(value) ||
+    value.length > imageAssetsPerMessage ||
+    new Set(value.map((asset) => (record(asset) ? asset.key : asset))).size !==
+      value.length
+  )
+    return false;
+  let total = 0;
+  return value.every((asset) => {
+    if (
+      !record(asset) ||
+      !keys(asset, ['key', 'mime', 'data']) ||
+      !id(asset.key) ||
+      !imageAssetMimes.includes(asset.mime as ImageMime)
     )
-  );
+      return false;
+    const bytes = imageBytes(asset.data);
+    if (!bytes || bytes.length === 0 || bytes.length > rawImageLimit)
+      return false;
+    total += bytes.length;
+    return (
+      total <= largeMessageLimit &&
+      sniffFormat(bytes.subarray(0, 16)) ===
+        (asset.mime === 'image/png' ? 'png' : 'jpeg')
+    );
+  });
 }
 function resolvedGeometry(value: unknown): boolean {
   return (
@@ -782,9 +840,21 @@ function createImage(payload: Record<string, unknown>): boolean {
 }
 
 export function validateMessage(value: unknown): ProtocolMessage | null {
-  // Host snapshots carry a full scene and image assets a picture; client intents retain the smaller budget.
+  // Pictures travel as bytes, which the JSON-shaped checks below cannot and must not
+  // walk or serialize: that message has its own closed, size-bounded validation.
+  if (record(value) && value.kind === 'imageAssets') {
+    try {
+      return value.protocol === 2 &&
+        keys(value, ['protocol', 'kind', 'assets']) &&
+        validateImageAssets(value.assets)
+        ? (value as unknown as ProtocolMessage)
+        : null;
+    } catch {
+      return null; // a hostile getter or proxy: refused, never thrown
+    }
+  }
+  // Host snapshots carry a full scene; client intents retain the smaller budget.
   const snapshot = record(value) && value.kind === 'snapshot';
-  const assets = record(value) && value.kind === 'imageAssets';
   let nodes = 0;
   const plainJson = (input: unknown, depth: number): boolean => {
     if (++nodes > (snapshot ? 131072 : 8192) || depth > 20) return false;
@@ -809,7 +879,7 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
   if (
     !plainJson(value, 0) ||
     new TextEncoder().encode(JSON.stringify(value)).length >
-      (snapshot || assets ? largeMessageLimit : 65536) ||
+      (snapshot ? largeMessageLimit : 65536) ||
     !record(value) ||
     value.protocol !== 2
   )
@@ -1082,11 +1152,6 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
               value.version as number,
             ) &&
             reportName((value.created as Record<string, unknown>).name)));
-      break;
-    case 'imageAssets':
-      valid =
-        keys(value, ['protocol', 'kind', 'assets']) &&
-        validateImageAssets(value.assets);
       break;
     case 'snapshot':
       valid =

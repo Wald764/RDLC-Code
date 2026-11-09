@@ -66,24 +66,31 @@ test('a second webview owns an independent cache', () => {
   assert.equal(take(one, definitions).length, 0);
 });
 
-test('assets carry the validated mime and the exact decoded bytes as base64', () => {
+test('assets carry the validated mime and the exact decoded bytes, not base64', () => {
   const assets = new ImageAssetCache().take(
     definitionsOf(fixture('authored.rdlc')),
   );
   const byMime = new Map(assets.map((asset) => [asset.mime, asset]));
   assert.deepEqual([...byMime.keys()].sort(), ['image/jpeg', 'image/png']);
   assert.ok(
-    Buffer.from(byMime.get('image/png')!.data, 'base64').equals(
+    Buffer.from(byMime.get('image/png')!.data as Uint8Array).equals(
       picture('logo.png'),
     ),
   );
   assert.ok(
-    Buffer.from(byMime.get('image/jpeg')!.data, 'base64').equals(
+    Buffer.from(byMime.get('image/jpeg')!.data as Uint8Array).equals(
       picture('photo.jpg'),
     ),
   );
-  for (const asset of assets)
+  for (const asset of assets) {
     assert.deepEqual(Object.keys(asset).sort(), ['data', 'key', 'mime']);
+    assert.ok(asset.data instanceof Uint8Array);
+    // The transport sends the whole backing buffer: it must hold this picture only,
+    // never the rest of a shared Buffer pool.
+    const view = asset.data as Uint8Array;
+    assert.equal(view.byteOffset, 0);
+    assert.equal(view.buffer.byteLength, view.byteLength);
+  }
 });
 
 test('only displayable definitions are sent, never rejected or unsupported ones', () => {
@@ -171,7 +178,7 @@ test('asset messages validate and carry no more than the budget allows', () => {
   const asset = (key: string, size: number) => ({
     key,
     mime,
-    data: 'A'.repeat(size),
+    data: new Uint8Array(size),
   });
   const batches = batchImageAssets([
     asset('a', 3_000_000),
@@ -195,7 +202,7 @@ test('batches never exceed the per-message asset count and lose nothing', () => 
     (_, i) => ({
       key: `k${i}`,
       mime: 'image/png' as const,
-      data: 'AAAA',
+      data: new Uint8Array(4),
     }),
   );
   const batches = batchImageAssets(tiny);

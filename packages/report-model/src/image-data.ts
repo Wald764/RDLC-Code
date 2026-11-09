@@ -4,22 +4,48 @@ import type { ImageFormat, ImagePixels } from './images.js';
 
 const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
-const crcTable: readonly number[] = (() => {
-  const table: number[] = [];
+/** Slicing-by-8 tables: row 0 is the classic byte table, row k advances k extra zero bytes. */
+const crcTables: Int32Array = (() => {
+  const tables = new Int32Array(8 * 256);
   for (let n = 0; n < 256; n++) {
     let c = n;
     for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    table.push(c >>> 0);
+    tables[n] = c;
   }
-  return table;
+  for (let n = 0; n < 256; n++) {
+    let c = tables[n] as number;
+    for (let row = 1; row < 8; row++) {
+      c = (tables[c & 0xff] as number) ^ (c >>> 8);
+      tables[row * 256 + n] = c;
+    }
+  }
+  return tables;
 })();
 
-/** Unsigned CRC-32 (IEEE 802.3), as used by PNG chunks. */
+/** Unsigned CRC-32 (IEEE 802.3), as used by PNG chunks; eight bytes per step. */
 export function crc32(bytes: Uint8Array): number {
+  const t = crcTables;
   let crc = 0xffffffff;
-  for (let i = 0; i < bytes.length; i++)
+  let i = 0;
+  for (const end = bytes.length - 8; i <= end; i += 8) {
+    const lo =
+      crc ^
+      ((bytes[i] as number) |
+        ((bytes[i + 1] as number) << 8) |
+        ((bytes[i + 2] as number) << 16) |
+        ((bytes[i + 3] as number) << 24));
     crc =
-      (crcTable[(crc ^ (bytes[i] as number)) & 0xff] as number) ^ (crc >>> 8);
+      (t[1792 + (lo & 0xff)] as number) ^
+      (t[1536 + ((lo >>> 8) & 0xff)] as number) ^
+      (t[1280 + ((lo >>> 16) & 0xff)] as number) ^
+      (t[1024 + (lo >>> 24)] as number) ^
+      (t[768 + (bytes[i + 4] as number)] as number) ^
+      (t[512 + (bytes[i + 5] as number)] as number) ^
+      (t[256 + (bytes[i + 6] as number)] as number) ^
+      (t[bytes[i + 7] as number] as number);
+  }
+  for (; i < bytes.length; i++)
+    crc = (t[(crc ^ (bytes[i] as number)) & 0xff] as number) ^ (crc >>> 8);
   return (crc ^ 0xffffffff) >>> 0;
 }
 
@@ -157,12 +183,31 @@ const base64Lookup: Int8Array = (() => {
 const isXmlSpace = (code: number) =>
   code === 0x20 || code === 0x09 || code === 0x0d || code === 0x0a;
 
-/** Length of `text` once XML whitespace is removed, without building the stripped string. */
+/** Number of `needle` characters in `text`, by native search. */
+function occurrences(text: string, needle: string): number {
+  let count = 0;
+  for (
+    let at = text.indexOf(needle);
+    at >= 0;
+    at = text.indexOf(needle, at + 1)
+  )
+    count++;
+  return count;
+}
+
+/**
+ * Length of `text` once XML whitespace is removed, without building the stripped string.
+ * Counted with native searches: unbroken payloads cost one scan per whitespace kind,
+ * and line-wrapped ones one hop per line break.
+ */
 export function compactLength(text: string): number {
-  let length = 0;
-  for (let i = 0; i < text.length; i++)
-    if (!isXmlSpace(text.charCodeAt(i))) length++;
-  return length;
+  return (
+    text.length -
+    occurrences(text, ' ') -
+    occurrences(text, '\t') -
+    occurrences(text, '\r') -
+    occurrences(text, '\n')
+  );
 }
 
 /**
@@ -177,8 +222,31 @@ export function decodeImageData(text: string): Uint8Array | null {
   let bits = 0;
   let characters = 0;
   let padding = 0;
-  for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i);
+  let i = 0;
+  while (i < text.length) {
+    // Fast path, whenever no partial group is pending: whole groups of four alphabet
+    // characters straight to bytes. Whitespace (a leading indent, line wrapping),
+    // padding or an invalid character falls to the general step below, which resumes
+    // here at the next group boundary.
+    if (bits === 0 && padding === 0)
+      for (; i + 4 <= text.length; i += 4) {
+        const c0 = text.charCodeAt(i);
+        const c1 = text.charCodeAt(i + 1);
+        const c2 = text.charCodeAt(i + 2);
+        const c3 = text.charCodeAt(i + 3);
+        if ((c0 | c1 | c2 | c3) > 127) break;
+        const v0 = base64Lookup[c0] as number;
+        const v1 = base64Lookup[c1] as number;
+        const v2 = base64Lookup[c2] as number;
+        const v3 = base64Lookup[c3] as number;
+        if ((v0 | v1 | v2 | v3) < 0) break;
+        out[written++] = (v0 << 2) | (v1 >> 4);
+        out[written++] = ((v1 & 15) << 4) | (v2 >> 2);
+        out[written++] = ((v2 & 3) << 6) | v3;
+        characters += 4;
+      }
+    if (i >= text.length) break;
+    const code = text.charCodeAt(i++);
     if (isXmlSpace(code)) continue;
     characters++;
     if (code === 0x3d) {

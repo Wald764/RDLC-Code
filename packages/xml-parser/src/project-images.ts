@@ -82,31 +82,88 @@ type DefinitionFacts = Omit<EmbeddedImageDefinition, 'references'>;
  */
 const encodedLimit = Math.ceil(rawImageLimit / 3) * 4;
 
+type Digest = (bytes: Uint8Array) => string;
+
+/** What the payload text alone determines; the MIME type is not part of it. */
+interface PayloadFacts {
+  /** The cache key: a detached copy of the payload text ('' when not cached). */
+  readonly key: string;
+  readonly encodedSize: number;
+  readonly byteSize: number | null;
+  readonly format: ImageFormat | 'other';
+  readonly pixels: ImagePixels | null;
+  /** Why the bytes cannot be shown, before the declared MIME type is considered. */
+  readonly reason: ImageReason | null;
+  /** SHA-256 of the decoded bytes per digest function; only for a decodable payload. */
+  readonly hashes: WeakMap<Digest, string>;
+}
+
 /**
- * A repeated name never resolves (the first definition owns it): the repeat is not
- * displayable, is never decoded or hashed, and reports `data-invalid`.
+ * Facts are a pure function of the payload text, and every edit re-projects every
+ * picture, so they are remembered per exact text (a megabyte-sized key costs one
+ * comparison, not a decode, a CRC walk and a hash). Bounded by total characters and by
+ * entries, least recently used first. The payload text is held only as a key: it is
+ * never logged or returned. A node's text is usually a slice of the whole report
+ * source, and V8 keeps the parent of a slice alive, so a key is first copied into its
+ * own flat string; otherwise one cached picture would pin up to 16 MiB of source (and
+ * every older version of it) while the character bound only counted the slice.
  */
-function projectDefinition(
-  node: XmlNode,
-  options: ImageProjectionOptions,
-  duplicate: boolean,
-): DefinitionFacts | null {
-  const nameAttribute = attribute(node, 'Name');
-  if (!nameAttribute) return null;
-  const mimeNode = child(node, 'MIMEType');
-  const mimeText = mimeNode ? mimeNode.text.trim() : null;
-  const mime = mimeText === null || isExpression(mimeText) ? null : mimeText;
-  const raw = child(node, 'ImageData')?.text ?? '';
+const payloadFactsCache = new Map<string, PayloadFacts>();
+const payloadFactsMaxChars = 32 * 1024 * 1024;
+const payloadFactsMaxEntries = 256;
+let payloadFactsChars = 0;
+
+/**
+ * A string with no parent: concatenation builds a new flat string, and slicing that
+ * keeps only it. (Strings shorter than the slice threshold are copied outright.)
+ */
+const detached = (text: string): string => (' ' + text).slice(1);
+
+function remember(facts: PayloadFacts): void {
+  payloadFactsCache.set(facts.key, facts);
+  payloadFactsChars += facts.key.length;
+  for (const [key] of payloadFactsCache) {
+    if (
+      payloadFactsChars <= payloadFactsMaxChars &&
+      payloadFactsCache.size <= payloadFactsMaxEntries
+    )
+      break;
+    if (key === facts.key) continue;
+    payloadFactsCache.delete(key);
+    payloadFactsChars -= key.length;
+  }
+}
+
+function payloadFactsFor(
+  raw: string,
+  digest: Digest | undefined,
+): PayloadFacts {
+  const known = payloadFactsCache.get(raw);
+  if (known) {
+    // Most recently used last; the entry keeps its own detached key.
+    payloadFactsCache.delete(known.key);
+    payloadFactsChars -= known.key.length;
+    remember(known);
+    if (
+      digest &&
+      known.byteSize !== null &&
+      known.reason === null &&
+      !known.hashes.has(digest)
+    ) {
+      // Facts were first computed without this digest: hash again, nothing else.
+      const bytes = decodeImageData(raw);
+      if (bytes) known.hashes.set(digest, digest(bytes));
+    }
+    return known;
+  }
   const encodedSize = compactLength(raw);
   // `byteSize` stays null when the text is oversized: it is never decoded.
   const oversized = encodedSize > encodedLimit;
-  const bytes = duplicate || oversized ? null : decodeImageData(raw);
-
+  const bytes = oversized ? null : decodeImageData(raw);
   let format: ImageFormat | 'other' = 'other';
   let pixels: ImagePixels | null = null;
   let reason: ImageReason | null = null;
-  if (duplicate) reason = 'data-invalid';
-  else if (oversized) reason = 'too-large';
+  if (oversized) reason = 'too-large';
   else if (bytes === null) reason = 'data-invalid';
   else {
     format = sniffFormat(bytes);
@@ -122,6 +179,49 @@ function projectDefinition(
         reason = 'pixels-exceeded';
     }
   }
+  const facts: PayloadFacts = {
+    key: detached(raw),
+    encodedSize,
+    byteSize: bytes === null ? null : bytes.length,
+    format,
+    pixels,
+    reason,
+    hashes: new WeakMap(),
+  };
+  if (digest && bytes && reason === null)
+    facts.hashes.set(digest, digest(bytes));
+  remember(facts);
+  return facts;
+}
+
+/**
+ * A repeated name never resolves (the first definition owns it): the repeat is not
+ * displayable, is never decoded or hashed, and reports `data-invalid`.
+ */
+function projectDefinition(
+  node: XmlNode,
+  options: ImageProjectionOptions,
+  duplicate: boolean,
+): DefinitionFacts | null {
+  const nameAttribute = attribute(node, 'Name');
+  if (!nameAttribute) return null;
+  const mimeNode = child(node, 'MIMEType');
+  const mimeText = mimeNode ? mimeNode.text.trim() : null;
+  const mime = mimeText === null || isExpression(mimeText) ? null : mimeText;
+  const raw = child(node, 'ImageData')?.text ?? '';
+  const facts: PayloadFacts = duplicate
+    ? {
+        key: '',
+        encodedSize: compactLength(raw),
+        byteSize: null,
+        format: 'other',
+        pixels: null,
+        reason: 'data-invalid',
+        hashes: new WeakMap(),
+      }
+    : payloadFactsFor(raw, options.digest);
+  const { format, pixels } = facts;
+  let reason = facts.reason;
   // MS-RDL 2.2.10 also lists `image/x-png` among the ReportMIMEType values. Only
   // `image/png` and `image/jpeg` are written and displayed (FR-004), so any other
   // declared type, `image/x-png` included, is a `mime-mismatch`: the definition is
@@ -140,10 +240,13 @@ function projectDefinition(
     nameRange: nameAttribute.valueRange,
     mime,
     format,
-    encodedSize,
-    byteSize: bytes === null ? null : bytes.length,
+    encodedSize: facts.encodedSize,
+    byteSize: facts.byteSize,
     pixels,
-    hash: displayable && bytes && options.digest ? options.digest(bytes) : null,
+    hash:
+      displayable && options.digest
+        ? (facts.hashes.get(options.digest) ?? null)
+        : null,
     displayable,
     reason,
   };
