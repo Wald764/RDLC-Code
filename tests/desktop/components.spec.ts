@@ -1374,8 +1374,11 @@ test('SC-004-insert-history', async () => {
     await expect(createdNotice(frame, 'DataSet1')).toHaveCount(1);
     await save(ctx);
     await expect.poll(() => bytes(ctx, 'report.rdlc')).toBe(datasetMade);
-    await ctx.driver.command('View: Close All Editors');
-    await expect(editorTabs(ctx.page)).toHaveCount(0);
+    await expect(dirtyTabs(ctx.page), 'the save settled').toHaveCount(0);
+    await expect(async () => {
+      await ctx.driver.command('View: Close All Editors');
+      await expect(editorTabs(ctx.page)).toHaveCount(0, { timeout: 5_000 });
+    }).toPass({ timeout: 20_000 });
     await openFile(ctx, 'report.rdlc');
     expect(await bytes(ctx, 'report.rdlc')).toBe(datasetMade);
     frame = await openDesigner(ctx);
