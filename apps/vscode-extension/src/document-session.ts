@@ -129,9 +129,12 @@ export class DocumentSession {
       this.publishedVersion === this.document.version
     );
   }
-  /** Current accepted facts for consumers that attach after construction. */
+  /**
+   * Accepted facts of the document's current version: the one evaluation every consumer
+   * (the session itself, the sidebar context) shares, computed at most once per version.
+   */
   get evaluation(): ReportEvaluation {
-    return this.accepted ?? this.evaluate();
+    return this.evaluate();
   }
 
   constructor(
@@ -163,6 +166,13 @@ export class DocumentSession {
       vscode.workspace.onDidChangeTextDocument((event) => {
         if (event.document.uri.toString() !== document.uri.toString()) return;
         this.sync();
+        // VS Code also reports dirty-state changes (no content change, same version);
+        // the snapshot of that version is already out, so republishing it is redundant.
+        if (
+          event.contentChanges.length === 0 &&
+          this.publishedVersion === document.version
+        )
+          return;
         void this.publish();
       }),
     );
@@ -452,11 +462,14 @@ export class DocumentSession {
     }
     this.publishedVersion = snapshot.version;
     if (validateMessage(message)) {
-      this.emitter.fire(message);
-      // Pictures follow the snapshot that references them, and only when not yet held.
+      // Pictures this webview does not hold yet (every displayable PNG/JPEG definition,
+      // each key once) travel before the snapshot, so the bytes are already in the
+      // webview when a snapshot references them. The webview keeps an asset no scene
+      // item references until a snapshot does.
       sendImageAssets(this.imageAssets, projection, (assets) =>
         this.emitter.fire(assets),
       );
+      this.emitter.fire(message);
     } else
       this.emitter.fire({
         protocol: 2,
@@ -1187,7 +1200,13 @@ export class DocumentSession {
       this.nativeAcceptedVersions.set(nativeRequestId, actual.snapshot.version);
     // Bind the new version before reporting success so the next intent cannot race the change event.
     this.sync();
-    await this.publish();
+    // The change listener already published an applied version; only an unchanged
+    // document (a refusal) or a version not yet published needs a fresh snapshot.
+    if (
+      actual.snapshot.version === baseVersion ||
+      this.publishedVersion !== actual.snapshot.version
+    )
+      await this.publish();
     return {
       accepted,
       reason,

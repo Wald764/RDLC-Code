@@ -28,31 +28,20 @@ interface Harness {
   cache: ImageAssetCache;
   created: Blob[];
   revoked: string[];
-  decodes: {
-    url: string;
-    resolve(): void;
-    reject(error: unknown): void;
-  }[];
 }
 
 function harness(): Harness {
   const created: Blob[] = [];
   const revoked: string[] = [];
-  const decodes: Harness['decodes'] = [];
   const env: ImageAssetEnvironment = {
     createObjectURL: (blob) => {
       created.push(blob);
       return `blob:test/${created.length}`;
     },
     revokeObjectURL: (url: string) => void revoked.push(url),
-    decode: (url) =>
-      new Promise<void>((resolve, reject) =>
-        decodes.push({ url, resolve, reject }),
-      ),
   };
-  return { cache: new ImageAssetCache(env), created, revoked, decodes };
+  return { cache: new ImageAssetCache(env), created, revoked };
 }
-const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe('image asset cache', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -64,7 +53,7 @@ describe('image asset cache', () => {
     expect(h.created).toHaveLength(0);
   });
 
-  it('turns the host bytes into a typed Blob and an object URL once the key is referenced', async () => {
+  it('turns the host bytes into a typed Blob and a loading object URL once the key is referenced', async () => {
     const h = harness();
     h.cache.retain(['a', 'b']);
     h.cache.add([png('a'), jpeg('b')]);
@@ -76,12 +65,19 @@ describe('image asset cache', () => {
     expect(h.created[1]!.size).toBe(jpegPayload.length);
     const bytes = new Uint8Array(await h.created[0]!.arrayBuffer());
     expect([...bytes.slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
-    // Decoding is pending: no URL is exposed to the DOM until decode succeeds.
-    expect(h.cache.view('a')).toEqual({ state: 'pending' });
-    h.decodes[0]!.resolve();
-    await settle();
+    // The URL is usable at once (no separate decode step); the rendered <img> decodes it.
+    expect(h.cache.view('a')).toEqual({ state: 'loading', url: 'blob:test/1' });
+    expect(h.cache.view('b')).toEqual({ state: 'loading', url: 'blob:test/2' });
+  });
+
+  it('becomes ready only when the rendered image reports a loaded picture', () => {
+    const h = harness();
+    h.cache.retain(['a', 'b']);
+    h.cache.add([png('a'), png('b')]);
+    h.cache.loaded('a', 'blob:test/1');
     expect(h.cache.view('a')).toEqual({ state: 'ready', url: 'blob:test/1' });
-    expect(h.cache.view('b')).toEqual({ state: 'pending' });
+    expect(h.cache.view('b')).toEqual({ state: 'loading', url: 'blob:test/2' });
+    expect(h.revoked).toEqual([]);
   });
 
   it('builds the Blob from an ArrayBuffer, a typed array or a view onto a larger buffer', async () => {
@@ -119,13 +115,27 @@ describe('image asset cache', () => {
     expect(h.cache.view('other')).toEqual({ state: 'pending' });
   });
 
-  it('renders an asset that arrives after the snapshot referenced it', async () => {
+  it('renders an asset that arrives after the snapshot referenced it', () => {
     const h = harness();
     h.cache.retain(['a']);
     expect(h.cache.view('a').state).toBe('pending');
     h.cache.add([png('a')]);
-    h.decodes[0]!.resolve();
-    await settle();
+    expect(h.cache.view('a').state).toBe('loading');
+    h.cache.loaded('a', 'blob:test/1');
+    expect(h.cache.view('a').state).toBe('ready');
+  });
+
+  it('keeps an asset that arrives before the snapshot referencing it, and loads it on that snapshot', () => {
+    const h = harness();
+    // Host order: imageAssets first, then the snapshot that references the key.
+    h.cache.add([png('a')]);
+    expect(h.created).toHaveLength(0);
+    expect(h.cache.view('a')).toEqual({ state: 'pending' });
+    h.cache.retain(['other']);
+    h.cache.retain(['a']);
+    expect(h.created).toHaveLength(1);
+    expect(h.cache.view('a')).toEqual({ state: 'loading', url: 'blob:test/1' });
+    h.cache.loaded('a', 'blob:test/1');
     expect(h.cache.view('a').state).toBe('ready');
   });
 
@@ -136,133 +146,128 @@ describe('image asset cache', () => {
     h.cache.add([png('a')]);
     h.cache.retain(['a']);
     expect(h.created).toHaveLength(1);
-    expect(h.decodes).toHaveLength(1);
   });
 
-  it('revokes the object URL when no scene item references the key any longer', async () => {
+  it('revokes the object URL when no scene item references the key any longer', () => {
     const h = harness();
     h.cache.retain(['a', 'b']);
     h.cache.add([png('a'), png('b')]);
-    h.decodes.forEach((decode) => decode.resolve());
-    await settle();
+    h.cache.loaded('a', 'blob:test/1');
+    h.cache.loaded('b', 'blob:test/2');
     h.cache.retain(['b']);
     expect(h.revoked).toEqual(['blob:test/1']);
     expect(h.cache.view('a')).toEqual({ state: 'pending' });
     expect(h.cache.view('b')).toEqual({ state: 'ready', url: 'blob:test/2' });
   });
 
-  it('re-creates the URL when a revoked key is referenced again, since the host sends each key once', async () => {
+  it('re-creates the URL when a revoked key is referenced again, since the host sends each key once', () => {
     const h = harness();
     h.cache.retain(['a']);
     h.cache.add([png('a')]);
-    h.decodes[0]!.resolve();
-    await settle();
+    h.cache.loaded('a', 'blob:test/1');
     h.cache.retain([]);
     h.cache.retain(['a']);
     expect(h.created).toHaveLength(2);
-    expect(h.cache.view('a')).toEqual({ state: 'pending' });
-    h.decodes[1]!.resolve();
-    await settle();
+    expect(h.cache.view('a')).toEqual({ state: 'loading', url: 'blob:test/2' });
+    h.cache.loaded('a', 'blob:test/2');
     expect(h.cache.view('a')).toEqual({ state: 'ready', url: 'blob:test/2' });
     expect(h.revoked).toEqual(['blob:test/1']);
   });
 
-  it('marks a key undecodable when decode() fails and revokes its URL', async () => {
+  it('marks a key undecodable when its image fails and revokes its URL', () => {
     const h = harness();
     h.cache.retain(['a']);
     h.cache.add([png('a')]);
-    h.decodes[0]!.reject(new Error('EncodingError'));
-    await settle();
+    h.cache.failed('a', 'blob:test/1');
     expect(h.cache.view('a')).toEqual({ state: 'undecodable' });
     expect(h.revoked).toEqual(['blob:test/1']);
   });
 
-  it('does not retry an undecodable key on later snapshots', async () => {
+  it('does not retry an undecodable key on later snapshots', () => {
     const h = harness();
     h.cache.retain(['a']);
     h.cache.add([png('a')]);
-    h.decodes[0]!.reject(new Error('EncodingError'));
-    await settle();
+    h.cache.failed('a', 'blob:test/1');
     h.cache.retain(['a']);
     h.cache.retain(['a']);
     expect(h.created).toHaveLength(1);
-    expect(h.decodes).toHaveLength(1);
     expect(h.cache.view('a')).toEqual({ state: 'undecodable' });
   });
 
-  it('allows one fresh decode attempt when an undecodable key is released and referenced again', async () => {
+  it('allows one fresh load attempt when an undecodable key is released and referenced again', () => {
     const h = harness();
     h.cache.retain(['a']);
     h.cache.add([png('a')]);
-    h.decodes[0]!.reject(new Error('EncodingError'));
-    await settle();
+    h.cache.failed('a', 'blob:test/1');
     h.cache.retain([]);
     expect(h.cache.view('a')).toEqual({ state: 'pending' });
     h.cache.retain(['a']);
     expect(h.created).toHaveLength(2);
-    expect(h.decodes).toHaveLength(2);
-    h.decodes[1]!.reject(new Error('EncodingError'));
-    await settle();
+    h.cache.failed('a', 'blob:test/2');
     expect(h.cache.view('a')).toEqual({ state: 'undecodable' });
     // Still referenced: no further attempt until it is released again.
     h.cache.retain(['a']);
-    expect(h.decodes).toHaveLength(2);
+    expect(h.created).toHaveLength(2);
     h.cache.retain([]);
     h.cache.retain(['a']);
-    h.decodes[2]!.resolve();
-    await settle();
+    h.cache.loaded('a', 'blob:test/3');
     expect(h.cache.view('a').state).toBe('ready');
   });
 
-  it('ignores a decode result that settles after the key was released', async () => {
+  it('ignores an image result that arrives after the key was released', () => {
     const h = harness();
     h.cache.retain(['a']);
     h.cache.add([png('a')]);
     h.cache.retain([]);
     expect(h.revoked).toEqual(['blob:test/1']);
-    h.decodes[0]!.resolve();
-    await settle();
+    h.cache.loaded('a', 'blob:test/1');
     expect(h.cache.view('a')).toEqual({ state: 'pending' });
-    // A late failure must not poison a key that is merely released.
+    // A late failure must not poison a key that is merely released or re-loading.
     h.cache.retain(['a']);
-    h.decodes[0]!.reject(new Error('late'));
-    await settle();
-    expect(h.cache.view('a').state).toBe('pending');
+    h.cache.failed('a', 'blob:test/1');
+    expect(h.cache.view('a')).toEqual({ state: 'loading', url: 'blob:test/2' });
   });
 
-  it('bumps its revision whenever a view can change', async () => {
+  it('ignores a second result once the image settled', () => {
+    const h = harness();
+    h.cache.retain(['a']);
+    h.cache.add([png('a')]);
+    h.cache.loaded('a', 'blob:test/1');
+    h.cache.failed('a', 'blob:test/1');
+    expect(h.cache.view('a').state).toBe('ready');
+    expect(h.revoked).toEqual([]);
+  });
+
+  it('bumps its revision whenever a view can change', () => {
     const h = harness();
     const seen = [h.cache.revision()];
     h.cache.retain(['a']);
     seen.push(h.cache.revision());
     h.cache.add([png('a')]);
     seen.push(h.cache.revision());
-    h.decodes[0]!.resolve();
-    await settle();
+    h.cache.loaded('a', 'blob:test/1');
     seen.push(h.cache.revision());
     expect(new Set(seen).size).toBe(seen.length);
   });
 
-  it('revokes every live URL on dispose', async () => {
+  it('revokes every live URL on dispose', () => {
     const h = harness();
     h.cache.retain(['a', 'b']);
     h.cache.add([png('a'), jpeg('b')]);
-    h.decodes[0]!.resolve();
-    await settle();
+    h.cache.loaded('a', 'blob:test/1');
     h.cache.dispose();
     expect(h.revoked.sort()).toEqual(['blob:test/1', 'blob:test/2']);
     expect(h.cache.view('a')).toEqual({ state: 'pending' });
   });
 
-  it('never exposes or logs the payload', async () => {
+  it('never exposes or logs the payload', () => {
     const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map(
       (method) => vi.spyOn(console, method).mockImplementation(() => undefined),
     );
     const h = harness();
     h.cache.retain(['a', 'bad']);
     h.cache.add([png('a'), jpeg('bad')]);
-    h.decodes[0]!.reject(new Error('EncodingError'));
-    await settle();
+    h.cache.failed('bad', 'blob:test/2');
     const exposed = JSON.stringify([h.cache.view('a'), h.cache.view('bad')]);
     expect(exposed).not.toContain(
       String(payload[8]) + ',' + String(payload[9]),

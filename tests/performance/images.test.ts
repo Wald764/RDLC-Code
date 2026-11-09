@@ -209,7 +209,7 @@ test('SC-006: the host stages of a 5 MiB import stay within the recorded budgets
     assert.ok(!('code' in picture), 'the picture validates');
     stage.validate = Math.min(stage.validate, lap());
 
-    // 2. Plan and verify the candidate (parses the original and the candidate once each).
+    // 2. Plan and verify the candidate (the accepted syntax is reused as the original; only the candidate is parsed).
     const outcome = planImageCreation(
       snapshot,
       baseline.syntax,

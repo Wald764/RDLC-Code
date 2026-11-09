@@ -593,22 +593,26 @@ export function planPaste(
       root: syntax.root!,
       definitions,
     });
-    const candidate = verifyCandidate(snapshot, plan, (next, original) =>
-      verifyClipboardCandidate(original, next, {
-        inserted: capture.roots.map((root, i) => ({
-          root,
-          start: starts[i]!,
-          fragment: fragments[i]!,
-          bounds: expected[i]!,
-        })),
-        names,
-        removed: [],
-        images: {
-          rename: images.rename,
-          inserted: definitions,
-          required: capture.images.map((entry) => entry.name),
-        },
-      }),
+    const candidate = verifyCandidate(
+      snapshot,
+      plan,
+      (next, original) =>
+        verifyClipboardCandidate(original, next, {
+          inserted: capture.roots.map((root, i) => ({
+            root,
+            start: starts[i]!,
+            fragment: fragments[i]!,
+            bounds: expected[i]!,
+          })),
+          names,
+          removed: [],
+          images: {
+            rename: images.rename,
+            inserted: definitions,
+            required: capture.images.map((entry) => entry.name),
+          },
+        }),
+      syntax,
     ).source;
     return { ok: true, plan, candidate, starts, warnings };
   } catch (error) {
@@ -635,12 +639,16 @@ export function planCut(
   if (errors.length) return { ok: false, diagnostics: errors };
   try {
     const plan = planRemoval(snapshot, nodes);
-    const candidate = verifyCandidate(snapshot, plan, (next, original) =>
-      verifyClipboardCandidate(original, next, {
-        inserted: [],
-        names: new Map(),
-        removed: nodes,
-      }),
+    const candidate = verifyCandidate(
+      snapshot,
+      plan,
+      (next, original) =>
+        verifyClipboardCandidate(original, next, {
+          inserted: [],
+          names: new Map(),
+          removed: nodes,
+        }),
+      syntax,
     ).source;
     return { ok: true, plan, candidate, starts: [], warnings: [] };
   } catch (error) {

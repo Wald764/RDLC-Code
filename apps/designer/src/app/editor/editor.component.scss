@@ -561,6 +561,11 @@
   overflow: hidden;
   pointer-events: none;
 }
+.item .image-loading {
+  // Loading: the `<img>` decodes off-screen and the item keeps showing its placeholder.
+  position: absolute;
+  visibility: hidden;
+}
 .item .image-autosize {
   position: absolute;
   max-width: none;

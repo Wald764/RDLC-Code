@@ -4380,13 +4380,12 @@ describe('embedded image items', () => {
   interface Env {
     created: string[];
     revoked: string[];
-    failing: Set<string>;
   }
   let env: Env;
 
   async function mountImages(items: readonly SceneItem[]) {
     TestBed.resetTestingModule();
-    env = { created: [], revoked: [], failing: new Set(['blob:test/fail']) };
+    env = { created: [], revoked: [] };
     const provided: ImageAssetEnvironment = {
       createObjectURL: (blob) => {
         const url =
@@ -4397,10 +4396,6 @@ describe('embedded image items', () => {
         return url;
       },
       revokeObjectURL: (url) => void env.revoked.push(url),
-      decode: (url) =>
-        env.failing.has(url)
-          ? Promise.reject(new Error('EncodingError'))
-          : Promise.resolve(),
     };
     TestBed.configureTestingModule({
       providers: [{ provide: IMAGE_ASSET_ENVIRONMENT, useValue: provided }],
@@ -4414,6 +4409,24 @@ describe('embedded image items', () => {
     root.querySelector<HTMLElement>('.item[data-kind="image"]')!;
   const img = (root: HTMLElement) => item(root).querySelector('img');
   const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+  /** The rendered <img> is the decoder: report its load (or, for the broken URL, its error). */
+  async function finishImages(m: {
+    element: HTMLElement;
+    settle(): Promise<void>;
+  }) {
+    for (const element of m.element.querySelectorAll('img')) {
+      if (element.getAttribute('src') === 'blob:test/fail')
+        element.dispatchEvent(new Event('error'));
+      else {
+        Object.defineProperty(element, 'naturalWidth', {
+          value: 120,
+          configurable: true,
+        });
+        element.dispatchEvent(new Event('load'));
+      }
+    }
+    await m.settle();
+  }
 
   beforeEach(() => TestBed.resetTestingModule());
   afterEach(() => vi.restoreAllMocks());
@@ -4433,6 +4446,7 @@ describe('embedded image items', () => {
       });
       await flush();
       await m.settle();
+      await finishImages(m);
       const picture_ = img(m.element)!;
       expect(picture_).not.toBeNull();
       expect(picture_.getAttribute('src')).toMatch(/^blob:/);
@@ -4455,6 +4469,7 @@ describe('embedded image items', () => {
     m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
     await flush();
     await m.settle();
+    await finishImages(m);
     const picture_ = img(m.element)!;
     expect(picture_.classList.contains('image-autosize')).toBe(true);
     // The page layer is scaled by the zoom, so natural pixels x zoom is on screen.
@@ -4505,6 +4520,7 @@ describe('embedded image items', () => {
       });
       await flush();
       await m.settle();
+      await finishImages(m);
       // Same origin for every mode: no padding, so switching sizing never shifts it.
       const frame = getComputedStyle(item(m.element));
       expect(frame.padding).toMatch(/^0(px)?( 0(px)?){0,3}$/);
@@ -4547,6 +4563,7 @@ describe('embedded image items', () => {
     });
     await flush();
     await m.settle();
+    await finishImages(m);
     expect(items[1]!.getAttribute('aria-description')).toBeNull();
     expect(items[2]!.getAttribute('aria-description')).toBe(
       imagePlaceholderLabels['data-invalid'],
@@ -4592,9 +4609,48 @@ describe('embedded image items', () => {
     m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
     await flush();
     await m.settle();
+    // The <img> is rendered at once so it can load, but stays hidden and the item
+    // keeps its pending state until the image itself reports a loaded picture.
     expect(img(m.element)?.getAttribute('src')).toMatch(/^blob:/);
+    expect(img(m.element)?.classList.contains('image-loading')).toBe(true);
+    expect(item(m.element).getAttribute('data-image-state')).toBe('pending');
+    expect(
+      item(m.element).querySelector('.image-placeholder')?.textContent?.trim(),
+    ).toBe('Loading image…');
+    await finishImages(m);
+    expect(img(m.element)?.getAttribute('src')).toMatch(/^blob:/);
+    expect(img(m.element)?.classList.contains('image-loading')).toBe(false);
     expect(item(m.element).getAttribute('data-image-state')).toBe('picture');
     expect(item(m.element).querySelector('.image-placeholder')).toBeNull();
+  });
+
+  it('does not accept a loaded image without pixels as a picture', async () => {
+    const m = await mountImages([imageItem('1', picture())]);
+    m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
+    await flush();
+    await m.settle();
+    const element = img(m.element)!;
+    Object.defineProperty(element, 'naturalWidth', { value: 0 });
+    element.dispatchEvent(new Event('load'));
+    await m.settle();
+    expect(img(m.element)).toBeNull();
+    expect(item(m.element).getAttribute('data-image-state')).toBe(
+      'undecodable',
+    );
+  });
+
+  it('falls back to the data-invalid placeholder when the rendered image errors', async () => {
+    const m = await mountImages([imageItem('1', picture())]);
+    m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
+    await flush();
+    await m.settle();
+    img(m.element)!.dispatchEvent(new Event('error'));
+    await m.settle();
+    expect(img(m.element)).toBeNull();
+    expect(item(m.element).getAttribute('data-image-state')).toBe(
+      'undecodable',
+    );
+    expect(env.revoked).toEqual(['blob:test/1']);
   });
 
   it('shows the data-invalid placeholder when the picture cannot be decoded', async () => {
@@ -4606,6 +4662,7 @@ describe('embedded image items', () => {
     });
     await flush();
     await m.settle();
+    await finishImages(m);
     expect(img(m.element)).toBeNull();
     const note = item(m.element).querySelector('.image-placeholder')!;
     expect(note.hasAttribute('data-invalid')).toBe(true);
@@ -4642,6 +4699,7 @@ describe('embedded image items', () => {
     });
     await flush();
     await m.settle();
+    await finishImages(m);
     const html = m.element.innerHTML;
     for (const slice of [
       payload.slice(0, 20),
@@ -4665,6 +4723,7 @@ describe('embedded image items', () => {
     m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
     await flush();
     await m.settle();
+    await finishImages(m);
     expect(env.revoked).toEqual([]);
     m.host.ingest(snapshotWith([], 3));
     await m.settle();
@@ -4677,6 +4736,7 @@ describe('embedded image items', () => {
     m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
     await flush();
     await m.settle();
+    await finishImages(m);
     m.fixture.componentInstance.select(0);
     await m.settle();
     expect(item(m.element).tagName).toBe('BUTTON');

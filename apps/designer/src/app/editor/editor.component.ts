@@ -138,15 +138,25 @@ const union = (all: readonly Bounds[]): Bounds => {
 };
 /** Width of an item's frame border in canvas pixels; keep in step with `.item`. */
 const itemBorder = 1;
-/** Display state of an image item; the picture URL is always a `blob:` URL. */
+/** The picture an `<img>` loads from the asset cache; the URL is always a `blob:` URL. */
+interface ImageSource {
+  readonly key: string;
+  readonly url: string;
+  readonly width: number;
+  readonly height: number;
+}
+/**
+ * Display state of an image item. `picture` only once the rendered `<img>` reported a
+ * decoded picture; while it loads, the item stays `pending` and carries the source of
+ * the hidden `<img>` that is loading it.
+ */
 type ImageItemView =
+  | ({ readonly state: 'picture' } & ImageSource)
   | {
-      readonly state: 'picture';
-      readonly url: string;
-      readonly width: number;
-      readonly height: number;
+      readonly state: 'pending';
+      readonly label: string;
+      readonly loading?: ImageSource;
     }
-  | { readonly state: 'pending'; readonly label: string }
   | {
       readonly state: 'placeholder' | 'undecodable';
       readonly reason: ImagePlaceholderReason;
@@ -259,12 +269,19 @@ export class EditorComponent {
         label: imageReasonLabel(display.reason),
       };
     const asset = this.host.images.view(display.assetKey);
+    const source = (url: string): ImageSource => ({
+      key: display.assetKey,
+      url,
+      width: display.pixels.width,
+      height: display.pixels.height,
+    });
     if (asset.state === 'ready')
+      return { state: 'picture', ...source(asset.url) };
+    if (asset.state === 'loading')
       return {
-        state: 'picture',
-        url: asset.url,
-        width: display.pixels.width,
-        height: display.pixels.height,
+        state: 'pending',
+        label: imagePendingLabel,
+        loading: source(asset.url),
       };
     return asset.state === 'undecodable'
       ? {
@@ -273,6 +290,16 @@ export class EditorComponent {
           label: imageReasonLabel('data-invalid'),
         }
       : { state: 'pending', label: imagePendingLabel };
+  }
+  /** The visible `<img>` is the only decoder: its load event makes the item a picture. */
+  imageLoaded(event: Event, source: ImageSource): void {
+    const element = event.target as HTMLImageElement;
+    if (element.naturalWidth > 0)
+      this.host.images.loaded(source.key, source.url);
+    else this.host.images.failed(source.key, source.url);
+  }
+  imageFailed(source: ImageSource): void {
+    this.host.images.failed(source.key, source.url);
   }
   readonly explainRefusal = explainRefusal;
   private readonly injector = inject(Injector);

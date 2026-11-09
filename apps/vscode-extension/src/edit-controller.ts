@@ -164,8 +164,11 @@ export function planTextboxIntent(
     try {
       const changes = validateLayout(projection, intent.payload);
       const plan = planLayout(snapshot, changes, intent.payload.unit);
-      const candidate = verifyCandidate(snapshot, plan, (next, original) =>
-        verifyLayoutCandidate(original, next, changes),
+      const candidate = verifyCandidate(
+        snapshot,
+        plan,
+        (next, original) => verifyLayoutCandidate(original, next, changes),
+        syntax,
       ).source;
       return {
         ok: true,
@@ -269,12 +272,17 @@ export function planTextboxIntent(
   let candidate: string;
   try {
     plan = planTextboxProperty({ snapshot, textbox, property, value });
-    candidate = verifyCandidate(snapshot, plan, (verified) => {
-      const projected = projectReport(verified);
-      if (projected.status !== 'editable') return false;
-      const edited = projected.textboxes[index];
-      return edited ? textboxValue(edited, property) === value : false;
-    }).source;
+    candidate = verifyCandidate(
+      snapshot,
+      plan,
+      (verified) => {
+        const projected = projectReport(verified);
+        if (projected.status !== 'editable') return false;
+        const edited = projected.textboxes[index];
+        return edited ? textboxValue(edited, property) === value : false;
+      },
+      syntax,
+    ).source;
   } catch (error) {
     return {
       ok: false,
@@ -469,38 +477,43 @@ export function planImageCreation(
         `Inserting "${label}" would exceed the 16 MiB report size limit.`,
         IMAGE_REPORT_BUDGET,
       );
-    const candidate = verifyCandidate(snapshot, plan, (syntax) => {
-      const projected = projectReport(syntax);
-      if (
-        projected.status !== 'editable' ||
-        projected.images.length !== report.images.length + 1 ||
-        projected.embeddedImages.length !==
-          report.embeddedImages.length + (created ? 1 : 0)
-      )
-        return false;
-      const definition = projected.embeddedImages.find(
-        (entry) => entry.name === value,
-      );
-      const inserted = projected.images.find(
-        (entry) => entry.name === name && entry.context === 'body',
-      );
-      return (
-        !!definition?.displayable &&
-        (!created ||
-          (definition.mime === created.mime &&
-            definition.pixels?.width === pixels.width &&
-            definition.pixels.height === pixels.height)) &&
-        inserted?.source === 'Embedded' &&
-        inserted.value?.kind === 'constant' &&
-        inserted.value.text === value &&
-        inserted.definition === value &&
-        inserted.sizing === 'FitProportional' &&
-        inserted.bounds.left === item.left &&
-        inserted.bounds.top === item.top &&
-        inserted.bounds.width === item.width &&
-        inserted.bounds.height === item.height
-      );
-    }).source;
+    const candidate = verifyCandidate(
+      snapshot,
+      plan,
+      (syntax) => {
+        const projected = projectReport(syntax);
+        if (
+          projected.status !== 'editable' ||
+          projected.images.length !== report.images.length + 1 ||
+          projected.embeddedImages.length !==
+            report.embeddedImages.length + (created ? 1 : 0)
+        )
+          return false;
+        const definition = projected.embeddedImages.find(
+          (entry) => entry.name === value,
+        );
+        const inserted = projected.images.find(
+          (entry) => entry.name === name && entry.context === 'body',
+        );
+        return (
+          !!definition?.displayable &&
+          (!created ||
+            (definition.mime === created.mime &&
+              definition.pixels?.width === pixels.width &&
+              definition.pixels.height === pixels.height)) &&
+          inserted?.source === 'Embedded' &&
+          inserted.value?.kind === 'constant' &&
+          inserted.value.text === value &&
+          inserted.definition === value &&
+          inserted.sizing === 'FitProportional' &&
+          inserted.bounds.left === item.left &&
+          inserted.bounds.top === item.top &&
+          inserted.bounds.width === item.width &&
+          inserted.bounds.height === item.height
+        );
+      },
+      syntax,
+    ).source;
     return {
       ok: true,
       plan,
@@ -741,10 +754,15 @@ export function planImageReplacement(
         `Replacing the picture with "${label}" would exceed the 16 MiB report size limit.`,
         IMAGE_REPORT_BUDGET,
       );
-    const candidate = verifyCandidate(snapshot, plan, (next) => {
-      const projected = projectReport(next);
-      return projected.status === 'editable' && verify(projected);
-    }).source;
+    const candidate = verifyCandidate(
+      snapshot,
+      plan,
+      (next) => {
+        const projected = projectReport(next);
+        return projected.status === 'editable' && verify(projected);
+      },
+      syntax,
+    ).source;
     return {
       ok: true,
       plan,
@@ -856,45 +874,50 @@ export function planImageDefinition(
         })
       : planRemoveDefinition(snapshot, root, current);
     const index = report.embeddedImages.indexOf(current);
-    const candidate = verifyCandidate(snapshot, plan, (next) => {
-      const projected = projectReport(next);
-      if (
-        projected.status !== 'editable' ||
-        projected.images.length !== report.images.length
-      )
-        return false;
-      // Every other image keeps its definition and constant value, byte for byte.
-      const imagesKept = report.images.every((before, position) => {
-        const after = projected.images[position]!;
-        const repointed = references.includes(before);
+    const candidate = verifyCandidate(
+      snapshot,
+      plan,
+      (next) => {
+        const projected = projectReport(next);
+        if (
+          projected.status !== 'editable' ||
+          projected.images.length !== report.images.length
+        )
+          return false;
+        // Every other image keeps its definition and constant value, byte for byte.
+        const imagesKept = report.images.every((before, position) => {
+          const after = projected.images[position]!;
+          const repointed = references.includes(before);
+          return (
+            after.name === before.name &&
+            (repointed
+              ? after.definition === newName &&
+                after.value?.kind === 'constant' &&
+                after.value.text === newName
+              : after.definition === before.definition &&
+                JSON.stringify(after.value) === JSON.stringify(before.value))
+          );
+        });
+        if (!imagesKept) return false;
+        const expected = report.embeddedImages
+          .map((entry) =>
+            entry === current ? (rename ? newName : null) : entry.name,
+          )
+          .filter((name): name is string => name !== null);
         return (
-          after.name === before.name &&
-          (repointed
-            ? after.definition === newName &&
-              after.value?.kind === 'constant' &&
-              after.value.text === newName
-            : after.definition === before.definition &&
-              JSON.stringify(after.value) === JSON.stringify(before.value))
+          projected.embeddedImages.length === expected.length &&
+          projected.embeddedImages.every(
+            (entry, position) =>
+              entry.name === expected[position] &&
+              entry.encodedSize ===
+                report.embeddedImages[
+                  position + (!rename && position >= index ? 1 : 0)
+                ]!.encodedSize,
+          )
         );
-      });
-      if (!imagesKept) return false;
-      const expected = report.embeddedImages
-        .map((entry) =>
-          entry === current ? (rename ? newName : null) : entry.name,
-        )
-        .filter((name): name is string => name !== null);
-      return (
-        projected.embeddedImages.length === expected.length &&
-        projected.embeddedImages.every(
-          (entry, position) =>
-            entry.name === expected[position] &&
-            entry.encodedSize ===
-              report.embeddedImages[
-                position + (!rename && position >= index ? 1 : 0)
-              ]!.encodedSize,
-        )
-      );
-    }).source;
+      },
+      syntax,
+    ).source;
     return {
       ok: true,
       plan,
@@ -1436,10 +1459,15 @@ export function planAuthoringIntent(
         candidate.textboxes.length === report.textboxes.length - 1 &&
         !candidate.textboxes.some((entry) => entry.name === textbox.name);
     }
-    const candidate = verifyCandidate(snapshot, plan, (syntax) => {
-      const projected = projectReport(syntax);
-      return projected.status === 'editable' && verify(projected);
-    }).source;
+    const candidate = verifyCandidate(
+      snapshot,
+      plan,
+      (syntax) => {
+        const projected = projectReport(syntax);
+        return projected.status === 'editable' && verify(projected);
+      },
+      syntax,
+    ).source;
     return {
       ok: true,
       plan,

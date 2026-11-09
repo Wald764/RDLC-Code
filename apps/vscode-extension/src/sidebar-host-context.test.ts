@@ -4,16 +4,14 @@ import { registerHooks } from 'node:module';
 import type { DocumentSession } from './document-session.js';
 import type { SidebarHostContext as HostContext } from './sidebar/host-context.js';
 
-type Listener = () => void;
-
-class FakeEmitter {
-  private listeners = new Set<Listener>();
-  readonly event = (listener: Listener) => {
+class FakeEmitter<T = void> {
+  private listeners = new Set<(value: T) => void>();
+  readonly event = (listener: (value: T) => void) => {
     this.listeners.add(listener);
     return { dispose: () => this.listeners.delete(listener) };
   };
-  fire(): void {
-    for (const listener of [...this.listeners]) listener();
+  fire(value: T): void {
+    for (const listener of [...this.listeners]) listener(value);
   }
   dispose(): void {
     this.listeners.clear();
@@ -41,6 +39,7 @@ interface FakeUri {
 }
 
 const tabs = new FakeEmitter();
+const changes = new FakeEmitter<{ document: unknown }>();
 const group = {
   viewColumn: 1,
   activeTab: undefined as { input: unknown } | undefined,
@@ -76,7 +75,7 @@ const fakeVscode = {
     onDidOpenTextDocument: new FakeEmitter().event,
     onDidSaveTextDocument: new FakeEmitter().event,
     onDidRenameFiles: new FakeEmitter().event,
-    onDidChangeTextDocument: new FakeEmitter().event,
+    onDidChangeTextDocument: changes.event,
     onDidCloseTextDocument: new FakeEmitter().event,
   },
 };
@@ -134,6 +133,7 @@ beforeEach(() => {
   windowState.focused = true;
   fakeVscode.workspace.textDocuments = [];
   document.getText = () => '<Report/>';
+  document.version = 1;
 });
 
 function panel(viewColumn: number) {
@@ -863,4 +863,53 @@ test("another action's chooser events never pause this action's timeout", async 
   } finally {
     host.dispose();
   }
+});
+
+test('a change reuses the owning session evaluation: one evaluation per version', async () => {
+  const { evaluateReport, snapshotOf } = await import('./report-evaluation.js');
+  fakeVscode.workspace.textDocuments = [document];
+  let reads = 0;
+  document.getText = () => {
+    reads += 1;
+    return editableReport;
+  };
+  const host: HostContext = new SidebarHostContext();
+  // Like DocumentSession: evaluates a version once, then answers from memory.
+  let accepted: ReturnType<typeof evaluateReport> | undefined;
+  const owner = {
+    ...session(),
+    get evaluation() {
+      if (accepted?.snapshot.version !== document.version)
+        accepted = evaluateReport(snapshotOf(document as never));
+      return accepted;
+    },
+  };
+  host.register(
+    document as never,
+    panel(1) as never,
+    owner as unknown as DocumentSession,
+  );
+  reads = 0;
+  document.version = 2;
+  changes.fire({ document });
+  assert.equal(reads, 1, 'one full evaluation for the new version');
+  document.version = 3;
+  changes.fire({ document });
+  assert.equal(reads, 2, 'one more for the next version, none duplicated');
+  host.dispose();
+});
+
+test('a change to a document without a designer session evaluates it once itself', () => {
+  fakeVscode.workspace.textDocuments = [document];
+  let reads = 0;
+  document.getText = () => {
+    reads += 1;
+    return editableReport;
+  };
+  const host: HostContext = new SidebarHostContext();
+  document.version = 2;
+  reads = 0;
+  changes.fire({ document });
+  assert.equal(reads, 1);
+  host.dispose();
 });

@@ -191,6 +191,19 @@ async function insertPngThenJpeg(): Promise<void> {
     assert.deepEqual(source.calls, ['pick', 'stat', 'read']);
     const afterPng = document.getText();
     assert.equal(document.isDirty, true, 'the document becomes dirty');
+    // The applied version is published exactly once, and its picture travels before
+    // the snapshot that references it so the webview already holds the bytes.
+    const published = designer.messages.filter(
+      (m) => m.kind === 'snapshot' && m.version === first.version,
+    );
+    assert.equal(published.length, 1, 'the applied version is published once');
+    const assetsAt = designer.messages.findIndex(
+      (m) => m.kind === 'imageAssets',
+    );
+    assert.ok(
+      assetsAt >= 0 && assetsAt < designer.messages.indexOf(published[0]!),
+      'the imageAssets message precedes the snapshot referencing it',
+    );
 
     source.enqueue({ fileName: 'photo.jpg', bytes: picture('photo.jpg') });
     const second = await designer.create();

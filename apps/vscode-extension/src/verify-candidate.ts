@@ -170,7 +170,11 @@ export function verifyLayoutCandidate(
   return stripped(original, oldMasks) === stripped(candidate, newMasks);
 }
 
-/** The caller must verify the typed intention and authored rules; no default accepting verifier. */
+/**
+ * The caller must verify the typed intention and authored rules; no default accepting
+ * verifier. `parsed` is the already-accepted syntax of exactly this snapshot (same uri,
+ * version and text); when it matches, the original is not parsed a second time.
+ */
 export function verifyCandidate(
   snapshot: DocumentSnapshot,
   plan: PatchPlan,
@@ -178,8 +182,15 @@ export function verifyCandidate(
     candidate: XmlSyntaxDocument,
     original: XmlSyntaxDocument,
   ) => boolean,
+  parsed?: XmlSyntaxDocument,
 ): { readonly source: string; readonly syntax: XmlSyntaxDocument } {
-  const original = parse(snapshot);
+  const original =
+    parsed &&
+    parsed.snapshot.uri === snapshot.uri &&
+    parsed.snapshot.version === snapshot.version &&
+    parsed.snapshot.source === snapshot.source
+      ? parsed
+      : parse(snapshot);
   if (original.status !== 'valid')
     throw new Error('Original XML is not safely editable');
   const scopes: Record<string, Readonly<Record<string, string>>> = {};

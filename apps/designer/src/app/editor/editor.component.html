@@ -618,7 +618,13 @@
                   >
                     @if (item.kind === 'image') {
                       @let picture = imageView(item);
-                      @if (picture.state === 'picture') {
+                      @let shown =
+                        picture.state === 'picture'
+                          ? picture
+                          : picture.state === 'pending'
+                            ? picture.loading
+                            : undefined;
+                      @if (shown) {
                         @if (item.sizing === 'AutoSize') {
                           @let layer = autosizeLayer(item)!;
                           <span
@@ -630,31 +636,40 @@
                           >
                             <img
                               class="image image-autosize"
+                              [class.image-loading]="
+                                picture.state !== 'picture'
+                              "
                               data-sizing="AutoSize"
                               [style.left.px]="layer.left"
                               [style.top.px]="layer.top"
-                              [style.width.px]="picture.width"
-                              [style.height.px]="picture.height"
-                              [src]="picture.url"
+                              [style.width.px]="shown.width"
+                              [style.height.px]="shown.height"
+                              [src]="shown.url"
                               alt=""
                               draggable="false"
+                              (load)="imageLoaded($event, shown)"
+                              (error)="imageFailed(shown)"
                             />
                           </span>
                         } @else {
                           <img
                             class="image"
+                            [class.image-loading]="picture.state !== 'picture'"
                             [class.image-fit]="item.sizing === 'Fit'"
                             [class.image-fit-proportional]="
                               item.sizing === 'FitProportional'
                             "
                             [class.image-clip]="item.sizing === 'Clip'"
                             [attr.data-sizing]="item.sizing"
-                            [src]="picture.url"
+                            [src]="shown.url"
                             alt=""
                             draggable="false"
+                            (load)="imageLoaded($event, shown)"
+                            (error)="imageFailed(shown)"
                           />
                         }
-                      } @else {
+                      }
+                      @if (picture.state !== 'picture') {
                         <span
                           class="content image-placeholder"
                           [attr.data-state]="picture.state"

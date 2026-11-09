@@ -139,7 +139,11 @@ export class SidebarHostContext implements vscode.Disposable {
       }),
       vscode.workspace.onDidChangeTextDocument(({ document }) => {
         if (this.documents.has(document) || this.isReport(document)) {
-          this.accept(document);
+          // A designer session already evaluates every version of its document: reuse
+          // that evaluation instead of parsing and projecting the same text again.
+          const shared = this.sessionEvaluation(document);
+          if (!shared || this.documents.get(document)?.evaluation !== shared)
+            this.accept(document, shared);
           this.refreshFocus();
         }
       }),
@@ -626,6 +630,16 @@ export class SidebarHostContext implements vscode.Disposable {
       return false;
     const root = evaluateReport(snapshotOf(document)).syntax.root;
     return root?.expandedName.localName === 'Report';
+  }
+
+  /** The evaluation of the current version, from the session that owns the document. */
+  private sessionEvaluation(
+    document: vscode.TextDocument,
+  ): ReportEvaluation | undefined {
+    for (const view of this.views.values())
+      if (view.document === document && !view.document.isClosed)
+        return view.session.evaluation;
+    return undefined;
   }
 
   private accept(document: vscode.TextDocument, accepted?: ReportEvaluation) {

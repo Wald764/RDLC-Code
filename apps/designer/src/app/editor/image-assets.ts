@@ -3,14 +3,13 @@ import type { ImageAsset } from '@rdlc/report-model/protocol';
 import type { DesignScene } from '@rdlc/report-model/scene';
 
 /**
- * The browser primitives the cache depends on, injectable so tests need neither a
- * real object-URL store nor a real image decoder.
+ * The browser primitives the cache depends on, injectable so tests need no real
+ * object-URL store. Decoding is not one of them: the rendered `<img>` is the only
+ * decoder, and its load/error events report back through `loaded` / `failed`.
  */
 export interface ImageAssetEnvironment {
   createObjectURL(blob: Blob): string;
   revokeObjectURL(url: string): void;
-  /** Resolves when the browser can decode the picture; rejects when it cannot. */
-  decode(url: string): Promise<void>;
 }
 
 export const IMAGE_ASSET_ENVIRONMENT =
@@ -19,21 +18,19 @@ export const IMAGE_ASSET_ENVIRONMENT =
     factory: () => ({
       createObjectURL: (blob) => URL.createObjectURL(blob),
       revokeObjectURL: (url) => URL.revokeObjectURL(url),
-      decode: (url) => {
-        const image = new Image();
-        image.src = url;
-        return image.decode();
-      },
     }),
   });
 
 /**
  * What the canvas may show for a key. `pending` covers a key whose asset has not
- * arrived yet, one that is still decoding and one that was released: never a
- * broken image. Only `ready` carries a URL, and it is always a `blob:` URL.
+ * arrived yet and one that was released. `loading` carries the `blob:` URL the
+ * rendered `<img>` is loading (it stays hidden, never a broken image) and `ready`
+ * the same URL once that `<img>` reported a decoded picture. `undecodable` is the
+ * `<img>` failing to load it.
  */
 export type ImageAssetView =
   | { readonly state: 'pending' }
+  | { readonly state: 'loading'; readonly url: string }
   | { readonly state: 'ready'; readonly url: string }
   | { readonly state: 'undecodable' };
 
@@ -41,7 +38,7 @@ interface Entry {
   readonly blob: Blob;
   /** Live object URL; null while the key is released or when the picture cannot be decoded. */
   url: string | null;
-  status: 'idle' | 'decoding' | 'ready' | 'undecodable';
+  status: 'idle' | 'loading' | 'ready' | 'undecodable';
 }
 
 /** Asset keys the scene's picture items reference. */
@@ -105,8 +102,10 @@ export class ImageAssetCache {
   view(key: string): ImageAssetView {
     this.counter();
     const entry = this.entries.get(key);
-    if (entry?.status === 'ready' && entry.url)
+    if (entry?.url && entry.status === 'ready')
       return { state: 'ready', url: entry.url };
+    if (entry?.url && entry.status === 'loading')
+      return { state: 'loading', url: entry.url };
     if (entry?.status === 'undecodable') return { state: 'undecodable' };
     return { state: 'pending' };
   }
@@ -125,17 +124,23 @@ export class ImageAssetCache {
     if (!this.referenced.has(key)) return;
     const url = this.env.createObjectURL(entry.blob);
     entry.url = url;
-    entry.status = 'decoding';
-    this.env.decode(url).then(
-      () => this.settle(key, url, 'ready'),
-      () => this.settle(key, url, 'undecodable'),
-    );
+    entry.status = 'loading';
   }
 
-  /** Applies a decode result unless the URL was revoked in the meantime. */
+  /** The rendered `<img>` of this URL loaded a picture; ignored once the URL is gone. */
+  loaded(key: string, url: string): void {
+    this.settle(key, url, 'ready');
+  }
+
+  /** The rendered `<img>` of this URL could not load a picture; ignored once the URL is gone. */
+  failed(key: string, url: string): void {
+    this.settle(key, url, 'undecodable');
+  }
+
+  /** Applies an image result unless the URL was revoked or already settled in the meantime. */
   private settle(key: string, url: string, status: 'ready' | 'undecodable') {
     const entry = this.entries.get(key);
-    if (!entry || entry.url !== url) return;
+    if (!entry || entry.url !== url || entry.status !== 'loading') return;
     if (status === 'undecodable') {
       this.env.revokeObjectURL(url);
       entry.url = null;
@@ -149,7 +154,7 @@ export class ImageAssetCache {
       this.env.revokeObjectURL(entry.url);
       entry.url = null;
     }
-    // Released keys get a fresh decode attempt when referenced again.
+    // Released keys get a fresh load attempt when referenced again.
     entry.status = 'idle';
   }
 
