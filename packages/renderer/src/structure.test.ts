@@ -342,3 +342,75 @@ test('structure projection stops at the shared 2,000/2,001 entry boundary with a
       assert.ok(ids.has(node.parentId), `${node.id}: closed prefix`);
   }
 });
+
+test('image items get kind image, in source order, with their capability state', () => {
+  const read = (name: string) =>
+    readFileSync(`tests/fixtures/images/${name}`, 'utf8');
+  const project = (name: string) => {
+    const source = read(name);
+    const syntax = parse({
+      uri: `fixture:${name}`,
+      version: 3,
+      source,
+      eol: '\n',
+    });
+    const report = projectReport(syntax);
+    return { source, report, structure: projectStructure(syntax, report) };
+  };
+
+  const authored = project('authored.rdlc');
+  const images = authored.structure.nodes.filter((n) => n.kind === 'image');
+  assert.deepEqual(
+    images.map((n) => n.name),
+    ['LogoAutoSize', 'LogoFit', 'PhotoFitProportional', 'PhotoClip', 'Tagged'],
+    'every Image element, in source order',
+  );
+  assert.deepEqual(
+    images.map((n) => n.label),
+    images.map((n) => `Image: ${n.name}`),
+  );
+  const starts = images.map((n) => n.range.start);
+  assert.deepEqual(
+    starts,
+    [...starts].sort((a, b) => a - b),
+  );
+  // Editable images claim no preservation reason; unknown children never change that.
+  for (const node of images)
+    assert.equal(node.preservedReason, null, node.name!);
+  const body = authored.structure.nodes.find((n) => n.kind === 'body')!;
+  for (const node of images) assert.equal(node.parentId, body.id);
+  assert.ok(
+    !authored.structure.nodes.some(
+      (n) => n.parentId && images.some((i) => i.id === n.parentId),
+    ),
+    'an image has no structural children (unknown content stays inside it)',
+  );
+  assert.ok(
+    !authored.structure.nodes.some((n) => n.kind === 'preserved'),
+    'images are no longer reported as preserved',
+  );
+
+  // Preservation-only and geometry-only images keep their honest state and stay listed.
+  const mixed = project('preserved.rdlc');
+  const byName = (name: string) =>
+    mixed.structure.nodes.find((n) => n.name === name)!;
+  for (const name of [
+    'ExternalPicture',
+    'DatabasePicture',
+    'ExpressionPicture',
+    'CellPicture',
+  ]) {
+    assert.equal(byName(name).kind, 'image', name);
+    assert.ok(byName(name).preservedReason, `${name}: preservation-only`);
+  }
+  for (const name of ['GifPicture', 'GhostPicture'])
+    assert.equal(
+      byName(name).preservedReason,
+      null,
+      `${name}: geometry-only item stays authorable`,
+    );
+  assert.equal(
+    byName('CellPicture').parentId,
+    mixed.structure.nodes.find((n) => n.kind === 'cell')!.id,
+  );
+});

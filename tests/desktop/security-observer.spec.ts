@@ -1,10 +1,17 @@
 import { test, expect } from 'playwright/test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { BrowserContext, Page } from 'playwright';
+import type { BrowserContext, Frame, Page } from 'playwright';
 import {
   closeTrustEditor,
   commandAvailable,
@@ -201,6 +208,7 @@ async function expectTerminalRefused(driver: DesktopDriver): Promise<void> {
 async function reportJourney(
   driver: DesktopDriver,
   fixture: string,
+  images: { readonly authored: string; readonly preserved: string },
 ): Promise<void> {
   // A restricted window can reach the journey before the installed extension is
   // registered: the file would open as plain text and the command would be absent.
@@ -208,6 +216,36 @@ async function reportJourney(
     throw new Error(
       'RDLC Code: Open Designer is not registered in the window.',
     );
+  // Feature 006 (SC-004): the image fixtures run through the same observed
+  // journey. Pictures are decoded from the report's own bytes, placeholders are
+  // never loaded, and no file is read beyond the allowlist (no chooser opens).
+  const authored = await openReportShowing(
+    driver,
+    images.authored,
+    '.item[data-kind="image"][data-image-state="picture"][aria-label="Image LogoFit"]',
+  );
+  await expect
+    .poll(() =>
+      authored
+        .locator('.item[data-kind="image"][aria-label="Image LogoFit"] img')
+        .evaluate(
+          (image: HTMLImageElement) => image.complete && image.naturalWidth > 0,
+        ),
+    )
+    .toBe(true);
+  const preserved = await openReportShowing(
+    driver,
+    images.preserved,
+    '.item[data-kind="image"][data-image-state="placeholder"][aria-label="Image GhostPicture"]',
+  );
+  await expect(preserved.locator('.item[data-kind="image"] img')).toHaveCount(
+    0,
+  );
+  // Every later step addresses the single designer frame (driver.designerFrame
+  // is strict about ambiguity), so the image designers are closed first and the
+  // hostile fixture below is the only designer left open.
+  await closeAllDesigners(driver);
+
   const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
   await driver.page.keyboard.press(`${modifier}+p`);
   const quickOpen = driver.page.locator(
@@ -223,10 +261,12 @@ async function reportJourney(
   await expect(driver.page.locator('.quick-input-box input')).toBeHidden();
   await driver.command('RDLC Code: Open Designer');
   const frame = await driver.designerFrame();
-  // The hostile fixture must really be loaded: its external Image renders as an
-  // unsupported placeholder on the canvas, before any inertness is asserted.
+  // The hostile fixture must really be loaded: its external Image renders as a
+  // preservation-only placeholder on the canvas, before any inertness is asserted.
   await expect(
-    frame.locator('[data-kind="preserved"][aria-label="Image (unsupported)"]'),
+    frame.locator(
+      '.item[data-kind="image"][data-image-state="placeholder"][aria-label="Image CanaryImage"]',
+    ),
   ).toBeVisible();
   const textbox = frame.locator('[data-card="Textbox"]');
   if (!(await textbox.isVisible()))
@@ -235,6 +275,81 @@ async function reportJourney(
       .click();
   await expect(textbox).toBeVisible();
   await textbox.click();
+}
+
+/** Designer webviews currently hosting `rdlc-editor`; detached frames are ignored. */
+async function designerFrameCount(driver: DesktopDriver): Promise<number> {
+  let count = 0;
+  for (const frame of driver.page.frames()) {
+    if (frame === driver.page.mainFrame() || frame.isDetached()) continue;
+    const hosted = await frame
+      .locator('rdlc-editor')
+      .count()
+      .catch(() => 0);
+    if (hosted > 0) count++;
+  }
+  return count;
+}
+
+/** Close every editor and wait until no designer webview remains. */
+async function closeAllDesigners(driver: DesktopDriver): Promise<void> {
+  await driver.command('View: Close All Editors');
+  await expect
+    .poll(() => designerFrameCount(driver), {
+      message: 'every designer webview is disposed',
+      timeout: 20_000,
+    })
+    .toBe(0);
+}
+
+/** Quick-open a report, open its designer and return the frame that shows `selector`. */
+async function openReportShowing(
+  driver: DesktopDriver,
+  path: string,
+  selector: string,
+): Promise<Frame> {
+  const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+  await driver.page.keyboard.press(`${modifier}+p`);
+  const quickOpen = driver.page.locator(
+    '.quick-input-widget:visible .quick-input-box input',
+  );
+  await quickOpen.waitFor({ state: 'visible' });
+  await setQuickInputText(quickOpen, path);
+  await driver.page
+    .locator('.quick-input-widget:visible .monaco-list-row')
+    .filter({ hasText: basename(path) })
+    .first()
+    .click();
+  await expect(driver.page.locator('.quick-input-box input')).toBeHidden();
+  await expect(
+    driver.page.locator('.part.editor .tabs-container .tab.active'),
+  ).toContainText(basename(path));
+  await driver.command('RDLC Code: Open Designer');
+  // Retained frames of earlier reports stay hidden: only a visible match counts.
+  let shown: Frame | null = null;
+  await expect
+    .poll(
+      async () => {
+        shown = null;
+        for (const frame of driver.page.frames()) {
+          if (frame === driver.page.mainFrame()) continue;
+          if (
+            await frame
+              .locator(selector)
+              .first()
+              .isVisible()
+              .catch(() => false)
+          ) {
+            shown = frame;
+            return true;
+          }
+        }
+        return false;
+      },
+      { message: `a designer frame shows ${basename(path)}`, timeout: 45_000 },
+    )
+    .toBe(true);
+  return shown!;
 }
 
 /**
@@ -579,7 +694,10 @@ test('security observer: real trust states, host tree and webview attempts fail 
       // Journey window: the hostile fixture is opened and used for real; the host
       // tree must do nothing unexpected and must never touch the canary.
       const journey = await observe(driver, capability, root, isolation, () =>
-        reportJourney(driver!, fixture),
+        reportJourney(driver!, fixture, {
+          authored: join(isolation.fixtureDir, 'images-authored.rdlc'),
+          preserved: join(isolation.fixtureDir, 'images-preserved.rdlc'),
+        }),
       );
       record.journey = journey;
       if (native) {
@@ -882,6 +1000,16 @@ test('security observer: real trust states, host tree and webview attempts fail 
       'utf8',
     );
 
+    // Feature 006: the image fixtures sit beside it, read-only like the hostile one.
+    for (const [name, source] of [
+      ['images-authored.rdlc', 'authored.rdlc'],
+      ['images-preserved.rdlc', 'preserved.rdlc'],
+    ] as const)
+      await copyFile(
+        resolve(root, 'tests/fixtures/images', source),
+        join(fixtureDir, name),
+      );
+
     await runProfile('restricted', fixture, canaryPath, canaryName, isolation);
     // Provisioning of the trusted profile happens after blocking was released.
     await runProfile('trusted', fixture, canaryPath, canaryName, isolation);
@@ -988,7 +1116,7 @@ test('security observer: real trust states, host tree and webview attempts fail 
           browserBlockingScope:
             'Playwright request routing only; it is supporting coverage, not proof of host-level blocking.',
           canaryScope:
-            'No current product code path resolves external resources (image URLs, data source connections), so the canary check is a regression guard, not evidence that a resolver was exercised. The hostile fixture is verified loaded in the designer (unsupported Image placeholder) before inertness is asserted; the canary name is short enough to survive target sanitization.',
+            'No current product code path resolves external resources (image URLs, data source connections), so the canary check is a regression guard, not evidence that a resolver was exercised. The hostile fixture is verified loaded in the designer (preservation-only Image placeholder) before inertness is asserted; the image fixtures (authored pictures and preserved placeholders) run through the same observed journey in both profiles; the canary name is short enough to survive target sanitization.',
           semanticScope:
             'Syscall-level only: with blocking active, the hostile canary journey of both the restricted and the trusted profile produced no unexpected file, execve or non-loopback connect and never opened the canary; harness-only attempts (including a canary open) were observed. Query/entity/resource evaluation is not attributed.',
           checks,

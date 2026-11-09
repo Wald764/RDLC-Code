@@ -55,7 +55,13 @@ export const authoringFields = {
   setFieldType: ['type'],
   setPage: ['property', 'value'],
   createTextbox: ['left', 'top'],
+  createImage: ['placement'],
+  setImageProperty: ['property', 'value'],
+  replaceImagePicture: ['scope'],
+  renameEmbeddedImage: ['definition', 'newName'],
+  removeEmbeddedImage: ['definition'],
   deleteTextbox: ['confirm'],
+  deleteImage: ['confirm'],
   createTable: ['left', 'top'],
   renameTable: ['name'],
   setTableDataset: ['dataset'],
@@ -72,10 +78,43 @@ export const authoringFields = {
   changeTotal: ['field', 'scope', 'column', 'row'],
   removeTotal: ['row'],
 } as const;
+/**
+ * Optional string payload fields per action. `createImage` never carries a file path,
+ * URI or bytes: the host owns the file chooser and the file read. `definition` names an
+ * existing embedded image to insert without the chooser. `renameEmbeddedImage` and
+ * `removeEmbeddedImage` carry only definition names; the target item is the report.
+ */
+export const authoringOptionalFields = {
+  createImage: ['left', 'top', 'definition'],
+} as const;
+export const imagePlacements = ['default', 'drop'] as const;
+/**
+ * `setImageProperty` properties: one scalar each. Geometry travels as a `LayoutIntent`
+ * and the picture as `replaceImagePicture`; the target item is the intent's `targetId`.
+ */
+export const imageScalarProperties = [
+  'sizing',
+  'value',
+  'toolTip',
+  'name',
+] as const;
+export type ImageScalarProperty = (typeof imageScalarProperties)[number];
+/**
+ * `replaceImagePicture` scopes: `item` writes a new definition (or reuses an identical
+ * one) and repoints only the target; `all` rewrites the referenced definition in place.
+ */
+export const imageReplaceScopes = ['item', 'all'] as const;
+export type ImageReplaceScope = (typeof imageReplaceScopes)[number];
 export type AuthoringAction = keyof typeof authoringFields;
+type OptionalFieldsOf<K extends AuthoringAction> =
+  K extends keyof typeof authoringOptionalFields
+    ? (typeof authoringOptionalFields)[K][number]
+    : never;
 type AuthoringPayload = {
   [K in AuthoringAction]: { readonly action: K } & {
     readonly [F in (typeof authoringFields)[K][number]]: string;
+  } & {
+    readonly [F in OptionalFieldsOf<K>]?: string;
   };
 }[AuthoringAction];
 export interface AuthoringIntent {

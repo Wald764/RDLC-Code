@@ -1001,14 +1001,22 @@ test('FR-027-keyboard', async () => {
         name: 'Properties',
         exact: true,
       });
-      if ((await properties.getAttribute('aria-expanded')) === 'false') {
-        await properties.focus();
-        await page.keyboard.press('Enter');
-      }
       const nameField = frame.getByRole('textbox', {
         name: 'Name',
         exact: true,
       });
+      // The toggle's aria-expanded races with layout: re-read it on every attempt and
+      // only press when the field is hidden and the section reports itself collapsed.
+      await expect(async () => {
+        if (
+          !(await nameField.isVisible()) &&
+          (await properties.getAttribute('aria-expanded')) === 'false'
+        ) {
+          await properties.focus();
+          await page.keyboard.press('Enter');
+        }
+        await expect(nameField).toBeVisible({ timeout: 2_000 });
+      }).toPass({ timeout: 15_000 });
       await expect(nameField).toBeVisible();
       const accepted = await nameField.inputValue();
       expect(accepted).toBe('Title');

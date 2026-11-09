@@ -11,7 +11,9 @@ import type { XmlNode } from '@rdlc/report-model/syntax';
 /**
  * RDL 2016/01 property placement for newly authored elements. The schema uses
  * `xsd:choice`, so order is free; this table only makes insertion deterministic
- * and preserves the source order of every existing element.
+ * and preserves the source order of every existing element. `Image` (MS-RDL 2.12) is an
+ * unbounded `xsd:choice` too, with the same leading Top/Left/Height/Width order, so image
+ * geometry patches reuse this table.
  */
 const textboxOrder = [
   'Style',

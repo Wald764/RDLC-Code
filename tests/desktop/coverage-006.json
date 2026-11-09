@@ -1,0 +1,458 @@
+{
+  "schemaVersion": 1,
+  "feature": "006-embedded-image-authoring",
+  "authority": {
+    "spec": "specs/006-embedded-image-authoring/spec.md",
+    "evidenceContract": "specs/006-embedded-image-authoring/contracts/desktop-validation.md"
+  },
+  "notes": [
+    "Planned test IDs are executable assertion identifiers (<test file>::<assertion>); they are not executed evidence.",
+    "Every row is mandatory. Absent, unrun, failed or unverified-artifact assertions remain unvalidated.",
+    "Fixture IDs resolve through tests/fixtures/manifest.json; oracle text is the independent expected result to assert.",
+    "Only tests/desktop/images.spec.ts::SC-006-timing (latency budgets) and the visual.spec.ts image cases (pixel mismatch) are informational, per tests/desktop/qa-classification.ts; every other assertion is critical."
+  ],
+  "rows": [
+    {
+      "id": "US1.1",
+      "kind": "scenario",
+      "source": "spec.md US1.1",
+      "requires": ["FR-001", "FR-002"],
+      "fixtures": ["images-blank"],
+      "oracle": "Activating Image opens a chooser limited to PNG and JPEG; cancelling it leaves the report bytes unchanged, no dirty tab and no undo entry (the next insertion is the first and only history step).",
+      "tests": [
+        "tests/desktop/images.spec.ts::US1-insert-undo",
+        "apps/vscode-extension/src/image-import.test.ts::a cancelled chooser stops before any file access",
+        "tests/vscode/images.test.ts::run"
+      ]
+    },
+    {
+      "id": "US1.2",
+      "kind": "scenario",
+      "source": "spec.md US1.2",
+      "requires": ["FR-003", "FR-004", "FR-008"],
+      "fixtures": ["images-blank"],
+      "oracle": "A valid PNG or JPEG adds one EmbeddedImages collection (when absent), one definition and one Embedded FitProportional image item at the default or drop position; the item is selected and the document is dirty; every other byte is unchanged.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US1-insert-undo",
+        "packages/xml-serializer/src/images.test.ts::creates EmbeddedImages as the last child of Report when it is absent",
+        "apps/vscode-extension/src/image-import.test.ts::a new picture adds one definition and one FitProportional item"
+      ]
+    },
+    {
+      "id": "US1.3",
+      "kind": "scenario",
+      "source": "spec.md US1.3",
+      "requires": ["FR-014", "FR-015"],
+      "fixtures": ["images-blank"],
+      "oracle": "The inserted picture is decoded and painted inside the item bounds; the default size is the natural pixel size at 96 dpi (90pt x 30pt for the 120 x 40 px logo), reduced to the body width keeping the aspect ratio.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US1-insert-undo",
+        "apps/vscode-extension/src/image-import.test.ts::the size is the natural pixel size at 96 DPI in inches",
+        "packages/renderer/src/render.test.ts::authored images render as picture items keyed by the definition hash"
+      ]
+    },
+    {
+      "id": "US1.4",
+      "kind": "scenario",
+      "source": "spec.md US1.4",
+      "requires": ["FR-009", "FR-013"],
+      "fixtures": ["images-blank"],
+      "oracle": "One Undo removes both the item and the definition it introduced and the report text equals the original bytes; one Redo restores both exactly.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US1-insert-undo",
+        "tests/vscode/images.test.ts::run"
+      ]
+    },
+    {
+      "id": "US1.5",
+      "kind": "scenario",
+      "source": "spec.md US1.5",
+      "requires": ["FR-002", "FR-003", "FR-025"],
+      "fixtures": ["images-blank"],
+      "oracle": "A damaged picture is refused with its file name and reason in the designer; the report bytes and the undo history are unchanged and no picture data appears in the message. Wrong signature, truncation, size, pixel and budget refusals are covered below the desktop.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US1-insert-undo",
+        "packages/validation/src/images.test.ts::refused fixtures carry the expected code and the file name",
+        "apps/vscode-extension/src/image-import.test.ts::the refusal corpus maps to the contract codes",
+        "tests/vscode/images.test.ts::run"
+      ]
+    },
+    {
+      "id": "US1.6",
+      "kind": "scenario",
+      "source": "spec.md US1.6",
+      "requires": ["FR-006"],
+      "fixtures": ["images-blank", "images-collision"],
+      "oracle": "Importing a picture whose bytes equal an existing definition reuses that definition and writes only the item.",
+      "tests": [
+        "apps/vscode-extension/src/image-import.test.ts::inserting the same picture twice reuses the definition",
+        "packages/xml-serializer/src/images.test.ts::a reused definition writes only the item",
+        "tests/vscode/images.test.ts::run"
+      ]
+    },
+    {
+      "id": "US2.1",
+      "kind": "scenario",
+      "source": "spec.md US2.1",
+      "requires": ["FR-010"],
+      "fixtures": ["images-authored"],
+      "oracle": "A clicked image is the primary item with eight resize handles, the accessible name \"Image <name>\" and multi-selection like any item.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US2-manipulate",
+        "apps/designer/src/app/editor/editor.component.spec.ts::selects an image, extends the selection with a textbox and selects all",
+        "apps/designer/src/app/editor/editor.component.spec.ts::names an image \"Image {name}\" and keeps the other items on their label"
+      ]
+    },
+    {
+      "id": "US2.2",
+      "kind": "scenario",
+      "source": "spec.md US2.2",
+      "requires": ["FR-010"],
+      "fixtures": ["images-authored"],
+      "oracle": "A pointer or keyboard move, and a pointer or Width-field resize, changes only the Left/Top/Width/Height of that item; the rest of the item (unknown children, foreign attribute) and every other byte is unchanged.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US2-manipulate",
+        "apps/designer/src/app/editor/editor.component.spec.ts::moves and resizes an image with the pointer",
+        "apps/designer/src/app/editor/editor.component.spec.ts::moves an image with the keyboard, alone and with a textbox",
+        "apps/designer/src/app/editor/editor.component.spec.ts::snaps an image to the grid, and to other items, and uses it as a guide target"
+      ]
+    },
+    {
+      "id": "US2.3",
+      "kind": "scenario",
+      "source": "spec.md US2.3",
+      "requires": ["FR-011"],
+      "fixtures": ["images-authored"],
+      "oracle": "Deleting an image removes the item and keeps all three definitions and their data; one Undo restores the item.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US2-manipulate",
+        "apps/designer/src/app/editor/editor.component.spec.ts::offers an editable image a confirmed Delete image control, not the textbox form"
+      ]
+    },
+    {
+      "id": "US2.4",
+      "kind": "scenario",
+      "source": "spec.md US2.4",
+      "requires": ["FR-012"],
+      "fixtures": ["images-authored"],
+      "oracle": "Paste and Duplicate add one item with a unique name that points at the same definition; no ImageData is written and one Undo reverts each.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US2-manipulate",
+        "tests/roundtrip/clipboard.test.ts::a same-report paste or duplicate writes no definition and keeps the same Value"
+      ]
+    },
+    {
+      "id": "US2.5",
+      "kind": "scenario",
+      "source": "spec.md US2.5",
+      "requires": ["FR-012", "FR-013"],
+      "fixtures": ["images-authored", "images-blank"],
+      "oracle": "Pasting into another open report carries the definition once, in the same edit as the item, with no dangling reference; one Undo removes both.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US2-manipulate",
+        "tests/roundtrip/clipboard.test.ts::a cross-report paste inserts the definition once, in the same plan",
+        "tests/vscode/clipboard.test.ts::run"
+      ]
+    },
+    {
+      "id": "US2.6",
+      "kind": "scenario",
+      "source": "spec.md US2.6",
+      "requires": ["FR-009", "FR-013"],
+      "fixtures": ["images-authored", "images-blank"],
+      "oracle": "Every move, resize, delete, paste, duplicate and cross-report paste is one native Undo and one Redo step, and the report bytes after each step equal the exact earlier state.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US2-manipulate",
+        "tests/desktop/images.spec.ts::US4-views",
+        "tests/vscode/images.test.ts::run"
+      ]
+    },
+    {
+      "id": "US3.1",
+      "kind": "scenario",
+      "source": "spec.md US3.1",
+      "requires": ["FR-017"],
+      "fixtures": ["images-authored"],
+      "oracle": "The inspector shows Name, position, size, Sizing (four modes), the embedded image picker with every displayable definition, ToolTip, and read-only format, pixel size and encoded size.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US3-inspector",
+        "apps/designer/src/app/properties/image-properties.component.spec.ts::renders every field with the current accepted values",
+        "apps/designer/src/app/properties/image-properties.component.spec.ts::shows read-only metadata that carries no payload"
+      ]
+    },
+    {
+      "id": "US3.2",
+      "kind": "scenario",
+      "source": "spec.md US3.2",
+      "requires": ["FR-014", "FR-017"],
+      "fixtures": ["images-authored"],
+      "oracle": "Changing Sizing updates the canvas mode and changes only the Sizing text; the four modes are painted as pinned references.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US3-inspector",
+        "packages/xml-serializer/src/images.test.ts::planImageProperty replaces an existing Sizing scalar in place",
+        "tests/desktop/visual.spec.ts::US-IMG-sizing-AutoSize",
+        "tests/desktop/visual.spec.ts::US-IMG-sizing-Fit",
+        "tests/desktop/visual.spec.ts::US-IMG-sizing-FitProportional",
+        "tests/desktop/visual.spec.ts::US-IMG-sizing-Clip"
+      ]
+    },
+    {
+      "id": "US3.3",
+      "kind": "scenario",
+      "source": "spec.md US3.3",
+      "requires": ["FR-018"],
+      "fixtures": ["images-authored"],
+      "oracle": "Picking another definition repoints Value only; Replace picture offers this-item and all-items scopes when the definition is shared, and this-item onto identical bytes repoints one Value with no new definition.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US3-inspector",
+        "packages/xml-serializer/src/images.test.ts::planReplacePicture item scope onto an existing definition only repoints Value",
+        "apps/designer/src/app/properties/image-properties.component.spec.ts::offers both replace scopes when several items share the definition"
+      ]
+    },
+    {
+      "id": "US3.4",
+      "kind": "scenario",
+      "source": "spec.md US3.4",
+      "requires": ["FR-019"],
+      "fixtures": ["images-authored"],
+      "oracle": "A duplicate item name and a negative size are refused with the product reason and the report bytes stay unchanged.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US3-inspector",
+        "packages/validation/src/images.test.ts::validateImageProperty accepts the four sizing modes and refuses anything else",
+        "packages/validation/src/images.test.ts::validateImageProperty reuses validateName for the item name"
+      ]
+    },
+    {
+      "id": "US3.5",
+      "kind": "scenario",
+      "source": "spec.md US3.5",
+      "requires": ["FR-019", "FR-024"],
+      "fixtures": ["images-authored"],
+      "oracle": "A ToolTip expression is stored and shown as inert text with the visible note that it is never evaluated.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US3-inspector",
+        "packages/xml-parser/src/project-images.test.ts::ToolTip is read as inert text and flagged when it is an expression",
+        "apps/designer/src/app/properties/image-properties.component.spec.ts::shows a ToolTip expression as inert text"
+      ]
+    },
+    {
+      "id": "US4.1",
+      "kind": "scenario",
+      "source": "spec.md US4.1",
+      "requires": ["FR-020"],
+      "fixtures": ["images-authored"],
+      "oracle": "Report Structure lists the image items in source order with their names; activating one selects it as the primary canvas item.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US4-views",
+        "packages/renderer/src/structure.test.ts::image items get kind image, in source order, with their capability state"
+      ]
+    },
+    {
+      "id": "US4.2",
+      "kind": "scenario",
+      "source": "spec.md US4.2",
+      "requires": ["FR-021", "FR-025"],
+      "fixtures": ["images-authored"],
+      "oracle": "Report Data lists each definition with format, size and reference count (logo 3, photo 2, unused 0) and no picture data in any label.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US4-views",
+        "packages/renderer/src/data.test.ts::embedded image definitions expose format, size, pixels, reference count and context values",
+        "apps/vscode-extension/src/image-definitions.test.ts::definition rows expose format, size, pixels and reference counts, never payload text"
+      ]
+    },
+    {
+      "id": "US4.3",
+      "kind": "scenario",
+      "source": "spec.md US4.3",
+      "requires": ["FR-022"],
+      "fixtures": ["images-authored"],
+      "oracle": "Renaming a definition rewrites the definition and every constant reference in one undo step; an expression reference blocks the rename.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US4-views",
+        "packages/xml-serializer/src/images.test.ts::planRenameDefinition renames the definition and every constant reference in one composed plan",
+        "apps/vscode-extension/src/image-definitions.test.ts::rename and removal are refused when an expression could name the definition"
+      ]
+    },
+    {
+      "id": "US4.4",
+      "kind": "scenario",
+      "source": "spec.md US4.4",
+      "requires": ["FR-021", "FR-022"],
+      "fixtures": ["images-authored"],
+      "oracle": "Removing an unreferenced definition is one undo step; Remove is offered on every definition row and a referenced definition is refused with the referencing items listed and the report unchanged.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US4-views",
+        "packages/xml-serializer/src/images.test.ts::planRemoveDefinition produces a single removal and leaves everything else byte-identical",
+        "packages/validation/src/images.test.ts::removal is blocked while an item references the definition, listing every item"
+      ]
+    },
+    {
+      "id": "US4.5",
+      "kind": "scenario",
+      "source": "spec.md US4.5",
+      "requires": ["FR-021"],
+      "fixtures": ["images-authored"],
+      "oracle": "Insert Embedded Image adds one item for the chosen definition without opening a chooser and without writing any ImageData.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US4-views",
+        "apps/vscode-extension/src/image-definitions.test.ts::insert reuses an existing displayable definition without any new definition"
+      ]
+    },
+    {
+      "id": "US5.1",
+      "kind": "scenario",
+      "source": "spec.md US5.1",
+      "requires": ["FR-015"],
+      "fixtures": ["images-preserved"],
+      "oracle": "External, Database and expression images are labelled placeholders at their declared bounds with the reason source-preserved or value-expression; nothing is fetched or evaluated.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US5-preserve",
+        "tests/desktop/visual.spec.ts::US-IMG-placeholder",
+        "tests/compatibility/images.test.ts::every preserved item shows the placeholder reason of its source, value and definition",
+        "packages/renderer/src/render.test.ts::preserved images render placeholder items carrying the projection reason"
+      ]
+    },
+    {
+      "id": "US5.2",
+      "kind": "scenario",
+      "source": "spec.md US5.2",
+      "requires": ["FR-015"],
+      "fixtures": ["images-preserved"],
+      "oracle": "GIF, BMP, x-png, malformed and missing-definition images show a placeholder naming format-unsupported, mime-mismatch, data-invalid or reference-missing.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US5-preserve",
+        "packages/xml-parser/src/project-images.test.ts::preserved.rdlc definitions report why they are not displayable"
+      ]
+    },
+    {
+      "id": "US5.3",
+      "kind": "scenario",
+      "source": "spec.md US5.3",
+      "requires": ["FR-023"],
+      "fixtures": ["images-preserved"],
+      "oracle": "After an unrelated edit and a save, the report equals the original bytes plus the one new item, so every image, definition, unknown child and foreign attribute is byte-identical.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US5-preserve",
+        "tests/roundtrip/images.test.ts::preserved.rdlc keeps the reason and state of every preserved item after every unrelated edit",
+        "tests/roundtrip/images.test.ts::preserved.rdlc keeps injected unknown children and foreign attributes after every unrelated edit"
+      ]
+    },
+    {
+      "id": "US5.4",
+      "kind": "scenario",
+      "source": "spec.md US5.4",
+      "requires": ["FR-023"],
+      "fixtures": ["images-authored"],
+      "oracle": "An existing embedded constant image moves like an authored one and keeps its unknown children and foreign-namespace attribute byte-identical.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US2-manipulate",
+        "tests/roundtrip/images.test.ts::authored.rdlc keeps its unknown children and foreign attribute after every unrelated edit",
+        "packages/xml-parser/src/project-images.test.ts::authored.rdlc items are editable with the full capability set and exact sizing"
+      ]
+    },
+    {
+      "id": "SC-001",
+      "kind": "success-criterion",
+      "source": "spec.md SC-001",
+      "requires": ["FR-001", "FR-008"],
+      "fixtures": ["images-blank"],
+      "oracle": "Insert and keyboard-position a logo using only the toolbox, the file chooser and the canvas; the elapsed time from the Image click to the saved nudge is recorded against the 30 second budget.",
+      "tests": ["tests/desktop/images.spec.ts::US1-insert-undo"]
+    },
+    {
+      "id": "SC-002",
+      "kind": "success-criterion",
+      "source": "spec.md SC-002",
+      "requires": ["FR-009", "FR-013"],
+      "fixtures": ["images-blank", "images-authored"],
+      "oracle": "Insertions, manipulations, property edits and definition rename and remove are each exactly one Undo and one Redo, and the bytes after each step equal the exact earlier state.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US1-insert-undo",
+        "tests/desktop/images.spec.ts::US2-manipulate",
+        "tests/desktop/images.spec.ts::US3-inspector",
+        "tests/desktop/images.spec.ts::US4-views",
+        "tests/vscode/images.test.ts::run"
+      ]
+    },
+    {
+      "id": "SC-003",
+      "kind": "success-criterion",
+      "source": "spec.md SC-003",
+      "requires": ["FR-023"],
+      "fixtures": ["images-preserved", "images-authored"],
+      "oracle": "For the preservation corpus an unrelated edit and a save leave all image text byte-identical, and every image edit leaves the text outside its footprint byte-identical.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US5-preserve",
+        "tests/roundtrip/images.test.ts::preserved.rdlc keeps the reason and state of every preserved item after every unrelated edit",
+        "tests/roundtrip/images.test.ts::authored.rdlc keeps its unknown children and foreign attribute after every unrelated edit"
+      ]
+    },
+    {
+      "id": "SC-004",
+      "kind": "success-criterion",
+      "source": "spec.md SC-004",
+      "requires": ["FR-016", "FR-024"],
+      "fixtures": ["images-authored", "images-preserved", "images-blank"],
+      "oracle": "Under host observation, opening, displaying, inspecting and importing pictures issues zero network requests and the only file read beyond the allowlist is the exact user-chosen import file; the webview CSP admits only local resources and blob URLs.",
+      "tests": [
+        "tests/desktop/offline.spec.ts::SC-009-monitored-offline",
+        "tests/desktop/offline.spec.ts::FR-014-no-fetch",
+        "tests/desktop/security-observer.spec.ts::security observer: real trust states, host tree and webview attempts fail closed",
+        "tests/package/offline.test.ts::webview CSP lets pictures load only from local resources and blob URLs"
+      ]
+    },
+    {
+      "id": "SC-005",
+      "kind": "success-criterion",
+      "source": "spec.md SC-005",
+      "requires": ["FR-005", "FR-006"],
+      "fixtures": ["images-blank"],
+      "oracle": "Every invalid import in the corpus is refused with the file name and the reason, and the report and undo history are unchanged.",
+      "tests": [
+        "tests/desktop/images.spec.ts::US1-insert-undo",
+        "packages/validation/src/images.test.ts::refused fixtures carry the expected code and the file name",
+        "apps/vscode-extension/src/image-import.test.ts::the refusal corpus maps to the contract codes",
+        "tests/vscode/images.test.ts::run"
+      ]
+    },
+    {
+      "id": "SC-006",
+      "kind": "success-criterion",
+      "source": "spec.md SC-006",
+      "requires": ["FR-015"],
+      "fixtures": ["images-many"],
+      "oracle": "With 50 embedded images the selection and move feedback stay within 100 ms and a picture of just under 5 MiB is painted within 1 second of the user accepting it; the projection and render budget holds for the same corpus.",
+      "tests": [
+        "tests/desktop/images.spec.ts::SC-006-timing",
+        "tests/performance/images.test.ts::SC-006: projecting and rendering 50 embedded pictures stays within the recorded budget"
+      ]
+    },
+    {
+      "id": "SC-007",
+      "kind": "success-criterion",
+      "source": "spec.md SC-007",
+      "requires": ["FR-014", "FR-016"],
+      "fixtures": ["images-authored", "images-preserved"],
+      "oracle": "Each of the four sizing modes and the placeholder state matches its pinned reference in the reference environment.",
+      "tests": [
+        "tests/desktop/visual.spec.ts::US-IMG-sizing-AutoSize",
+        "tests/desktop/visual.spec.ts::US-IMG-sizing-Fit",
+        "tests/desktop/visual.spec.ts::US-IMG-sizing-FitProportional",
+        "tests/desktop/visual.spec.ts::US-IMG-sizing-Clip",
+        "tests/desktop/visual.spec.ts::US-IMG-placeholder"
+      ]
+    },
+    {
+      "id": "SC-008",
+      "kind": "success-criterion",
+      "source": "spec.md SC-008",
+      "requires": ["FR-027"],
+      "fixtures": ["images-blank"],
+      "oracle": "The existing Components journeys keep their outcomes; only the Image entry changes from unavailable to insertable.",
+      "tests": [
+        "tests/desktop/components.spec.ts::US4.5-unavailable-kinds",
+        "tests/desktop/components.spec.ts::SC-004-insert-history"
+      ]
+    }
+  ]
+}

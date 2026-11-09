@@ -2,7 +2,10 @@ import type { DocumentSnapshot } from '@rdlc/report-model/document';
 import type { ReportProjection } from '@rdlc/report-model/report';
 import type { XmlNode, XmlSyntaxDocument } from '@rdlc/report-model/syntax';
 import { parse } from '@rdlc/xml-parser/parser';
-import { projectReport } from '@rdlc/xml-parser/project-report';
+import {
+  projectReport,
+  type ProjectReportOptions,
+} from '@rdlc/xml-parser/project-report';
 import { projectNavigation } from '@rdlc/renderer/navigation';
 import type { AcceptedNavigation } from '@rdlc/report-model/navigation';
 import { renderScene } from '@rdlc/renderer/render';
@@ -48,9 +51,12 @@ export function syntaxNodes(node: XmlNode | null): XmlNode[] {
 }
 
 /** Evaluate accepted text without a designer, webview or mutable report copy. */
-export function evaluateReport(snapshot: DocumentSnapshot): ReportEvaluation {
+export function evaluateReport(
+  snapshot: DocumentSnapshot,
+  options: ProjectReportOptions = {},
+): ReportEvaluation {
   const syntax = parse(snapshot);
-  const projection = projectReport(syntax);
+  const projection = projectReport(syntax, options);
   const scene = renderScene(projection);
   const bodyIds = new Set(
     (scene?.items ?? [])
@@ -87,6 +93,7 @@ export function evaluateReport(snapshot: DocumentSnapshot): ReportEvaluation {
     ids: [
       ...(syntax.root ? [syntax.root.id] : []),
       ...projection.textboxes.map((textbox) => textbox.node.id),
+      ...projection.images.map((image) => image.node.id),
       ...projection.datasets.flatMap((dataset) => [
         dataset.node.id,
         ...dataset.fields.map((field) => field.node.id),

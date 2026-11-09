@@ -148,3 +148,29 @@ test('evaluation is repeatable and traversal handles an empty document', () => {
   assert.deepEqual(second.capabilities, first.capabilities);
   assert.deepEqual(syntaxNodes(null), []);
 });
+
+test('a host digest reaches the projected image definitions and is absent otherwise', () => {
+  const source = readFileSync('tests/fixtures/images/authored.rdlc', 'utf8');
+  const digest = (bytes: Uint8Array) => `digest-${bytes.length}`;
+
+  const plain = evaluateReport(snapshot(source));
+  assert.ok(plain.projection.embeddedImages.length > 0);
+  assert.ok(
+    plain.projection.embeddedImages.every((entry) => entry.hash === null),
+  );
+
+  const hashed = evaluateReport(snapshot(source), { digest });
+  assert.deepEqual(
+    hashed.projection.embeddedImages.map((entry) => entry.hash),
+    hashed.projection.embeddedImages.map((entry) => `digest-${entry.byteSize}`),
+  );
+});
+
+test('image items are valid targets for layout and clipboard, even when preservation-only', () => {
+  const evaluation = evaluateReport(
+    snapshot(readFileSync('tests/fixtures/images/preserved.rdlc', 'utf8')),
+  );
+  assert.ok(evaluation.projection.images.length > 0);
+  for (const image of evaluation.projection.images)
+    assert.ok(evaluation.ids.includes(image.node.id), image.name ?? '');
+});

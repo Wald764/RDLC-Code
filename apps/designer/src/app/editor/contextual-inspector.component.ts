@@ -8,12 +8,17 @@ import type { DesignScene, DesignSceneItem } from '@rdlc/report-model/scene';
 import type { AuthoringState } from '@rdlc/report-model/protocol';
 import type { AuthoringRequest } from '@rdlc/report-model/editing';
 import type { InspectorSection } from './viewport';
+import { preservationOnly } from './selection';
 import { DatasetsComponent } from '../datasets/datasets.component';
 import { TablePropertiesComponent } from '../tables/table-properties.component';
 import {
   TextboxPropertiesComponent,
   type TextboxCommit,
 } from '../properties/textbox-properties.component';
+import {
+  ImagePropertiesComponent,
+  type ImageGeometryCommit,
+} from '../properties/image-properties.component';
 
 /** Selected Data or Structure target; data/structural targets never carry scene bounds. */
 export interface SelectedTarget {
@@ -28,6 +33,7 @@ export interface SelectedTarget {
   standalone: true,
   imports: [
     TextboxPropertiesComponent,
+    ImagePropertiesComponent,
     DatasetsComponent,
     TablePropertiesComponent,
   ],
@@ -75,10 +81,20 @@ export interface SelectedTarget {
     } @else if (item(); as selected) {
       <h2>{{ selected.name ?? selected.label }}</h2>
       <p>{{ selected.kind ?? 'textbox' }}</p>
-      @if (selected.placeholder) {
+      @if (locked(selected)) {
         <p>
           Preserved content. Use Code XML to inspect unsupported properties.
         </p>
+      } @else if (selected.kind === 'image') {
+        <rdlc-image-properties
+          [item]="selected"
+          [state]="state()"
+          [refusal]="refusal()"
+          [expanded]="expanded()"
+          (expand)="expand.emit($event)"
+          (request)="request.emit($event)"
+          (geometry)="geometry.emit($event)"
+        />
       } @else if (selected.kind !== 'table') {
         <rdlc-textbox-properties
           [item]="selected"
@@ -97,10 +113,35 @@ export interface SelectedTarget {
           />
         }
       }
+      @if (selected.kind === 'image' && !locked(selected)) {
+        <form
+          aria-label="Delete image"
+          (submit)="
+            $event.preventDefault();
+            request.emit({
+              targetId: selected.id,
+              payload: {
+                action: 'deleteImage',
+                confirm: imageConfirmation.checked
+                  ? 'delete-contained-content'
+                  : '',
+              },
+            })
+          "
+        >
+          <label
+            ><input #imageConfirmation type="checkbox" required />Delete
+            {{ selected.name ?? selected.label }}; its embedded image definition
+            is kept</label
+          >
+          <button type="submit">Delete image</button>
+        </form>
+      }
       @if (
         !selected.placeholder &&
         selected.kind !== 'cell' &&
         selected.kind !== 'table' &&
+        selected.kind !== 'image' &&
         selected.capabilities?.includes('textbox')
       ) {
         <form
@@ -148,6 +189,12 @@ export class ContextualInspectorComponent {
   readonly structureNode = input<SelectedTarget | null>(null);
   readonly expanded = input<Partial<Record<InspectorSection, boolean>>>({});
   readonly commit = output<TextboxCommit>();
+  readonly geometry = output<ImageGeometryCommit>();
   readonly expand = output<{ section: InspectorSection; open: boolean }>();
   readonly request = output<AuthoringRequest>();
+
+  /** Preservation-only: an image keys off its capabilities, since its placeholder is display only. */
+  protected locked(item: DesignSceneItem): boolean {
+    return preservationOnly(item);
+  }
 }

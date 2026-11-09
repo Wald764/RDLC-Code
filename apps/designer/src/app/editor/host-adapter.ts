@@ -15,8 +15,14 @@ import {
 } from '@rdlc/report-model/protocol';
 import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 import type { EditIntent, TargetMapping } from '@rdlc/report-model/editing';
+import { imageChooserClosedReason } from '@rdlc/report-model/navigation';
 import type { DesignScene } from '@rdlc/report-model/scene';
 import type { Selection } from './selection';
+import {
+  IMAGE_ASSET_ENVIRONMENT,
+  ImageAssetCache,
+  imageAssetKeys,
+} from './image-assets';
 import { restoreViewState, type ViewState } from './viewport';
 
 /** How long a trusted gesture keeps vouching for DOM focus when no blur follows. */
@@ -39,6 +45,8 @@ const hostReasons: Readonly<Record<string, string>> = {
   DOCUMENT_CHANGED_DURING_APPLY:
     'The report changed while the edit was being applied.',
   DOCUMENT_READ_ONLY: 'This report is read-only.',
+  WORKSPACE_UNTRUSTED:
+    'This workspace is not trusted. Trust it to change the report.',
   HOST_EDIT_FAILED: 'VS Code could not apply the edit.',
   REJECTED_BY_HOST: 'VS Code rejected the edit.',
 };
@@ -69,6 +77,8 @@ export interface EditOutcome {
   readonly inserted?: readonly string[];
   /** The item an accepted creation produced, named by the host. */
   readonly created?: { readonly id: string; readonly name: string };
+  /** The author closed the host file chooser: not a refusal, nothing to explain. */
+  readonly cancelled?: true;
 }
 export type ClipboardRequest = Omit<
   ClipboardRequestMessage,
@@ -95,6 +105,8 @@ export class HostAdapter {
   /** The Data projection replaced by the latest snapshot, for data-target reconciliation. */
   readonly previousData = signal<NavigationProjection | null>(null);
   readonly sent = signal<readonly unknown[]>([]);
+  /** Picture payloads from the `imageAssets` channel; never part of the snapshot. */
+  readonly images = new ImageAssetCache(inject(IMAGE_ASSET_ENVIRONMENT));
   readonly notice = signal('');
   readonly pending = signal<{
     readonly requestId: string;
@@ -153,6 +165,7 @@ export class HostAdapter {
       globalThis.removeEventListener('pointerdown', gesture, true);
       globalThis.removeEventListener('keydown', gesture, true);
       globalThis.removeEventListener('blur', blur);
+      this.images.dispose();
     });
     if (this.api) this.post({ protocol: 2, kind: 'ready' });
   }
@@ -186,6 +199,10 @@ export class HostAdapter {
         probeId: message.probeId,
         focused: this.domFocusEvidence(),
       });
+      return;
+    }
+    if (message.kind === 'imageAssets') {
+      this.images.add(message.assets);
       return;
     }
     if (message.kind === 'nativeAction') {
@@ -249,6 +266,7 @@ export class HostAdapter {
         this.notice.update((text) =>
           `${text} Structure is incomplete because a presentation or transport limit was reached. Open Code XML for the complete report.`.trim(),
         );
+      this.images.retain(imageAssetKeys(message.scene));
       this.reconcile();
       const native = this.nativePending;
       if (
@@ -338,6 +356,9 @@ export class HostAdapter {
         diagnostics: message.diagnostics,
         ...(clipboard ? { inserted: message.inserted } : {}),
         ...(!clipboard && message.created ? { created: message.created } : {}),
+        ...(!clipboard && message.cancelled
+          ? { cancelled: true as const }
+          : {}),
       };
       if (pending && pending.requestId !== message.requestId) return;
       this.outcome.set(result);
@@ -620,6 +641,8 @@ export class HostAdapter {
     )
       return;
     if (outcome.accepted) this.settleNativeAction('accepted');
+    else if (outcome.cancelled)
+      this.settleNativeAction('cancelled', imageChooserClosedReason);
     else
       this.settleNativeAction(
         'refused',

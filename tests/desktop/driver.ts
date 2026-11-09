@@ -1076,6 +1076,74 @@ export async function setQuickInputText(
   }, text);
 }
 
+/** The quick input of the simple file dialog, and the widget that holds it. */
+const FILE_DIALOG_INPUT = '.quick-input-widget:visible .quick-input-box input';
+const FILE_DIALOG_WIDGET = '.quick-input-widget:visible';
+const CHOOSE_FILE_ATTEMPTS = 3;
+const CHOOSE_FILE_SETTLE_MS = 250;
+
+/**
+ * Whether the dialog's text names the typed path. Windows dialogs show the drive
+ * letter and separators in their own form, so only those are compared loosely;
+ * on other platforms the text must be exactly what was typed.
+ */
+function samePath(shown: string, typed: string): boolean {
+  if (process.platform !== 'win32') return shown === typed;
+  const loose = (value: string): string =>
+    value.replace(/\\/g, '/').toLowerCase();
+  return loose(shown) === loose(typed);
+}
+
+/**
+ * Answer an open file chooser with an absolute path. `files.simpleDialog.enable`
+ * (provisioned in every profile) renders `showOpenDialog` as a quick input, so
+ * the real chooser integration is exercised with a typed path and Enter; no
+ * native dialog is automated and the extension has no test hook (research R5).
+ *
+ * The simple dialog navigates and completes asynchronously while text arrives,
+ * so a typed path is only accepted once the input has kept it unchanged for a
+ * settle interval; otherwise it is typed again, a bounded number of times.
+ * `beforeAccept` runs right before Enter, so a caller can start a stopwatch at
+ * the moment of the user's answer. A dialog that stays open after Enter (a path
+ * the dialog itself refuses) fails with the dialog's own message.
+ */
+export async function chooseFile(
+  page: Page,
+  absolutePath: string,
+  options: {
+    readonly beforeAccept?: () => void;
+    readonly timeout?: number;
+  } = {},
+): Promise<void> {
+  if (!isAbsolute(absolutePath))
+    throw new Error(`Choosing ${absolutePath}: the path must be absolute.`);
+  const timeout = options.timeout ?? 15_000;
+  const input = page.locator(FILE_DIALOG_INPUT);
+  await input.waitFor({ state: 'visible', timeout });
+  let kept = false;
+  for (let attempt = 0; attempt < CHOOSE_FILE_ATTEMPTS && !kept; attempt++) {
+    await setQuickInputText(input, absolutePath);
+    await delay(CHOOSE_FILE_SETTLE_MS);
+    kept = samePath(await input.inputValue(), absolutePath);
+  }
+  if (!kept)
+    throw new Error(
+      `The file dialog did not keep the path ${absolutePath} after ${CHOOSE_FILE_ATTEMPTS} attempts.`,
+    );
+  options.beforeAccept?.();
+  await input.press('Enter');
+  try {
+    await page
+      .locator(FILE_DIALOG_WIDGET)
+      .waitFor({ state: 'hidden', timeout });
+  } catch (error) {
+    throw new Error(
+      `The file dialog stayed open after choosing ${absolutePath}: ${describeError(error)}`,
+      { cause: error },
+    );
+  }
+}
+
 /**
  * One palette round trip: open the command palette, run `id` and confirm the
  * palette closed. Every caller (specs and the trust helpers) shares it, so its
@@ -1201,6 +1269,55 @@ export async function workbenchCommand(page: Page, id: string): Promise<void> {
 }
 
 /**
+ * User settings written into every disposable profile: deterministic chrome
+ * (sticky scroll, menus, git, the update badge), no background network or
+ * feature activity, and the simple file dialog that `chooseFile` drives.
+ */
+export const PROVISIONED_USER_SETTINGS: Readonly<Record<string, unknown>> = {
+  'workbench.tree.enableStickyScroll': false,
+  // macOS opens native NSMenu context menus by default; they are not in
+  // the DOM, so the journeys could never see or drive their items.
+  // The custom (HTML) menu is what Linux and Windows already use.
+  'window.menuStyle': 'custom',
+  'git.enabled': false,
+  'git.autoRepositoryDetection': false,
+  // An "update available" badge appears on the Manage gear at random,
+  // which no reference capture can reproduce.
+  'update.mode': 'none',
+  'extensions.autoCheckUpdates': false,
+  // No background network or feature activity: the host observers
+  // must only see what the RDLC extension and the journeys cause.
+  // Workspace trust settings are deliberately left untouched.
+  'telemetry.telemetryLevel': 'off',
+  'workbench.enableExperiments': false,
+  'workbench.settings.enableNaturalLanguageSearch': false,
+  'extensions.autoUpdate': false,
+  'extensions.ignoreRecommendations': true,
+  'npm.fetchOnlinePackageInfo': false,
+  'json.schemaDownload.enable': false,
+  'typescript.disableAutomaticTypeAcquisition': true,
+  'workbench.cloudChanges.autoResume': 'off',
+  'workbench.cloudChanges.continueOn': 'off',
+  'chat.disableAIFeatures': true,
+  // Terminal completions and shell-integration scripts probe PATH and
+  // the file system in the background; the security probe only types a
+  // plain command into the terminal and needs neither.
+  'terminal.integrated.suggest.enabled': false,
+  'terminal.integrated.shellIntegration.enabled': false,
+  // Task providers and the debugger scan the workspace and its tools.
+  'task.autoDetect': 'off',
+  'gulp.autoDetect': 'off',
+  'grunt.autoDetect': 'off',
+  'jake.autoDetect': 'off',
+  'debug.javascript.autoAttachFilter': 'disabled',
+  'workbench.startupEditor': 'none',
+  'workbench.welcomePage.walkthroughs.openOnInstall': false,
+  // The file chooser becomes a quick input the journeys can type a path
+  // into (research R5); no OS dialog is automated and no product hook exists.
+  'files.simpleDialog.enable': true,
+};
+
+/**
  * Launches the real @vscode/test-electron binary in a disposable profile.
  * The Electron API is tried first; if its Node inspection is disabled by the
  * shipped fuses, the same binary is launched with the public Chromium
@@ -1249,50 +1366,7 @@ export async function launchDesktop(
   mkdirSync(join(paths.profileDir, 'User'), { recursive: true });
   writeFileSync(
     join(paths.profileDir, 'User', 'settings.json'),
-    `${JSON.stringify(
-      {
-        'workbench.tree.enableStickyScroll': false,
-        // macOS opens native NSMenu context menus by default; they are not in
-        // the DOM, so the journeys could never see or drive their items.
-        // The custom (HTML) menu is what Linux and Windows already use.
-        'window.menuStyle': 'custom',
-        'git.enabled': false,
-        'git.autoRepositoryDetection': false,
-        // An "update available" badge appears on the Manage gear at random,
-        // which no reference capture can reproduce.
-        'update.mode': 'none',
-        'extensions.autoCheckUpdates': false,
-        // No background network or feature activity: the host observers
-        // must only see what the RDLC extension and the journeys cause.
-        // Workspace trust settings are deliberately left untouched.
-        'telemetry.telemetryLevel': 'off',
-        'workbench.enableExperiments': false,
-        'workbench.settings.enableNaturalLanguageSearch': false,
-        'extensions.autoUpdate': false,
-        'extensions.ignoreRecommendations': true,
-        'npm.fetchOnlinePackageInfo': false,
-        'json.schemaDownload.enable': false,
-        'typescript.disableAutomaticTypeAcquisition': true,
-        'workbench.cloudChanges.autoResume': 'off',
-        'workbench.cloudChanges.continueOn': 'off',
-        'chat.disableAIFeatures': true,
-        // Terminal completions and shell-integration scripts probe PATH and
-        // the file system in the background; the security probe only types a
-        // plain command into the terminal and needs neither.
-        'terminal.integrated.suggest.enabled': false,
-        'terminal.integrated.shellIntegration.enabled': false,
-        // Task providers and the debugger scan the workspace and its tools.
-        'task.autoDetect': 'off',
-        'gulp.autoDetect': 'off',
-        'grunt.autoDetect': 'off',
-        'jake.autoDetect': 'off',
-        'debug.javascript.autoAttachFilter': 'disabled',
-        'workbench.startupEditor': 'none',
-        'workbench.welcomePage.walkthroughs.openOnInstall': false,
-      },
-      null,
-      2,
-    )}
+    `${JSON.stringify(PROVISIONED_USER_SETTINGS, null, 2)}
 `,
   );
   mkdirSync(paths.extensionsDir, { recursive: true });

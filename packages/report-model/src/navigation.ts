@@ -3,6 +3,8 @@ import type { Bounds } from './scene.js';
 import { sizeUnits, type SizeUnit } from './geometry.js';
 import {
   authoringFields,
+  authoringOptionalFields,
+  imagePlacements,
   type AuthoringAction,
   type AuthoringIntent,
 } from './editing.js';
@@ -17,6 +19,7 @@ export const structureKinds = [
   'header',
   'footer',
   'textbox',
+  'image',
   'table',
   'table-body',
   'table-row',
@@ -126,6 +129,16 @@ export interface NavigationDetails {
     | 'image/tiff'
     | 'image/svg+xml';
   readonly hasPayload?: boolean;
+  /** Embedded image definitions only: the format the content proves, never the declared MIME type. */
+  readonly format?: 'png' | 'jpeg' | 'other';
+  /** Length of the base64 text, never the text itself. */
+  readonly encodedSize?: number;
+  readonly pixelWidth?: number;
+  readonly pixelHeight?: number;
+  /** Count of image items whose constant `Value` names the definition. */
+  readonly references?: number;
+  /** True for a valid PNG or JPEG definition that the designer can show and insert. */
+  readonly displayable?: boolean;
   readonly hasQuery?: boolean;
   readonly source?: 'inline' | 'shared' | 'unknown';
   readonly nullable?: boolean;
@@ -142,6 +155,12 @@ function details(value: unknown): value is NavigationDetails {
       'classification',
       'mime',
       'hasPayload',
+      'format',
+      'encodedSize',
+      'pixelWidth',
+      'pixelHeight',
+      'references',
+      'displayable',
       'hasQuery',
       'source',
       'nullable',
@@ -181,8 +200,18 @@ function details(value: unknown): value is NavigationDetails {
       ].includes(value.mime as string)) &&
     (value.source === undefined ||
       ['inline', 'shared', 'unknown'].includes(value.source as string)) &&
+    (value.format === undefined ||
+      ['png', 'jpeg', 'other'].includes(value.format as string)) &&
+    ['encodedSize', 'pixelWidth', 'pixelHeight', 'references'].every(
+      (key) =>
+        value[key] === undefined ||
+        (typeof value[key] === 'number' &&
+          Number.isSafeInteger(value[key]) &&
+          (value[key] as number) >= 0),
+    ) &&
     [
       'hasPayload',
+      'displayable',
       'hasQuery',
       'nullable',
       'multiValue',
@@ -243,7 +272,7 @@ export const nativeOperations = [
   'author',
 ] as const;
 export type NativeOperation = (typeof nativeOperations)[number];
-export const createKinds = ['textbox', 'table', 'dataset'] as const;
+export const createKinds = ['textbox', 'table', 'image', 'dataset'] as const;
 export type CreateKind = (typeof createKinds)[number];
 
 interface NativeActionBase {
@@ -279,6 +308,13 @@ export type NativeActionMessage = NativeActionBase &
         readonly payload: AuthoringIntent['payload'];
       }
   );
+
+/**
+ * The reason of a `cancelled` outcome for a closed host image chooser: a no-op, so
+ * the native views treat it as silent. Every other cancellation keeps its warning.
+ */
+export const imageChooserClosedReason =
+  'The image chooser was closed; the report is unchanged.';
 
 export const actionStatuses = ['accepted', 'cancelled', 'refused'] as const;
 export type ActionStatus = (typeof actionStatuses)[number];
@@ -565,17 +601,35 @@ export function validateAcceptedSelection(
 }
 
 function authoringPayload(value: unknown): boolean {
+  if (
+    !record(value) ||
+    typeof value.action !== 'string' ||
+    !Object.hasOwn(authoringFields, value.action)
+  )
+    return false;
+  const optional: readonly string[] = Object.hasOwn(
+    authoringOptionalFields,
+    value.action,
+  )
+    ? authoringOptionalFields[
+        value.action as keyof typeof authoringOptionalFields
+      ]
+    : [];
   return (
-    record(value) &&
-    typeof value.action === 'string' &&
-    Object.hasOwn(authoringFields, value.action) &&
     keys(value, [
       'action',
       ...authoringFields[value.action as AuthoringAction],
+      ...optional,
     ]) &&
     authoringFields[value.action as AuthoringAction].every((key) =>
       text(value[key], 2048, true),
-    )
+    ) &&
+    optional.every(
+      (key) => value[key] === undefined || text(value[key], 2048, true),
+    ) &&
+    // A native image insert names an existing definition or takes the default position.
+    (value.action !== 'createImage' ||
+      (imagePlacements as readonly unknown[]).includes(value.placement))
   );
 }
 

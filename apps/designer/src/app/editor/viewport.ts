@@ -244,7 +244,9 @@ export const defaultViewState: ViewState = {
   inspectorExpanded: {
     general: true,
     position: true,
-    appearance: false,
+    // The image inspector's Picture section (embedded image, sizing, replace) is
+    // its primary content, so it opens by default like General and Position.
+    appearance: true,
     typography: true,
     border: false,
     data: true,

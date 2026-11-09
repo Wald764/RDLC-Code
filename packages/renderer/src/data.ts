@@ -8,6 +8,7 @@ import {
   DESIGNER_NAMESPACE,
   fieldTypes,
   type DatasetField,
+  type EmbeddedImageDefinition,
   type ReportProjection,
 } from '@rdlc/report-model/report';
 
@@ -18,7 +19,10 @@ import {
  * Everything is derived from accepted syntax and the existing dataset/field
  * projection: the inert metadata allowlist below is the only text carried, so
  * raw XML, expressions, query text, credentials and image payloads never leave
- * this module, and nothing is decoded, evaluated or fetched. Capability facts
+ * this module, and nothing is decoded, evaluated or fetched. Only validated,
+ * displayable PNG/JPEG payloads ever reach the webview, and only through the
+ * host's dedicated `imageAssets` message, never through a projection or scene
+ * built here. Capability facts
  * mirror the existing guards (recognized field type plus the calculated-field
  * refusal of `apps/vscode-extension/src/edit-controller.ts`), the parser's
  * authoring namespace is never broadened, and categories are presentation-only
@@ -147,6 +151,8 @@ export interface NavigationFacts {
   readonly editable: boolean;
   readonly authored: ReadonlySet<string>;
   readonly fieldsById: ReadonlyMap<string, DatasetField>;
+  /** Embedded image definitions by `EmbeddedImage` node ID. */
+  readonly definitionsById: ReadonlyMap<string, EmbeddedImageDefinition>;
   readonly ordinals: ReadonlyMap<string, number>;
   readonly syntaxNodes: ReadonlyMap<string, XmlNode>;
 }
@@ -178,6 +184,10 @@ export function navigationFacts(
       ...report.textboxes
         .filter((node) => node.capabilities.length)
         .map((node) => node.node.id),
+      // Images that keep a capability (geometry-only included) are authorable items.
+      ...report.images
+        .filter((node) => node.capabilities.length)
+        .map((node) => node.node.id),
       ...report.tables
         .filter((node) => node.structural)
         .map((node) => node.node.id),
@@ -189,6 +199,11 @@ export function navigationFacts(
     fieldsById: new Map(
       report.datasets.flatMap((dataset) =>
         dataset.fields.map((field) => [field.node.id, field] as const),
+      ),
+    ),
+    definitionsById: new Map(
+      report.embeddedImages.map(
+        (definition) => [definition.node.id, definition] as const,
       ),
     ),
     ordinals,
@@ -240,9 +255,35 @@ export function createNavigationNode(
       { operation: 'author', eligible, reason },
     ],
     ...(detailKinds.includes(kind)
-      ? { details: details(node, kind, facts.namespace, field) }
+      ? {
+          details: details(
+            node,
+            kind,
+            facts.namespace,
+            field,
+            // Inspection facts (format, sizes, reference count) hold for every report.
+            facts.definitionsById.get(node.id),
+          ),
+        }
       : {}),
   };
+}
+
+/**
+ * Menu context values of an embedded image definition: `displayable` gates Insert,
+ * and exactly one of `referenced`/`unreferenced` gates Remove. They are matched by
+ * the `when` clauses of `apps/vscode-extension/package.json`; the row's label and
+ * tooltip never carry payload text.
+ */
+export function embeddedImageContextValues(
+  details: NavigationDetails,
+): readonly string[] {
+  return [
+    ...(details.displayable ? ['dataEmbeddedImage.displayable'] : []),
+    (details.references ?? 0) > 0
+      ? 'dataEmbeddedImage.referenced'
+      : 'dataEmbeddedImage.unreferenced',
+  ];
 }
 
 /**
@@ -254,6 +295,7 @@ function details(
   kind: NavigationNode['kind'],
   namespace: string,
   field: DatasetField | undefined,
+  definition: EmbeddedImageDefinition | undefined,
 ): NavigationDetails {
   const child = (name: string) =>
     node.children.find(
@@ -296,6 +338,21 @@ function details(
     const mime = child('MIMEType')?.text.trim();
     return {
       hasPayload: !!child('ImageData')?.text.length,
+      // Facts of the projected definition: sizes and counts only, never the payload.
+      ...(definition
+        ? {
+            format: definition.format,
+            encodedSize: definition.encodedSize,
+            ...(definition.pixels
+              ? {
+                  pixelWidth: definition.pixels.width,
+                  pixelHeight: definition.pixels.height,
+                }
+              : {}),
+            references: definition.references.length,
+            displayable: definition.displayable,
+          }
+        : {}),
       ...([
         'image/png',
         'image/jpeg',

@@ -772,6 +772,96 @@ test('creation intents carry positions only and results may name the created ite
   );
 });
 
+test('createImage accepts only placement, left, top and definition', () => {
+  const author = (payload: Record<string, unknown>) =>
+    validateMessage({ ...edit, operation: 'author', payload });
+  for (const payload of [
+    { action: 'createImage', placement: 'default' },
+    { action: 'createImage', placement: 'drop', left: '1in', top: '0.5in' },
+    { action: 'createImage', placement: 'default', definition: 'logo' },
+    {
+      action: 'createImage',
+      placement: 'drop',
+      left: '0pt',
+      top: '12pt',
+      definition: 'logo',
+    },
+    { action: 'createImage', placement: 'default', left: '1in', top: '1in' },
+  ])
+    assert.ok(author(payload), JSON.stringify(payload));
+  for (const payload of [
+    { action: 'createImage' },
+    { action: 'createImage', placement: 'center' },
+    { action: 'createImage', placement: 1 },
+    { action: 'createImage', placement: 'drop' },
+    { action: 'createImage', placement: 'drop', left: '1in' },
+    { action: 'createImage', placement: 'drop', top: '1in' },
+    { action: 'createImage', placement: 'default', left: '1in' },
+    { action: 'createImage', placement: 'drop', left: 1, top: 2 },
+    { action: 'createImage', placement: 'default', definition: '' },
+    { action: 'createImage', placement: 'default', definition: 7 },
+    {
+      action: 'createImage',
+      placement: 'default',
+      definition: 'x'.repeat(257),
+    },
+  ])
+    assert.equal(author(payload), null, JSON.stringify(payload));
+  for (const extra of [
+    { path: 'C:\\pictures\\logo.png' },
+    { uri: 'file:///pictures/logo.png' },
+    { data: 'iVBORw0KGgo=' },
+    { bytes: [137, 80, 78, 71] },
+    { base64: 'iVBORw0KGgo=' },
+    { mime: 'image/png' },
+    { name: 'Image1' },
+    { xml: '<Image/>' },
+  ])
+    assert.equal(
+      author({ action: 'createImage', placement: 'default', ...extra }),
+      null,
+      JSON.stringify(extra),
+    );
+});
+
+test('an editResult may report a cancelled file chooser without a diagnostic', () => {
+  const result = {
+    protocol: 2,
+    kind: 'editResult',
+    requestId: 'r1',
+    baseVersion: 2,
+    version: 2,
+    accepted: false,
+    changed: false,
+    cancelled: true,
+    mappings: [],
+    reason: 'CANCELLED',
+    diagnostics: [],
+  };
+  assert.ok(validateMessage(result));
+  for (const bad of [
+    { ...result, accepted: true },
+    { ...result, cancelled: false },
+    { ...result, cancelled: 'yes' },
+    { ...result, changed: true, version: 3 },
+    {
+      ...result,
+      diagnostics: [
+        {
+          code: 'X',
+          category: 'unsupported',
+          severity: 'error',
+          range: { start: 0, end: 0 },
+          message: 'm',
+          correctiveAction: 'c',
+          blockedOperations: [],
+        },
+      ],
+    },
+  ])
+    assert.equal(validateMessage(bad), null, JSON.stringify(bad).slice(0, 80));
+});
+
 test('accepted navigation is closed, version-local, parent ordered and budgeted', () => {
   const node = (
     id: string,
@@ -1054,6 +1144,14 @@ test('native actions are finite, closed, session-bound and capability-checked', 
       action: 'author',
       payload: { action: 'deleteTextbox', confirm: 'yes' },
     },
+    {
+      ...actionBase,
+      requestId: 'native-7b',
+      capability: 'create',
+      targetIds: [],
+      action: 'create',
+      create: 'image',
+    },
   ];
   for (const action of actions)
     assert.ok(validateMessage(action), JSON.stringify(action));
@@ -1068,7 +1166,8 @@ test('native actions are finite, closed, session-bound and capability-checked', 
     { ...nativeSelect, targetIds: ['2:1', '2:1'] },
     { ...nativeSelect, targetIds: ['1:1'] },
     { ...actions[3]!, targetIds: ['2:1'] },
-    { ...actions[3]!, create: 'image' },
+    { ...actions[3]!, create: 'chart' },
+    { ...actions[7]!, targetIds: ['2:1'] },
     { ...actions[4]!, unit: 'pt' },
     { ...actions[5]!, targetIds: ['2:1'] },
     { ...actions[5]!, unit: 'px' },
@@ -1939,4 +2038,299 @@ test('focus probes are closed, correlated panel messages', () => {
     { ...result, probeId: '' },
   ])
     assert.equal(validateMessage(invalid), null);
+});
+
+const pngData = new Uint8Array(
+  readFileSync('tests/fixtures/images/pictures/logo.png'),
+);
+const jpegData = new Uint8Array(
+  readFileSync('tests/fixtures/images/pictures/photo.jpg'),
+);
+const imageAssets = (assets: unknown) => ({
+  protocol: 2,
+  kind: 'imageAssets',
+  assets,
+});
+
+test('imageAssets accepts PNG and JPEG bytes keyed by hash, as a typed array or an ArrayBuffer', () => {
+  const message = imageAssets([
+    { key: 'a'.repeat(64), mime: 'image/png', data: pngData },
+    { key: 'b'.repeat(64), mime: 'image/jpeg', data: jpegData },
+  ]);
+  assert.equal(validateMessage(message), message);
+  assert.deepEqual(validateMessage(imageAssets([])), imageAssets([]));
+  // The webview may get the bare buffer, or a view onto a larger one.
+  const exact = pngData.buffer.slice(
+    pngData.byteOffset,
+    pngData.byteOffset + pngData.byteLength,
+  );
+  const larger = new Uint8Array(pngData.length + 32);
+  larger.set(pngData, 16);
+  for (const data of [exact, larger.subarray(16, 16 + pngData.length)])
+    assert.ok(
+      validateMessage(
+        imageAssets([{ key: 'a'.repeat(64), mime: 'image/png', data }]),
+      ),
+    );
+});
+
+test('imageAssets rejects unknown fields, other mimes and anything that is not picture bytes', () => {
+  const asset = { key: 'a'.repeat(64), mime: 'image/png', data: pngData };
+  const base64 = Buffer.from(pngData).toString('base64');
+  for (const bad of [
+    { ...imageAssets([asset]), extra: 1 },
+    imageAssets([{ ...asset, url: 'blob:x' }]),
+    imageAssets([{ ...asset, mime: 'image/gif' }]),
+    imageAssets([{ ...asset, mime: 'image/svg+xml' }]),
+    imageAssets([{ ...asset, mime: 'text/html' }]),
+    // Strings, plain arrays and objects are not bytes, whatever they hold.
+    imageAssets([{ ...asset, data: base64 }]),
+    imageAssets([{ ...asset, data: '' }]),
+    imageAssets([{ ...asset, data: [...pngData] }]),
+    imageAssets([{ ...asset, data: { ...pngData } }]),
+    imageAssets([{ ...asset, data: { length: 4 } }]),
+    imageAssets([{ ...asset, data: Buffer.from(base64).toString() }]),
+    imageAssets([{ ...asset, data: null }]),
+    imageAssets([{ ...asset, data: undefined }]),
+    imageAssets([
+      { ...asset, data: new Uint16Array(pngData.buffer.slice(0, 64)) },
+    ]),
+    imageAssets([{ ...asset, data: new DataView(pngData.buffer) }]),
+    imageAssets([{ ...asset, data: new Float32Array(16) }]),
+    // Empty, damaged signature and a signature that disagrees with the mime.
+    imageAssets([{ ...asset, data: new Uint8Array(0) }]),
+    imageAssets([{ ...asset, data: new ArrayBuffer(0) }]),
+    imageAssets([{ ...asset, data: pngData.subarray(1) }]),
+    imageAssets([{ ...asset, data: new Uint8Array(64) }]),
+    imageAssets([{ ...asset, data: jpegData }]),
+    imageAssets([{ ...asset, mime: 'image/jpeg' }]),
+    imageAssets([{ ...asset, key: '' }]),
+    imageAssets([{ ...asset, key: 'a b' }]),
+    imageAssets([{ ...asset, key: 1 }]),
+    imageAssets([asset, asset]),
+    imageAssets([null]),
+    imageAssets('nope'),
+    imageAssets(undefined),
+    { protocol: 1, kind: 'imageAssets', assets: [] },
+  ])
+    assert.equal(
+      validateMessage(bad),
+      null,
+      JSON.stringify(bad, (_key, value: unknown) =>
+        ArrayBuffer.isView(value) ? '[bytes]' : value,
+      ).slice(0, 80),
+    );
+});
+
+test('imageAssets refuses lookalikes, detached and shared buffers without ever throwing', () => {
+  const asset = { key: 'a'.repeat(64), mime: 'image/png' };
+  const refuse = (data: unknown, label: string) =>
+    assert.equal(
+      validateMessage(imageAssets([{ ...asset, data }])),
+      null,
+      label,
+    );
+  const spoof = (target: object, tag: string) =>
+    Object.defineProperty(target, Symbol.toStringTag, { value: tag });
+  // Properties an object can fake are never trusted.
+  refuse(
+    { [Symbol.toStringTag]: 'Uint8Array', length: pngData.length, 0: 0x89 },
+    'plain object tagged Uint8Array',
+  );
+  refuse(
+    spoof(new Float32Array(64), 'Uint8Array'),
+    'Float32Array tagged Uint8Array',
+  );
+  refuse(
+    spoof(new Uint16Array(64), 'Uint8Array'),
+    'Uint16Array tagged Uint8Array',
+  );
+  refuse(spoof({ byteLength: 64 }, 'ArrayBuffer'), 'object tagged ArrayBuffer');
+  refuse(new Uint8ClampedArray(pngData), 'Uint8ClampedArray');
+  refuse(new Int8Array(pngData), 'Int8Array');
+  // Fakes that would make a naive reader throw.
+  refuse(Object.create(Uint8Array.prototype), 'prototype-only Uint8Array');
+  refuse(Object.create(ArrayBuffer.prototype), 'prototype-only ArrayBuffer');
+  refuse(new Proxy(new Uint8Array(pngData), {}), 'proxied Uint8Array');
+  refuse(new Proxy(pngData.buffer, {}), 'proxied ArrayBuffer');
+  const hostile = { ...asset } as Record<string, unknown>;
+  Object.defineProperty(hostile, 'data', {
+    enumerable: true,
+    get() {
+      throw new Error('boom');
+    },
+  });
+  assert.equal(
+    validateMessage(imageAssets([hostile])),
+    null,
+    'throwing getter',
+  );
+  // A detached buffer is empty, not a picture.
+  const detached = pngData.buffer.slice(0) as ArrayBuffer;
+  const view = new Uint8Array(detached);
+  structuredClone(detached, { transfer: [detached] });
+  refuse(detached, 'detached ArrayBuffer');
+  refuse(view, 'view onto a detached buffer');
+  // Shared memory could change after validation.
+  const shared = new SharedArrayBuffer(pngData.length);
+  new Uint8Array(shared).set(pngData);
+  refuse(shared, 'SharedArrayBuffer');
+  refuse(new Uint8Array(shared), 'Uint8Array on a SharedArrayBuffer');
+  // Own properties on a genuine array change nothing: the bytes are the slots'.
+  const genuine = new Uint8Array(pngData);
+  Object.defineProperty(genuine, 'length', { value: 0 });
+  assert.ok(
+    validateMessage(imageAssets([{ ...asset, data: genuine }])),
+    'a faked length on real bytes is ignored',
+  );
+});
+
+test('imageAssets carries one maximal picture, refuses a larger one, an oversized batch and never comes from the webview', () => {
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const bytes = (size: number) => {
+    const data = new Uint8Array(size);
+    data.set(signature);
+    return data;
+  };
+  const message = (data: Uint8Array) =>
+    imageAssets([{ key: 'k'.repeat(64), mime: 'image/png', data }]);
+  assert.ok(validateMessage(message(bytes(5 * 1024 * 1024))));
+  assert.equal(validateMessage(message(bytes(5 * 1024 * 1024 + 1))), null);
+  // Two maximal pictures exceed the message envelope.
+  assert.equal(
+    validateMessage(
+      imageAssets([
+        {
+          key: 'a'.repeat(64),
+          mime: 'image/png',
+          data: bytes(5 * 1024 * 1024),
+        },
+        {
+          key: 'b'.repeat(64),
+          mime: 'image/png',
+          data: bytes(5 * 1024 * 1024),
+        },
+      ]),
+    ),
+    null,
+  );
+  const binding = new DocumentBinding(
+    'file:///a.rdlc',
+    1,
+    ['1:1'],
+    [],
+    ['1:1'],
+  );
+  assert.equal(
+    binding.receive(imageAssets([])).ok,
+    false,
+    'a client cannot post host asset messages',
+  );
+});
+
+test('deleteImage carries only a confirmation string', () => {
+  const author = (payload: Record<string, unknown>) =>
+    validateMessage({ ...edit, operation: 'author', payload });
+  assert.ok(
+    author({ action: 'deleteImage', confirm: 'delete-contained-content' }),
+  );
+  for (const payload of [
+    { action: 'deleteImage' },
+    { action: 'deleteImage', confirm: 1 },
+    { action: 'deleteImage', confirm: 'yes', definition: 'logo' },
+    { action: 'deleteImage', confirm: 'yes', xml: '<Image/>' },
+  ])
+    assert.equal(author(payload), null, JSON.stringify(payload));
+});
+
+test('setImageProperty and replaceImagePicture accept only their closed enums', () => {
+  const author = (payload: Record<string, unknown>) =>
+    validateMessage({ ...edit, operation: 'author', payload });
+  for (const property of ['sizing', 'value', 'toolTip', 'name'])
+    assert.ok(
+      author({ action: 'setImageProperty', property, value: 'x' }),
+      property,
+    );
+  assert.ok(
+    author({ action: 'setImageProperty', property: 'toolTip', value: '' }),
+  );
+  for (const payload of [
+    { action: 'setImageProperty', property: 'left', value: '1in' },
+    { action: 'setImageProperty', property: 'image', value: 'x' },
+    { action: 'setImageProperty', property: 'Sizing', value: 'Fit' },
+    { action: 'setImageProperty', property: 'sizing' },
+    { action: 'setImageProperty', value: 'Fit' },
+    { action: 'setImageProperty', property: 'sizing', value: 3 },
+    { action: 'setImageProperty', property: 'sizing', value: 'Fit', item: 'a' },
+    { action: 'setImageProperty', property: 'sizing', value: 'Fit', path: 'a' },
+  ])
+    assert.equal(author(payload), null, JSON.stringify(payload));
+  for (const scope of ['item', 'all'])
+    assert.ok(author({ action: 'replaceImagePicture', scope }), scope);
+  for (const payload of [
+    { action: 'replaceImagePicture' },
+    { action: 'replaceImagePicture', scope: 'both' },
+    { action: 'replaceImagePicture', scope: 1 },
+    { action: 'replaceImagePicture', scope: 'item', path: 'C:\\logo.png' },
+    { action: 'replaceImagePicture', scope: 'item', uri: 'file:///logo.png' },
+    { action: 'replaceImagePicture', scope: 'item', data: 'iVBORw0KGgo=' },
+    { action: 'replaceImagePicture', scope: 'item', bytes: [1, 2, 3] },
+  ])
+    assert.equal(author(payload), null, JSON.stringify(payload));
+});
+
+test('authoring state may describe image definitions and items, closed and string-valued', () => {
+  const snapshot = (authoring: unknown) => ({
+    protocol: 2,
+    kind: 'snapshot',
+    version: 2,
+    projection: { status: 'editable', capabilities: [], diagnostics: [] },
+    scene: null,
+    authoring,
+  });
+  const base = { id: '2:1', page: {}, datasets: [], tables: [] };
+  const images = [
+    {
+      id: '2:7',
+      definition: 'logo',
+      toolTip: { text: 'tip', expression: false },
+    },
+    { id: '2:8', definition: null, toolTip: null },
+  ];
+  const embeddedImages = [
+    { name: 'logo', displayable: true, references: 2 },
+    { name: 'broken', displayable: false, references: 0 },
+  ];
+  assert.ok(validateMessage(snapshot(base)));
+  assert.ok(validateMessage(snapshot({ ...base, images, embeddedImages })));
+  for (const authoring of [
+    { ...base, images: [{ ...images[0], extra: 1 }], embeddedImages },
+    { ...base, images: [{ ...images[0], definition: 3 }], embeddedImages },
+    {
+      ...base,
+      images: [{ ...images[0], toolTip: { text: 'x' } }],
+      embeddedImages,
+    },
+    {
+      ...base,
+      images,
+      embeddedImages: [{ ...embeddedImages[0], references: -1 }],
+    },
+    {
+      ...base,
+      images,
+      embeddedImages: [{ ...embeddedImages[0], displayable: 'yes' }],
+    },
+    {
+      ...base,
+      images,
+      embeddedImages: [{ ...embeddedImages[0], data: 'iVBORw0KGgo=' }],
+    },
+    { ...base, images: 'none' },
+  ])
+    assert.equal(
+      validateMessage(snapshot(authoring)),
+      null,
+      JSON.stringify(authoring),
+    );
 });

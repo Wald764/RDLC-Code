@@ -1,5 +1,6 @@
 import type { LayoutIntent } from '@rdlc/report-model/editing';
 import type {
+  ImageItem,
   ReportProjection,
   Table,
   Textbox,
@@ -10,9 +11,10 @@ import {
   toPoints,
   type ResolvedGeometry,
 } from '@rdlc/report-model/geometry';
+import { validateImageCapability } from './images.js';
 
 export interface LayoutChange {
-  readonly item: Textbox | Table;
+  readonly item: Textbox | Table | ImageItem;
   readonly table: boolean;
   readonly original: ResolvedGeometry;
   readonly values: Partial<Bounds>;
@@ -20,7 +22,7 @@ export interface LayoutChange {
 
 export function acceptedGeometry(
   report: ReportProjection,
-  item: Textbox | Table,
+  item: Textbox | Table | ImageItem,
   table: boolean,
 ): ResolvedGeometry {
   const geometry = resolveGeometry(item.bounds, {
@@ -58,6 +60,32 @@ export function acceptedGeometry(
   };
 }
 
+type Positioned = Textbox | Table | ImageItem;
+
+/** Body textboxes, images and structural tables are the only layout targets. */
+function layoutTarget(
+  report: ReportProjection,
+  id: string,
+): { item: Positioned; table: Table | undefined } {
+  const table = report.tables.find((t) => t.node.id === id);
+  const item =
+    table ??
+    report.textboxes.find((t) => t.node.id === id && t.context === 'body') ??
+    report.images.find((t) => t.node.id === id && t.context === 'body');
+  if (!item || (table && !table.structural))
+    throw new Error(
+      `${id}: select a supported body textbox, image or table; inspect the construct in source.`,
+    );
+  return { item, table };
+}
+
+/** An image is locked by `validateImageCapability`, a textbox by its capability list. */
+function locked(item: Positioned, key: keyof Bounds): boolean {
+  return 'definition' in item
+    ? validateImageCapability(item, key).length > 0
+    : !(item as Textbox).capabilities.includes(key);
+}
+
 /** Derive only affected axes; unknown independent geometry need not block a safe edit. */
 export function validateLayout(
   report: ReportProjection,
@@ -74,14 +102,7 @@ export function validateLayout(
       'Select unique body items; resize requires exactly one item.',
     );
   const targets = payload.targetIds.map((id) => {
-    const table = report.tables.find((t) => t.node.id === id);
-    const item =
-      table ??
-      report.textboxes.find((t) => t.node.id === id && t.context === 'body');
-    if (!item || (table && !table.structural))
-      throw new Error(
-        `${id}: select a supported body textbox or table; inspect the construct in source.`,
-      );
+    const { item, table } = layoutTarget(report, id);
     return {
       id,
       item,
@@ -113,10 +134,7 @@ export function validateLayout(
     for (const target of targets) {
       known(target, position);
       known(target, size);
-      if (
-        !target.table &&
-        !(target.item as Textbox).capabilities.includes(position)
-      )
+      if (!target.table && locked(target.item, position))
         throw new Error(
           `${target.id}: ${position} is locked; inspect this property in source.`,
         );
@@ -195,14 +213,7 @@ function validateItem(
   payload: LayoutIntent['payload'],
 ): LayoutChange {
   const id = payload.targetIds[0]!;
-  const table = report.tables.find((t) => t.node.id === id);
-  const item =
-    table ??
-    report.textboxes.find((t) => t.node.id === id && t.context === 'body');
-  if (!item || (table && !table.structural))
-    throw new Error(
-      `${id}: select a supported body textbox or table; inspect the construct in source.`,
-    );
+  const { item, table } = layoutTarget(report, id);
   const original = acceptedGeometry(report, item, !!table);
   const values: { -readonly [K in keyof Bounds]?: number } = {};
   const known = (key: keyof Bounds) => {
@@ -223,7 +234,7 @@ function validateItem(
         `${id}: positions must be nonnegative and dimensions positive; correct the proposed geometry.`,
       );
     if (value === known(key)) return;
-    if (!table && !(item as Textbox).capabilities.includes(key))
+    if (!table && locked(item, key))
       throw new Error(
         `${id}: ${key} is locked; inspect this property in source.`,
       );

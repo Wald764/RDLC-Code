@@ -13,6 +13,12 @@
     "classification",
     "mime",
     "hasPayload",
+    "format",
+    "encodedSize",
+    "pixelWidth",
+    "pixelHeight",
+    "references",
+    "displayable",
     "hasQuery",
     "source",
     "nullable",
@@ -317,8 +323,16 @@
           "name": "Logo",
           "open": "<EmbeddedImage Name=\"Logo\">",
           "close": "</EmbeddedImage>",
-          "details": { "hasPayload": true, "mime": "image/png" },
-          "authoring": false
+          "details": {
+            "hasPayload": true,
+            "format": "other",
+            "encodedSize": 16,
+            "references": 0,
+            "displayable": false,
+            "mime": "image/png"
+          },
+          "authoring": false,
+          "sidebarSourceOnly": false
         },
         {
           "key": "img-odd",
@@ -329,8 +343,15 @@
           "name": "Odd",
           "open": "<EmbeddedImage Name=\"Odd\">",
           "close": "</EmbeddedImage>",
-          "details": { "hasPayload": true },
-          "authoring": false
+          "details": {
+            "hasPayload": true,
+            "format": "other",
+            "encodedSize": 16,
+            "references": 0,
+            "displayable": false
+          },
+          "authoring": false,
+          "sidebarSourceOnly": false
         },
         {
           "key": "img-empty",
@@ -341,8 +362,16 @@
           "name": "Empty",
           "open": "<EmbeddedImage Name=\"Empty\">",
           "close": "</EmbeddedImage>",
-          "details": { "hasPayload": false, "mime": "image/gif" },
-          "authoring": false
+          "details": {
+            "hasPayload": false,
+            "format": "other",
+            "encodedSize": 0,
+            "references": 0,
+            "displayable": false,
+            "mime": "image/gif"
+          },
+          "authoring": false,
+          "sidebarSourceOnly": false
         }
       ]
     },

@@ -12,6 +12,7 @@ import type {
   NativeActionMessage,
 } from '@rdlc/report-model/protocol';
 import { until } from './session-checks.js';
+import { withNativeViews } from './sidebar-harness.js';
 
 export async function run(): Promise<void> {
   const host = new SidebarHostContext();
@@ -217,6 +218,53 @@ export async function run(): Promise<void> {
   await deliveryOutsideMutationQueue(source);
   await correlatedEditRoundTrip(source);
   await renameAndReopen(source);
+  await imageNodeActivation();
+}
+
+/**
+ * Activating an image node of Report Structure sends one native select for exactly that
+ * item; once the designer accepts it, the image is the primary body selection (the
+ * canvas selection the tree row mirrors), and the row says so. A preservation-only image
+ * stays listed and selectable, but offers no mutation entry.
+ */
+async function imageNodeActivation(): Promise<void> {
+  const fixtures = resolve(__dirname, '../../../tests/fixtures/images');
+  const authored = readFileSync(join(fixtures, 'authored.rdlc'), 'utf8');
+  await withNativeViews(authored, async (harness) => {
+    const rows = (await harness.rows('structure')).filter(
+      (entry) => entry.node?.kind === 'image',
+    );
+    assert.deepEqual(
+      rows.map((entry) => entry.node!.name),
+      [
+        'LogoAutoSize',
+        'LogoFit',
+        'PhotoFitProportional',
+        'PhotoClip',
+        'Tagged',
+      ],
+    );
+    const target = rows[1]!;
+    const version = harness.document.version;
+    const run = await harness.call('rdlcCode.sidebar.activate', target);
+    assert.deepEqual(run.warnings, []);
+    const accepted = harness.session.currentSelection;
+    assert.ok(accepted, 'the designer accepted a selection');
+    assert.equal(accepted.version, version);
+    assert.deepEqual(accepted.selection, {
+      mode: 'body',
+      targetIds: [target.node!.id],
+      primaryId: target.node!.id,
+    });
+    assert.equal(harness.document.version, version, 'selecting writes nothing');
+    let description = '';
+    await until(() => {
+      void harness.item('structure', target).then((item) => {
+        description = String(item.description);
+      });
+      return description.includes('Primary');
+    }, 'the row shows the primary selection');
+  });
 }
 
 /** Every failed or invalidated delivery settles once with a refusal and never mutates or retries. */

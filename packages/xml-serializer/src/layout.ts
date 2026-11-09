@@ -1,6 +1,6 @@
 import type { DocumentSnapshot } from '@rdlc/report-model/document';
 import type { PatchPlan } from '@rdlc/report-model/editing';
-import type { Textbox, Table } from '@rdlc/report-model/report';
+import type { ImageItem, Textbox, Table } from '@rdlc/report-model/report';
 import type { Bounds } from '@rdlc/report-model/scene';
 import {
   formatSize,
@@ -12,7 +12,7 @@ import { planTextboxProperty } from './textboxes.js';
 import { planTableGeometry } from './tables.js';
 
 export interface GeometryChange {
-  readonly item: Textbox | Table;
+  readonly item: Textbox | Table | ImageItem;
   readonly table: boolean;
   readonly original: ResolvedGeometry;
   readonly values: Partial<Bounds>;
@@ -55,6 +55,7 @@ export function planLayout(
             ])
           : planTextboxProperty({
               snapshot,
+              // Geometry patches read only `node`, so an image item takes the same path.
               textbox: item as Textbox,
               property: key,
               value: formatted,

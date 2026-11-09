@@ -18,6 +18,7 @@ import {
   expectedChecks,
   matchInformationalRule,
   skipAllowed,
+  stripFailureDetail,
   testId,
 } from './qa-classification.js';
 
@@ -106,6 +107,7 @@ test('the informational Desktop tests are exactly the reviewed list', () => {
       if (matchInformationalRule(file, title))
         informational.push(testId(file, title));
   assert.deepEqual(informational.sort(), [
+    'images.spec.ts::SC-006-timing',
     'layout.spec.ts::FR-028-scaling',
     'layout.spec.ts::FR-029-stability',
     'layout.spec.ts::SC-007-stability',
@@ -115,6 +117,11 @@ test('the informational Desktop tests are exactly the reviewed list', () => {
     'structure.spec.ts::SC-003-timing',
     'visual.spec.ts::FR-028-contrast',
     'visual.spec.ts::SC-006-contrast',
+    'visual.spec.ts::US-IMG-placeholder',
+    'visual.spec.ts::US-IMG-sizing-AutoSize',
+    'visual.spec.ts::US-IMG-sizing-Clip',
+    'visual.spec.ts::US-IMG-sizing-Fit',
+    'visual.spec.ts::US-IMG-sizing-FitProportional',
     'visual.spec.ts::US6.2-themes',
   ]);
 });
@@ -155,6 +162,11 @@ test('visual, layout and native-drag are informational only for rendering and me
     ['visual.spec.ts', 'US6.2-themes', [SCREENSHOT, SIZE]],
     ['visual.spec.ts', 'FR-028-contrast', [CONTRAST]],
     ['visual.spec.ts', 'SC-006-contrast', [CONTRAST]],
+    ['visual.spec.ts', 'US-IMG-sizing-AutoSize', [SCREENSHOT, SIZE]],
+    ['visual.spec.ts', 'US-IMG-sizing-Fit', [SCREENSHOT, SIZE]],
+    ['visual.spec.ts', 'US-IMG-sizing-FitProportional', [SCREENSHOT, SIZE]],
+    ['visual.spec.ts', 'US-IMG-sizing-Clip', [SCREENSHOT, SIZE]],
+    ['visual.spec.ts', 'US-IMG-placeholder', [SCREENSHOT, SIZE]],
     [
       'layout.spec.ts',
       'US6.3-frame-stability',
@@ -345,6 +357,86 @@ test('only the latency budget of SC-003-timing is informational; correctness fai
       'critical',
       String(failure),
     );
+});
+
+test('only the latency budgets of images SC-006-timing are informational; correctness failures stay critical', () => {
+  const file = 'images.spec.ts';
+  const title = 'SC-006-timing';
+  const failed = (matcher: string, expected: string, received: string) =>
+    `expect(received).${matcher}(expected)\n\nExpected: ${expected}\nReceived: ${received}`;
+  const budget =
+    '\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThanOrEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: <= \u001b[32m100\u001b[39m\nReceived: \u001b[31m142\u001b[39m';
+  for (const informational of [
+    budget,
+    `selection feedback p95 (ms)\n\n${failed('toBeLessThanOrEqual', '<= 100', '142')}`,
+    `move feedback p95 (ms)\n\n${failed('toBeLessThanOrEqual', '<= 100', '101.5')}`,
+    `a 5 MiB picture appears within 1 s (ms)\n\n${failed('toBeLessThanOrEqual', '<= 1000', '1380')}\n`,
+  ])
+    assert.equal(
+      classifyTest(file, title, informational).severity,
+      'informational',
+      informational,
+    );
+  for (const failure of [
+    undefined,
+    '',
+    'Expected: <= 100\nReceived: 142',
+    'Error: expect(locator).toHaveCount(50) failed',
+    'expect(received).toBe(expected) // Object.is equality\n\nExpected: 50\nReceived: 49',
+    failed('toBeLessThanOrEqual', '<= 10', '142'),
+    failed('toBeLessThanOrEqual', '<= 10000', '14200'),
+    failed('toBeLessThanOrEqual', '<= 100', 'abc'),
+    failed('toBeGreaterThanOrEqual', '>= 100', '90'),
+    `${failed('toBeLessThanOrEqual', '<= 100', '142')}\nmore text`,
+    "A snapshot doesn't exist at /ref/dark.png, writing actual.",
+    '  612 | ).toBeLessThanOrEqual(100);',
+  ])
+    assert.equal(
+      classifyTest(file, title, failure).severity,
+      'critical',
+      String(failure),
+    );
+  // The rule covers this one title of this one file.
+  assert.equal(
+    classifyTest(
+      file,
+      'US1-insert-undo',
+      failed('toBeLessThanOrEqual', '<= 100', '142'),
+    ).severity,
+    'critical',
+  );
+  assert.equal(
+    classifyTest(
+      'structure.spec.ts',
+      title,
+      failed('toBeLessThanOrEqual', '<= 100', '142'),
+    ).severity,
+    'critical',
+  );
+});
+
+test('stripFailureDetail keeps only the assertion message', () => {
+  const bare = 'Error: x\n\nExpected: <= 1000\nReceived: 1651';
+  assert.equal(stripFailureDetail(bare), bare);
+  assert.equal(
+    stripFailureDetail(`${bare}\n\n  1 | a\n> 2 | b\n    at c (d:1:1)`),
+    bare,
+  );
+  assert.equal(stripFailureDetail(`${bare}\n    at c (d:1:1)`), bare);
+  assert.equal(
+    stripFailureDetail(`\u001b[31m${bare}\u001b[39m\n\n> 2 | b`),
+    bare,
+  );
+  // A code-frame-looking line without the leading blank line is not cut.
+  assert.equal(stripFailureDetail('  612 | ).toBe(1);'), '  612 | ).toBe(1);');
+  assert.equal(
+    classifyTest(
+      'images.spec.ts',
+      'SC-006-timing',
+      `Error: ms\n\nexpect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 1000\nReceived:    1651\n\n  1665 |   a\n> 1666 |   b\n    at x (y:1:1)`,
+    ).severity,
+    'informational',
+  );
 });
 
 test('release exceptions may only name informational checks and tests', () => {

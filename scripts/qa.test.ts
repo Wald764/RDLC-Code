@@ -6,6 +6,7 @@ import {
   dependentsOf,
   discoverTests,
   distOfTest,
+  headlessLaunch,
   loadGraph,
   parseArgs,
   refusal,
@@ -359,4 +360,112 @@ test('the real workspace graph and test index follow the repository', () => {
     'packages/renderer/dist/render.test.js',
   );
   assert.equal(distOfTest('scripts/qa.test.ts'), 'dist/scripts/qa.test.js');
+});
+
+test('windowed steps run headless on Linux without the user session variables', () => {
+  const env = {
+    PATH: '/usr/bin',
+    HOME: '/home/dev',
+    DISPLAY: ':0',
+    WAYLAND_DISPLAY: 'wayland-0',
+    XDG_SESSION_TYPE: 'wayland',
+    EGL_PLATFORM: 'wayland',
+    XAUTHORITY: '/run/user/1000/.auth',
+  };
+  const linux = { platform: 'linux' as const, env, which: () => true };
+  const host = headlessLaunch(
+    ['node', 'dist/tests/vscode/run-tests.js'],
+    linux,
+  );
+  assert.deepEqual(host.command, [
+    'xvfb-run',
+    '-a',
+    '-s',
+    '-screen 0 1920x1080x24',
+    'node',
+    'dist/tests/vscode/run-tests.js',
+  ]);
+  assert.deepEqual(host.wrapper, host.command.slice(0, 4));
+  assert.deepEqual(host.env, {
+    PATH: '/usr/bin',
+    HOME: '/home/dev',
+    DISPLAY: ':0',
+  });
+  assert.equal(host.note, undefined);
+  assert.equal(env.WAYLAND_DISPLAY, 'wayland-0', 'the input is not mutated');
+
+  const desktop = headlessLaunch(
+    ['node', 'dist/tests/desktop/run-tests.js', '--visual'],
+    linux,
+  );
+  assert.equal(desktop.command[3], '-screen 0 1440x1000x24');
+  assert.deepEqual(desktop.command.slice(4), [
+    'node',
+    'dist/tests/desktop/run-tests.js',
+    '--visual',
+  ]);
+  const installed = headlessLaunch(
+    ['node', 'dist/tests/vscode/run-tests.js', '--packaged'],
+    linux,
+  );
+  assert.equal(installed.command.at(-1), '--packaged');
+});
+
+test('headless launch leaves other steps, other platforms, CI and the opt-out alone', () => {
+  const host = ['node', 'dist/tests/vscode/run-tests.js'];
+  const base = { PATH: '/usr/bin' };
+  const native = (
+    command: string[],
+    context: Parameters<typeof headlessLaunch>[1],
+  ) => {
+    const plan = headlessLaunch(command, context);
+    assert.deepEqual(plan.command, command);
+    assert.deepEqual(plan.wrapper, []);
+    assert.equal(plan.env, undefined);
+    return plan;
+  };
+  const linux = (env: Record<string, string>) => ({
+    platform: 'linux' as const,
+    env,
+    which: () => true,
+  });
+  native(['node', 'dist/scripts/build.js'], linux(base));
+  native(['pnpm', 'test'], linux(base));
+  native(host, { platform: 'darwin', env: base, which: () => true });
+  native(host, { platform: 'win32', env: base, which: () => true });
+  native(host, linux({ ...base, CI: 'true' }));
+  native(host, linux({ ...base, RDLC_QA_DISPLAY: 'native' }));
+  assert.equal(native(host, linux({ ...base, CI: 'true' })).note, undefined);
+  assert.equal(
+    native(host, linux({ ...base, RDLC_QA_DISPLAY: 'native' })).note,
+    undefined,
+  );
+  assert.equal(
+    headlessLaunch(host, linux({ ...base, CI: '' })).wrapper[0],
+    'xvfb-run',
+  );
+  assert.equal(
+    headlessLaunch(host, linux({ ...base, RDLC_QA_DISPLAY: 'xvfb' }))
+      .wrapper[0],
+    'xvfb-run',
+  );
+});
+
+test('a missing xvfb-run keeps the native launch and says so', () => {
+  const plan = headlessLaunch(['node', 'dist/tests/vscode/run-tests.js'], {
+    platform: 'linux',
+    env: { PATH: '/usr/bin' },
+    which: (program) => program !== 'xvfb-run',
+  });
+  assert.deepEqual(plan.command, ['node', 'dist/tests/vscode/run-tests.js']);
+  assert.deepEqual(plan.wrapper, []);
+  assert.equal(plan.env, undefined);
+  assert.match(plan.note ?? '', /xvfb-run not found/);
+  assert.doesNotMatch(plan.note ?? '', /\n/);
+});
+
+test('plans keep the plain commands: the wrapper is applied only when running', () => {
+  const full = text(select('full', []).steps);
+  assert.match(full, /^node dist\/tests\/vscode\/run-tests\.js$/m);
+  assert.doesNotMatch(full, /xvfb-run/);
 });

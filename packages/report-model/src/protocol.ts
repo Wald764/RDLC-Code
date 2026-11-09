@@ -1,5 +1,9 @@
 import {
   authoringFields,
+  authoringOptionalFields,
+  imagePlacements,
+  imageReplaceScopes,
+  imageScalarProperties,
   textboxProperties,
   resizeHandles,
   alignModes,
@@ -11,6 +15,13 @@ import type { DesignScene } from './scene.js';
 import type { ReportProjection } from './report.js';
 import { sizeUnits, type SizeUnit } from './geometry.js';
 import { clipboardActions, type ClipboardAction } from './clipboard.js';
+import { sniffFormat } from './image-data.js';
+import {
+  imageReasonLabels,
+  rawImageLimit,
+  type ImageAsset,
+  type ImageMime,
+} from './images.js';
 import {
   structureKinds,
   validateAcceptedNavigation,
@@ -26,6 +37,7 @@ import {
   type ViewIdentity,
 } from './navigation.js';
 export { structureKinds, validateViewIdentity } from './navigation.js';
+export type { ImageAsset, ImageMime } from './images.js';
 export type {
   AcceptedNavigation,
   AcceptedSelectionMessage,
@@ -46,6 +58,23 @@ export type {
 } from './navigation.js';
 
 export interface AuthoringState {
+  /** Image definitions for the inspector's picker; absent from older hosts. */
+  readonly embeddedImages?: readonly {
+    readonly name: string;
+    readonly displayable: boolean;
+    /** Count of image items whose constant `Value` names the definition. */
+    readonly references: number;
+  }[];
+  /** Per image item: its definition name and ToolTip, which the scene does not carry. */
+  readonly images?: readonly {
+    readonly id: string;
+    readonly definition: string | null;
+    /** Inert text; an expression is shown, never evaluated. */
+    readonly toolTip: {
+      readonly text: string;
+      readonly expression: boolean;
+    } | null;
+  }[];
   readonly id: string;
   readonly page: Readonly<Record<string, string>>;
   readonly datasets: readonly {
@@ -149,8 +178,29 @@ export interface ClipboardRequestMessage {
   /** Optional correlation with the native action that requested this clipboard work. */
   readonly nativeRequestId?: string;
 }
+/**
+ * Picture payloads for displayable PNG/JPEG definitions the webview has not yet
+ * received. The only channel that carries image bytes: scenes, diagnostics and
+ * logs never do.
+ */
+export interface ImageAssetsMessage {
+  readonly protocol: 2;
+  readonly kind: 'imageAssets';
+  readonly assets: readonly ImageAsset[];
+}
+/**
+ * Largest accepted host envelope for the messages that carry a full scene
+ * (`snapshot`) or a picture (`imageAssets`); one maximal picture still fits.
+ */
+export const largeMessageLimit = 8 * 1024 * 1024;
+/** Most assets one `imageAssets` message may carry; hosts split larger sets. */
+export const imageAssetsPerMessage = 256;
+/** Hosts split larger sets across messages; a message holds at most this many picture bytes (one picture may exceed it alone). */
+export const imageAssetsBatchBudget = 6 * 1024 * 1024;
+const imageAssetMimes: readonly ImageMime[] = ['image/png', 'image/jpeg'];
 export type HostMessage =
   | HistoryResultMessage
+  | ImageAssetsMessage
   | FocusProbeMessage
   | NativeActionMessage
   | {
@@ -189,6 +239,8 @@ export type HostMessage =
       readonly diagnostics: readonly Diagnostic[];
       /** Accepted creations only: the item the host created and named in `version`. */
       readonly created?: { readonly id: string; readonly name: string };
+      /** The author closed the file chooser: no edit, no diagnostic, no history entry. */
+      readonly cancelled?: true;
     }
   | {
       readonly protocol: 2;
@@ -390,6 +442,9 @@ function sceneItem(value: unknown): boolean {
       'zIndex',
       'resolvedGeometry',
       'operations',
+      'sizing',
+      'display',
+      'metadata',
     ]) &&
     id(value.id) &&
     (value.bounds === null ||
@@ -397,7 +452,14 @@ function sceneItem(value: unknown): boolean {
         (value.bounds as Record<string, number>).width! > 0 &&
         (value.bounds as Record<string, number>).height! > 0)) &&
     (value.kind === undefined ||
-      ['textbox', 'table', 'cell', 'preserved'].includes(String(value.kind))) &&
+      ['textbox', 'table', 'cell', 'preserved', 'image'].includes(
+        String(value.kind),
+      )) &&
+    (value.kind === 'image'
+      ? imageFields(value)
+      : value.sizing === undefined &&
+        value.display === undefined &&
+        value.metadata === undefined) &&
     (value.parentTableId === undefined ||
       (value.kind === 'cell' && id(value.parentTableId))) &&
     (value.xmlCellId === undefined ||
@@ -429,6 +491,130 @@ function sceneItem(value: unknown): boolean {
         'textAlign',
       ]))
   );
+}
+const imageSizings = ['AutoSize', 'Fit', 'FitProportional', 'Clip'];
+/** Every reason a placeholder may carry: the keys of the exhaustive label map. */
+const imageReasons = Object.keys(imageReasonLabels);
+function pixels(value: unknown): boolean {
+  return (
+    record(value) &&
+    keys(value, ['width', 'height']) &&
+    typeof value.width === 'number' &&
+    Number.isSafeInteger(value.width) &&
+    value.width > 0 &&
+    typeof value.height === 'number' &&
+    Number.isSafeInteger(value.height) &&
+    value.height > 0
+  );
+}
+/** `sizing`, `display` and `metadata` of an image item; none carries a payload or URL. */
+function imageFields(item: Record<string, unknown>): boolean {
+  const display = item.display;
+  const metadata = item.metadata;
+  return (
+    imageSizings.includes(String(item.sizing)) &&
+    record(display) &&
+    (display.state === 'picture'
+      ? keys(display, ['state', 'assetKey', 'pixels']) &&
+        id(display.assetKey) &&
+        pixels(display.pixels)
+      : display.state === 'placeholder' &&
+        keys(display, ['state', 'reason']) &&
+        imageReasons.includes(String(display.reason))) &&
+    record(metadata) &&
+    keys(metadata, ['format', 'pixels', 'encodedSize']) &&
+    (metadata.format === null ||
+      ['png', 'jpeg', 'other'].includes(String(metadata.format))) &&
+    (metadata.pixels === null || pixels(metadata.pixels)) &&
+    (metadata.encodedSize === null || version(metadata.encodedSize))
+  );
+}
+const typedArrayPrototype = Object.getPrototypeOf(
+  Uint8Array.prototype,
+) as object;
+/** Slot readers: they work across realms, ignore own properties and throw for fakes. */
+const typedArrayName = Object.getOwnPropertyDescriptor(
+  typedArrayPrototype,
+  Symbol.toStringTag,
+)!.get as (this: unknown) => string | undefined;
+const typedArrayBuffer = Object.getOwnPropertyDescriptor(
+  typedArrayPrototype,
+  'buffer',
+)!.get as (this: unknown) => unknown;
+const typedArrayOffset = Object.getOwnPropertyDescriptor(
+  typedArrayPrototype,
+  'byteOffset',
+)!.get as (this: unknown) => number;
+const typedArrayLength = Object.getOwnPropertyDescriptor(
+  typedArrayPrototype,
+  'length',
+)!.get as (this: unknown) => number;
+const arrayBufferLength = Object.getOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  'byteLength',
+)!.get as (this: unknown) => number;
+
+/**
+ * The picture bytes of a genuine `Uint8Array` or `ArrayBuffer` as a clean local view, or
+ * null for anything else. Only internal slots are read, never `Symbol.toStringTag`,
+ * `length` or other properties an object can fake, so a lookalike, a detached buffer, a
+ * shared buffer or another element type is refused instead of trusted or thrown on.
+ * VS Code hands a typed array back as one, or as its bare `ArrayBuffer`.
+ */
+function imageBytes(value: unknown): Uint8Array | null {
+  try {
+    if (typeof value !== 'object' || value === null) return null;
+    if (ArrayBuffer.isView(value)) {
+      if (typedArrayName.call(value) !== 'Uint8Array') return null;
+      const buffer = typedArrayBuffer.call(value);
+      arrayBufferLength.call(buffer); // throws for a shared buffer
+      return new Uint8Array(
+        buffer as ArrayBuffer,
+        typedArrayOffset.call(value),
+        typedArrayLength.call(value),
+      );
+    }
+    return new Uint8Array(
+      value as ArrayBuffer,
+      0,
+      arrayBufferLength.call(value),
+    );
+  } catch {
+    return null;
+  }
+}
+/**
+ * Check of an `imageAssets` payload, on both sides of the transport: closed fields, PNG/JPEG
+ * only, non-empty bytes within the import limit whose signature agrees with the mime,
+ * unique well-formed keys, and a bounded total. The bytes are only measured and sniffed.
+ */
+export function validateImageAssets(value: unknown): value is ImageAsset[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > imageAssetsPerMessage ||
+    new Set(value.map((asset) => (record(asset) ? asset.key : asset))).size !==
+      value.length
+  )
+    return false;
+  let total = 0;
+  return value.every((asset) => {
+    if (
+      !record(asset) ||
+      !keys(asset, ['key', 'mime', 'data']) ||
+      !id(asset.key) ||
+      !imageAssetMimes.includes(asset.mime as ImageMime)
+    )
+      return false;
+    const bytes = imageBytes(asset.data);
+    if (!bytes || bytes.length === 0 || bytes.length > rawImageLimit)
+      return false;
+    total += bytes.length;
+    return (
+      total <= largeMessageLimit &&
+      sniffFormat(bytes.subarray(0, 16)) ===
+        (asset.mime === 'image/png' ? 'png' : 'jpeg')
+    );
+  });
 }
 function resolvedGeometry(value: unknown): boolean {
   return (
@@ -504,11 +690,50 @@ function scene(value: unknown, expectedVersion: number): boolean {
   );
 }
 
+/** Optional image slices of the authoring state: closed, string and number valued only. */
+function imageAuthoring(value: Record<string, unknown>): boolean {
+  const { embeddedImages, images } = value;
+  return (
+    (embeddedImages === undefined ||
+      (Array.isArray(embeddedImages) &&
+        embeddedImages.every(
+          (entry) =>
+            record(entry) &&
+            keys(entry, ['name', 'displayable', 'references']) &&
+            string(entry.name) &&
+            typeof entry.displayable === 'boolean' &&
+            version(entry.references),
+        ))) &&
+    (images === undefined ||
+      (Array.isArray(images) &&
+        images.every(
+          (entry) =>
+            record(entry) &&
+            keys(entry, ['id', 'definition', 'toolTip']) &&
+            id(entry.id) &&
+            (entry.definition === null || string(entry.definition)) &&
+            (entry.toolTip === null ||
+              (record(entry.toolTip) &&
+                keys(entry.toolTip, ['text', 'expression']) &&
+                string(entry.toolTip.text) &&
+                typeof entry.toolTip.expression === 'boolean')),
+        )))
+  );
+}
+
 function authoring(value: unknown): boolean {
   if (value === undefined || value === null) return true;
   return (
     record(value) &&
-    keys(value, ['id', 'page', 'datasets', 'tables']) &&
+    keys(value, [
+      'id',
+      'page',
+      'datasets',
+      'tables',
+      'embeddedImages',
+      'images',
+    ]) &&
+    imageAuthoring(value) &&
     id(value.id) &&
     record(value.page) &&
     Object.keys(value.page).every(
@@ -589,7 +814,45 @@ function authoring(value: unknown): boolean {
   );
 }
 
+function optionalFields(action: unknown): readonly string[] {
+  return typeof action === 'string' &&
+    Object.hasOwn(authoringOptionalFields, action)
+    ? authoringOptionalFields[action as keyof typeof authoringOptionalFields]
+    : [];
+}
+/**
+ * `createImage`: a known placement, a position given as a pair (required for a drop),
+ * and an optional existing definition name. Never a path, URI or bytes; the closed key
+ * set is enforced by the caller.
+ */
+function createImage(payload: Record<string, unknown>): boolean {
+  const { placement, left, top, definition } = payload;
+  const positioned = left !== undefined || top !== undefined;
+  return (
+    (imagePlacements as readonly unknown[]).includes(placement) &&
+    (placement !== 'drop' || positioned) &&
+    (!positioned || (string(left) && string(top))) &&
+    (definition === undefined ||
+      (string(definition) &&
+        definition.length >= 1 &&
+        definition.length <= 256))
+  );
+}
+
 export function validateMessage(value: unknown): ProtocolMessage | null {
+  // Pictures travel as bytes, which the JSON-shaped checks below cannot and must not
+  // walk or serialize: that message has its own closed, size-bounded validation.
+  if (record(value) && value.kind === 'imageAssets') {
+    try {
+      return value.protocol === 2 &&
+        keys(value, ['protocol', 'kind', 'assets']) &&
+        validateImageAssets(value.assets)
+        ? (value as unknown as ProtocolMessage)
+        : null;
+    } catch {
+      return null; // a hostile getter or proxy: refused, never thrown
+    }
+  }
   // Host snapshots carry a full scene; client intents retain the smaller budget.
   const snapshot = record(value) && value.kind === 'snapshot';
   let nodes = 0;
@@ -616,7 +879,7 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
   if (
     !plainJson(value, 0) ||
     new TextEncoder().encode(JSON.stringify(value)).length >
-      (snapshot ? 8 * 1024 * 1024 : 65536) ||
+      (snapshot ? largeMessageLimit : 65536) ||
     !record(value) ||
     value.protocol !== 2
   )
@@ -722,10 +985,21 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
             keys(value.payload, [
               'action',
               ...authoringFields[value.payload.action as AuthoringAction],
+              ...optionalFields(value.payload.action),
             ]) &&
             authoringFields[value.payload.action as AuthoringAction].every(
               (key) => string((value.payload as Record<string, unknown>)[key]),
-            )));
+            ) &&
+            (value.payload.action !== 'createImage' ||
+              createImage(value.payload)) &&
+            (value.payload.action !== 'setImageProperty' ||
+              (imageScalarProperties as readonly unknown[]).includes(
+                value.payload.property,
+              )) &&
+            (value.payload.action !== 'replaceImagePicture' ||
+              (imageReplaceScopes as readonly unknown[]).includes(
+                value.payload.scope,
+              ))));
       break;
     case 'clipboard': {
       const action = value.action as ClipboardAction;
@@ -835,8 +1109,16 @@ export function validateMessage(value: unknown): ProtocolMessage | null {
           'changed',
           'mappings',
           'created',
+          'cancelled',
         ]) &&
         version(value.version) &&
+        // A cancelled file chooser is a refusal with no change and no diagnostic.
+        (value.cancelled === undefined ||
+          (value.cancelled === true &&
+            value.accepted === false &&
+            value.changed === false &&
+            Array.isArray(value.diagnostics) &&
+            value.diagnostics.length === 0)) &&
         version(value.baseVersion) &&
         value.version >= value.baseVersion &&
         typeof value.changed === 'boolean' &&

@@ -30,8 +30,8 @@ export interface InformationalTestRule {
   readonly titles?: readonly string[];
   /**
    * Allowlist of failure signatures matched against the Playwright error
-   * messages (never the code snippet or stack, which quote neighbouring
-   * source). The rule only applies when every recorded error message matches at
+   * messages with their code frame and stack removed (`stripFailureDetail`:
+   * they quote neighbouring source). The rule only applies when every recorded error message matches at
    * least one signature; a missing, empty or unknown message is critical (fail
    * closed). Every rule needs one: no informational rule is whole-file.
    */
@@ -138,6 +138,18 @@ export const INFORMATIONAL_TEST_RULES: readonly InformationalTestRule[] = [
     justification:
       'Only the hosted-runner latency budget (95 of 100 selection samples within 200 ms) is informational; any other assertion failure in this test (selection correctness, source bytes, spinbutton) stays critical.',
   },
+  {
+    id: 'image-latency-budget',
+    file: 'images.spec.ts',
+    titles: ['SC-006-timing'],
+    failure: [
+      expectFailure('toBeLessThanOrEqual', '<=\\s*100'),
+      expectFailure('toBeLessThanOrEqual', '<=\\s*1000'),
+    ],
+    anchors: ['.toBeLessThanOrEqual(100)', '.toBeLessThanOrEqual(1000)'],
+    justification:
+      'Runner speed is not a product defect. Only the hosted-runner latency budgets (selection and move feedback within 100 ms, a 5 MiB picture shown within 1 s) are informational; any other assertion failure in this test (item count, displayed picture, source bytes) stays critical.',
+  },
 ];
 
 /**
@@ -241,6 +253,20 @@ export function stripAnsi(text: string): string {
 }
 
 /**
+ * The assertion message alone: ANSI codes removed, then everything from the
+ * first code frame (a blank line followed by a `  12 | source` or `> 12 |`
+ * line) or the first stack line (`    at ...`) dropped. Playwright appends both
+ * to `errors[].message` (but not to `error.message`), and they quote
+ * neighbouring source that must never decide a severity nor defeat the
+ * end-anchored signatures. A message without either is only ANSI-stripped.
+ */
+export function stripFailureDetail(message: string): string {
+  const clean = stripAnsi(message);
+  const cut = clean.search(/\n[ \t]*\n[ \t]*>?[ \t]*\d+ \||\n[ \t]+at \S/);
+  return cut < 0 ? clean : clean.slice(0, cut);
+}
+
+/**
  * Severity of a failed test. `failureMessages` are the recorded Playwright
  * error messages (one string, or one entry per error); the informational rule
  * only applies when every message matches one of its signatures.
@@ -261,7 +287,9 @@ export function classifyTest(
   if (
     messages.length === 0 ||
     !messages.every((message) =>
-      rule.failure.some((signature) => signature.test(stripAnsi(message))),
+      rule.failure.some((signature) =>
+        signature.test(stripFailureDetail(message)),
+      ),
     )
   )
     return { severity: 'critical' };

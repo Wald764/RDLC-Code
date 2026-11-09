@@ -62,7 +62,8 @@ export function validColor(value: string): boolean {
 /** Renames must not leave expression or visibility references pointing at the old name. */
 export function validateTextboxRename(
   root: XmlNode | null,
-  textbox: Textbox,
+  /** A textbox or an image item: only the name and its capability are read. */
+  textbox: Pick<Textbox, 'capabilities' | 'name'>,
 ): readonly Diagnostic[] {
   const references: Reference[] = [];
   let complete = true;

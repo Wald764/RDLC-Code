@@ -85,6 +85,13 @@ export interface AllowedAccess {
    * extension sources, auth files). A write below one is unexpected.
    */
   readonly readOnly?: readonly string[];
+  /**
+   * Absolute paths of the files an author picks in the file chooser (the image
+   * import). Each may be read, stat-ed, and its own folder opened and listed
+   * (the chooser shows it), nothing more: a sibling, a child, a write or a
+   * parent listing stays unexpected, and no root is widened.
+   */
+  readonly importFiles?: readonly string[];
   /** Absolute roots that execve may run from; /proc/self/exe (Desktop re-exec) is always allowed. */
   readonly exec: readonly string[];
   /** Home directory used by the secret-path denylist; defaults to the runner's. */
@@ -1385,13 +1392,30 @@ function isHostStartupProbe(
   );
 }
 
+/**
+ * The user-chosen import file: read-only, exact path, plus the folder that
+ * holds it (the chooser lists that folder). Nothing under or beside it.
+ */
+function isImportRead(
+  path: string,
+  write: boolean,
+  context: ClassifyContext,
+): boolean {
+  if (write) return false;
+  const normal = normalPath(path);
+  return (context.allowed.importFiles ?? []).some((file) => {
+    const exact = normalPath(file.replace(/\\/g, '/'));
+    return normal === exact || normal === posix.dirname(exact);
+  });
+}
+
 function isAllowedFile(
   path: string,
   operation: string,
   write: boolean,
   context: ClassifyContext,
 ): boolean {
-  const { open, readOnly = [] } = context.allowed;
+  const { open, readOnly = [], importFiles = [] } = context.allowed;
   // A read-only root nested inside a writable one (an installed extension in
   // the profile) is the more specific rule: it wins for writes.
   if (
@@ -1404,9 +1428,10 @@ function isAllowedFile(
     return false;
   if (underRoot(path, open) || underRoot(path, RUNTIME_WRITABLE)) return true;
   if (underRoot(path, [...readOnly, ...RUNTIME_PATHS])) return !write;
+  if (isImportRead(path, write, context)) return true;
   if (
     METADATA_CALLS.has(operation) &&
-    isAncestorOf(path, [...open, ...readOnly])
+    isAncestorOf(path, [...open, ...readOnly, ...importFiles])
   )
     return true;
   if (isAllowedProbe(path, operation, write, context)) return true;

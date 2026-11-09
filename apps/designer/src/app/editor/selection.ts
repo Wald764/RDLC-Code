@@ -42,6 +42,42 @@ export function selectItem(
   };
 }
 
+/**
+ * True when the designer offers no mutation of the item. An image is judged by its
+ * capabilities: a geometry-only image (missing or undisplayable definition) still has a
+ * placeholder display, but its geometry is editable like a textbox. Every other kind keeps
+ * `placeholder` as its preservation flag.
+ */
+export function preservationOnly(item: DesignSceneItem): boolean {
+  return item.kind === 'image' ? !item.capabilities?.length : item.placeholder;
+}
+
+/**
+ * True when the host would refuse to copy, cut or duplicate the item. Mirrors its rule for
+ * images: a named image needs the `left` and `top` capabilities, so a geometry-only image
+ * qualifies and an image with an expression-valued position does not.
+ */
+export function clipboardBlocked(item: DesignSceneItem): boolean {
+  if (preservationOnly(item)) return true;
+  return (
+    item.kind === 'image' &&
+    !(
+      item.name &&
+      item.capabilities?.includes('left') &&
+      item.capabilities.includes('top')
+    )
+  );
+}
+
+/** Accessible name of a canvas item: images are announced as `Image {name}`. */
+export function accessibleName(item: DesignSceneItem): string {
+  return item.kind === 'image'
+    ? item.name
+      ? `Image ${item.name}`
+      : 'Image'
+    : item.label;
+}
+
 /** Identity shared by Structure rows and Data definition rows. */
 export interface MappableNode {
   readonly id: string;

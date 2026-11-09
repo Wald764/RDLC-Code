@@ -48,7 +48,7 @@ const BLANK = 'datasets/blank.rdlc';
 const MALFORMED = 'xml/malformed.rdlc';
 const SOURCE_ONLY = 'textboxes/unsupported-profile.rdlc';
 
-/** Catalog order; exactly three kinds are creatable. */
+/** Catalog order; exactly four kinds are creatable. */
 const ALL_KINDS = [
   'Textbox',
   'Table',
@@ -63,7 +63,6 @@ const ALL_KINDS = [
   'Parameter',
 ] as const;
 const UNAVAILABLE_KINDS = [
-  'Image',
   'Line',
   'Chart',
   'Subreport',
@@ -77,7 +76,7 @@ const REASON = (label: string): string =>
   `${label} authoring is unavailable. Existing content is preserved; use Code XML.`;
 const NOT_EDITABLE = 'Open an editable report to insert components.';
 const DRAG_NOTE =
-  'Native drag is unavailable. Activate Textbox, Table or Dataset to insert; use the compact designer fallback for drag.';
+  'Native drag is unavailable. Activate Textbox, Table, Image or Dataset to insert; use the compact designer fallback for drag.';
 const FILTER_PROMPT =
   'Native drag is unavailable; activate a supported item to insert.';
 const STALE =
@@ -448,7 +447,7 @@ async function walkComponents(ctx: Ctx): Promise<string[]> {
   return walkRows(ctx.page);
 }
 
-/** The eleven kinds, three insertable and eight refused, read row by row. */
+/** The eleven kinds, four insertable and seven refused, read row by row. */
 async function expectFullInventory(ctx: Ctx): Promise<string[]> {
   const labels = await walkComponents(ctx);
   const rows = componentRows(labels);
@@ -459,7 +458,7 @@ async function expectFullInventory(ctx: Ctx): Promise<string[]> {
       .map((row) => row.kind)
       .sort(),
     'creatable kinds',
-  ).toEqual(['Dataset', 'Table', 'Textbox']);
+  ).toEqual(['Dataset', 'Image', 'Table', 'Textbox']);
   expect(
     rows
       .filter((row) => row.state === 'Unavailable')
@@ -784,7 +783,7 @@ test('US4.4-filtering', async () => {
     await openFile(ctx, 'report.rdlc');
     await focusView(ctx, 'Components');
 
-    // Exactly eleven kinds: three with an activation command, eight truthful
+    // Exactly eleven kinds: four with an activation command, seven truthful
     // reasons. Read row by row — the rendered DOM never holds all eleven.
     await expectFullInventory(ctx);
 
@@ -840,7 +839,7 @@ test('US4.4-filtering', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// US4.5 — all eight unavailable kinds: exact reason, zero mutation
+// US4.5 — all seven unavailable kinds: exact reason, zero mutation
 // ---------------------------------------------------------------------------
 
 test('US4.5-unavailable-kinds', async () => {
@@ -887,7 +886,7 @@ test('US4.5-refusals', async () => {
 
       // Invalid source: the real state settles first (the view message is the
       // host's own report), then focus, then the actual row states — every
-      // kind is unavailable here, the three creators included.
+      // kind is unavailable here, the four creators included.
       await openFile(ctx, 'invalid.rdlc');
       await focusView(ctx, 'Components');
       await messages(
@@ -1270,8 +1269,27 @@ test('FR-018-fallback', async () => {
       ctx.page.locator('.monaco-workbench .tab.dirty'),
     ).not.toHaveCount(0);
     await save(ctx);
-    await expect.poll(() => bytes(ctx, 'report.rdlc')).not.toBe(original);
-    const alt = await bytes(ctx, 'report.rdlc');
+    // Wait for the complete saved Alt drop, not for any change: a half-written
+    // file or an intermediate save also differs from the original. The expected
+    // document is the 004 default Textbox with only its two pt coordinates free
+    // (client points are non-negative inside the body, hence no sign).
+    const altShape = withReportItem(
+      original,
+      textboxXml('Textbox1', '@@LEFT@@', '@@TOP@@'),
+    );
+    const altPattern = new RegExp(
+      `^${altShape
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        .replace('@@LEFT@@', '[0-9.]+pt')
+        .replace('@@TOP@@', '[0-9.]+pt')}$`,
+    );
+    let alt = '';
+    await expect
+      .poll(async () => (alt = await bytes(ctx, 'report.rdlc')), {
+        message: 'the saved Alt drop is the complete Textbox with pt Left/Top',
+        timeout: 30_000,
+      })
+      .toMatch(altPattern);
     const raw = rawPoints(box, DROP);
     expect(
       Math.abs(ptValue(alt, 'Left') - raw.left),
@@ -1356,8 +1374,11 @@ test('SC-004-insert-history', async () => {
     await expect(createdNotice(frame, 'DataSet1')).toHaveCount(1);
     await save(ctx);
     await expect.poll(() => bytes(ctx, 'report.rdlc')).toBe(datasetMade);
-    await ctx.driver.command('View: Close All Editors');
-    await expect(editorTabs(ctx.page)).toHaveCount(0);
+    await expect(dirtyTabs(ctx.page), 'the save settled').toHaveCount(0);
+    await expect(async () => {
+      await ctx.driver.command('View: Close All Editors');
+      await expect(editorTabs(ctx.page)).toHaveCount(0, { timeout: 5_000 });
+    }).toPass({ timeout: 20_000 });
     await openFile(ctx, 'report.rdlc');
     expect(await bytes(ctx, 'report.rdlc')).toBe(datasetMade);
     frame = await openDesigner(ctx);
@@ -1368,8 +1389,8 @@ test('SC-004-insert-history', async () => {
 
     // A refused insertion still changes zero report text and zero history.
     await focusView(ctx, 'Components');
-    await runFilter(ctx, 'image');
-    const row = unavailableRow(ctx.page, 'Image', REASON('Image'));
+    await runFilter(ctx, 'line');
+    const row = unavailableRow(ctx.page, 'Line', REASON('Line'));
     await expect(row).toBeVisible();
     await row.click();
     await ctx.page.keyboard.press('Enter');

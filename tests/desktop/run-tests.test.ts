@@ -288,6 +288,46 @@ test('only host-observer journeys may be skipped, and only off Linux', () => {
     ),
     false,
   );
+  // Only allowlisted skips (nothing expected to pass), as the packaged probe
+  // that runs the host-observer spec alone off Linux: complete, listed as skipped.
+  const onlySkipped = report([entry('FR-030-trust', 'skipped')], 1);
+  const only: string[] = [];
+  assert.equal(onlySkipped.stats.expected, 0);
+  assert.equal(
+    completeDesktopReport(onlySkipped, ['offline.spec.ts'], 'win32', only),
+    true,
+  );
+  assert.deepEqual(only, ['FR-030-trust']);
+  // Linux accepts no skip, so the same report is incomplete there.
+  assert.equal(
+    completeDesktopReport(onlySkipped, ['offline.spec.ts'], 'linux'),
+    false,
+  );
+  // A report with no test at all is never complete.
+  assert.equal(
+    completeDesktopReport(
+      {
+        stats: { expected: 0, skipped: 0, unexpected: 0, flaky: 0 },
+        suites: [],
+      },
+      [],
+      'win32',
+    ),
+    false,
+  );
+  assert.equal(
+    completeDesktopReport(report([], 0), ['offline.spec.ts'], 'win32'),
+    false,
+  );
+  // A non-allowlisted skip is never accepted, even alone.
+  assert.equal(
+    completeDesktopReport(
+      report([entry('other-skip', 'skipped')], 1),
+      ['offline.spec.ts'],
+      'win32',
+    ),
+    false,
+  );
   // The reported skip count must match the accepted skips.
   assert.equal(
     completeDesktopReport(
@@ -431,7 +471,7 @@ test('Desktop modes preserve pnpm separators and reject ambiguous or unknown fla
 
 test('CI groups partition the functional journeys without dropping one', () => {
   const all = requiredDesktopSuites(desktopArguments([], {}));
-  assert.equal(all.length, 11);
+  assert.equal(all.length, 12);
   const parts = Object.keys(DESKTOP_GROUPS).map((group) =>
     requiredDesktopSuites(
       desktopArguments(['--packaged'], { RDLC_DESKTOP_GROUP: group }),

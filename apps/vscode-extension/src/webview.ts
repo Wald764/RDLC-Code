@@ -17,7 +17,7 @@ export function renderWebviewHtml(options: {
   const { index, assetsBase, nonce, cspSource } = options;
   const csp = [
     "default-src 'none'",
-    `img-src ${cspSource}`,
+    `img-src ${cspSource} blob:`,
     `style-src ${cspSource} 'nonce-${nonce}'`,
     `script-src ${cspSource} 'nonce-${nonce}'`,
     `font-src ${cspSource}`,

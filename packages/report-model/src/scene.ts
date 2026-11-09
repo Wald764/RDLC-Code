@@ -1,4 +1,10 @@
 import type { ResolvedGeometry } from './geometry.js';
+import type {
+  ImageFormat,
+  ImagePixels,
+  ImagePlaceholderReason,
+  ImageSizing,
+} from './images.js';
 
 export interface Bounds {
   readonly left: number;
@@ -23,6 +29,29 @@ export interface SceneBounds {
   readonly height: string | null;
 }
 /**
+ * How an image item is shown. A picture only names its asset by hash: the bytes
+ * reach the webview through the separate `imageAssets` message, never the scene.
+ */
+export type SceneImageDisplay =
+  | {
+      readonly state: 'picture';
+      /** Hash of the displayable definition; the key of the `imageAssets` entry. */
+      readonly assetKey: string;
+      readonly pixels: ImagePixels;
+    }
+  | {
+      readonly state: 'placeholder';
+      /** The projection reason; the scene never invents one. */
+      readonly reason: ImagePlaceholderReason;
+    };
+/** Facts about the referenced definition; every field is `null` when none resolves. */
+export interface SceneImageMetadata {
+  readonly format: ImageFormat | 'other' | null;
+  readonly pixels: ImagePixels | null;
+  /** Length of the base64 text, never the text itself. */
+  readonly encodedSize: number | null;
+}
+/**
  * Pure geometry/labels; no HTML, scripts, resource URLs or evaluated data. Text is
  * the exact unevaluated RDL string, never an evaluated report value.
  */
@@ -33,7 +62,7 @@ export interface DesignScene {
   readonly items: readonly {
     readonly id: string;
     readonly bounds: Bounds | null;
-    readonly kind?: 'textbox' | 'table' | 'cell' | 'preserved';
+    readonly kind?: 'textbox' | 'table' | 'cell' | 'preserved' | 'image';
     readonly parentTableId?: string;
     /** Source XML cell; `id` may instead name its rendered child textbox. */
     readonly xmlCellId?: string;
@@ -53,6 +82,12 @@ export interface DesignScene {
     readonly geometry?: SceneBounds | null;
     readonly style?: SceneTextStyle | null;
     readonly capabilities?: readonly string[];
+    /** `kind: 'image'` only. */
+    readonly sizing?: ImageSizing;
+    /** `kind: 'image'` only. */
+    readonly display?: SceneImageDisplay;
+    /** `kind: 'image'` only. */
+    readonly metadata?: SceneImageMetadata;
   }[];
 }
 export type DesignSceneItem = DesignScene['items'][number];

@@ -11,6 +11,9 @@ import {
   selectStructure,
   reconcileStructureSelection,
   structureMappings,
+  accessibleName,
+  clipboardBlocked,
+  preservationOnly,
 } from './selection';
 import type {
   NavigationNode,
@@ -321,6 +324,118 @@ describe('ordered body selection', () => {
       '1:2',
     );
     expect(hitTest(items, 100, 100)).toBeNull();
+  });
+});
+
+describe('image items as body items', () => {
+  const geometry = ['left', 'top', 'width', 'height'];
+  const image = (
+    id: string,
+    capabilities: readonly string[],
+    over: Partial<DesignSceneItem> = {},
+  ): DesignSceneItem => ({
+    id,
+    kind: 'image',
+    name: `Logo${id}`,
+    label: `Logo${id}`,
+    sourceOrder: 5,
+    zIndex: 1,
+    placeholder: false,
+    sizing: 'Fit',
+    capabilities,
+    bounds: { left: 30, top: 0, width: 10, height: 10 },
+    ...over,
+  });
+  const editable = image('1:7', [...geometry, 'image', 'name', 'sizing']);
+  const geometryOnly = image('1:8', [...geometry, 'name'], {
+    placeholder: true,
+    display: { state: 'placeholder', reason: 'reference-missing' },
+    bounds: { left: 50, top: 0, width: 10, height: 10 },
+    sourceOrder: 6,
+  });
+  const preserved = image('1:9', [], {
+    placeholder: true,
+    display: { state: 'placeholder', reason: 'data-invalid' },
+    bounds: { left: 70, top: 0, width: 10, height: 10 },
+    sourceOrder: 7,
+  });
+  const all = [...items, editable, geometryOnly, preserved];
+
+  it('takes part in multi-selection with textboxes and tables', () => {
+    let selection = selectItem(emptySelection(1), items[0]!, false);
+    selection = selectItem(selection, editable, true);
+    selection = selectItem(selection, items[1]!, true);
+    expect(selection.bodyItemIds).toEqual(['1:1', '1:7', '1:2']);
+    expect(selection.primaryId).toBe('1:2');
+    selection = selectItem(selection, items[1]!, true);
+    expect(selection.primaryId).toBe('1:7');
+    selection = selectItem(selection, items[3]!, true);
+    expect(selection.cellTargetId).toBe('1:4');
+    expect(selection.bodyItemIds).toEqual([]);
+  });
+
+  it('is part of select-all, the marquee and hit testing', () => {
+    expect(selectAll(1, all).bodyItemIds).toEqual([
+      '1:1',
+      '1:2',
+      '1:3',
+      '1:7',
+      '1:8',
+      '1:9',
+    ]);
+    const rect = { left: 0, top: 0, width: 65, height: 25 };
+    expect(
+      marqueeSelection(emptySelection(1), all, rect, false).bodyItemIds,
+    ).toEqual(['1:1', '1:2', '1:7', '1:8']);
+    const initial = selectItem(emptySelection(1), items[0]!, false);
+    expect(
+      marqueeSelection(initial, all, { ...rect, left: 25, width: 40 }, true)
+        .bodyItemIds,
+    ).toEqual(['1:1', '1:7', '1:8']);
+    expect(hitTest(all, 35, 5)?.id).toBe('1:7');
+  });
+
+  it('keeps a geometry-only image mutable and a preservation-only one locked', () => {
+    expect(preservationOnly(editable)).toBe(false);
+    // Placeholder display, but geometry capabilities: movable like a textbox.
+    expect(preservationOnly(geometryOnly)).toBe(false);
+    expect(preservationOnly(preserved)).toBe(true);
+    const bare: {
+      -readonly [K in keyof DesignSceneItem]?: DesignSceneItem[K];
+    } = { ...preserved };
+    delete bare.capabilities;
+    expect(preservationOnly(bare as DesignSceneItem)).toBe(true);
+    // Non-image preserved items keep the placeholder flag as their lock.
+    expect(preservationOnly(items[2]!)).toBe(true);
+    expect(preservationOnly(items[0]!)).toBe(false);
+  });
+
+  it('blocks the clipboard exactly where the host refuses an image', () => {
+    expect(clipboardBlocked(editable)).toBe(false);
+    expect(clipboardBlocked(geometryOnly)).toBe(false);
+    expect(clipboardBlocked(preserved)).toBe(true);
+    const without = (capability: string) => ({
+      ...editable,
+      capabilities: (editable.capabilities ?? []).filter(
+        (c) => c !== capability,
+      ),
+    });
+    expect(clipboardBlocked(without('left'))).toBe(true);
+    expect(clipboardBlocked(without('top'))).toBe(true);
+    expect(clipboardBlocked(without('width'))).toBe(false);
+    expect(clipboardBlocked({ ...editable, name: null })).toBe(true);
+    // Other kinds keep the placeholder rule.
+    expect(clipboardBlocked(items[2]!)).toBe(true);
+    expect(clipboardBlocked(items[0]!)).toBe(false);
+  });
+
+  it('names an image "Image {name}" and leaves other items on their label', () => {
+    expect(accessibleName(editable)).toBe('Image Logo1:7');
+    expect(accessibleName({ ...editable, name: null, label: 'Image' })).toBe(
+      'Image',
+    );
+    expect(accessibleName(items[0]!)).toBe('A');
+    expect(accessibleName(items[2]!)).toBe('Locked');
   });
 });
 

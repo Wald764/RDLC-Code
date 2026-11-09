@@ -18,6 +18,7 @@ import {
   alignModes,
   type AuthoringRequest,
   type EditIntent,
+  type ImageScalarProperty,
   type LayoutIntent,
 } from '@rdlc/report-model/editing';
 import {
@@ -59,8 +60,14 @@ import { StructureTreeComponent } from './structure-tree.component';
 import type { DesignScene } from '@rdlc/report-model/scene';
 import { DiagnosticsComponent } from '../diagnostics/diagnostics.component';
 import type { TextboxCommit } from '../properties/textbox-properties.component';
+import type { ImageGeometryCommit } from '../properties/image-properties.component';
 import { explainRefusal, HostAdapter } from './host-adapter';
 import { IconComponent, type IconName } from './icon.component';
+import {
+  imagePendingLabel,
+  imageReasonLabel,
+  type ImagePlaceholderReason,
+} from './image-placeholder-labels';
 import {
   emptySelection,
   selectItem,
@@ -71,6 +78,9 @@ import {
   reconcileStructureSelection,
   selectStructure,
   hitTest,
+  accessibleName,
+  clipboardBlocked,
+  preservationOnly,
   type Selection,
 } from './selection';
 
@@ -89,9 +99,20 @@ const arrows: Readonly<Record<string, readonly [number, number]>> = {
   ArrowUp: [0, -1],
   ArrowDown: [0, 1],
 };
-/** Creation footprints in points: Textbox 1in × 0.25in, Table two 1in columns × 0.5in. */
+/**
+ * Creation footprints in points: Textbox 1in × 0.25in, Table two 1in columns × 0.5in.
+ * Image is a nominal 1in square for snapping and the drop preview; the host sizes the
+ * item from the chosen picture.
+ */
 const creationSizes: Readonly<Record<CreationKind, readonly [number, number]>> =
-  { textbox: [72, 18], table: [144, 36], dataset: [0, 0] };
+  { textbox: [72, 18], table: [144, 36], image: [72, 72], dataset: [0, 0] };
+/** The authoring action each creation kind sends. */
+const creationActions = {
+  textbox: 'createTextbox',
+  table: 'createTable',
+  image: 'createImage',
+  dataset: 'createDataset',
+} as const satisfies Readonly<Record<CreationKind, string>>;
 export const dragTypePrefix = 'application/x-rdlc-';
 const ptBounds = (b: Bounds): Bounds => ({
   left: pixelsToPoints(b.left),
@@ -115,6 +136,32 @@ const union = (all: readonly Bounds[]): Bounds => {
     height: Math.max(...all.map((b) => b.top + b.height)) - top,
   };
 };
+/** Width of an item's frame border in canvas pixels; keep in step with `.item`. */
+const itemBorder = 1;
+/** The picture an `<img>` loads from the asset cache; the URL is always a `blob:` URL. */
+interface ImageSource {
+  readonly key: string;
+  readonly url: string;
+  readonly width: number;
+  readonly height: number;
+}
+/**
+ * Display state of an image item. `picture` only once the rendered `<img>` reported a
+ * decoded picture; while it loads, the item stays `pending` and carries the source of
+ * the hidden `<img>` that is loading it.
+ */
+type ImageItemView =
+  | ({ readonly state: 'picture' } & ImageSource)
+  | {
+      readonly state: 'pending';
+      readonly label: string;
+      readonly loading?: ImageSource;
+    }
+  | {
+      readonly state: 'placeholder' | 'undecodable';
+      readonly reason: ImagePlaceholderReason;
+      readonly label: string;
+    };
 const leftTabs = ['components', 'structure'] as const;
 const paperSizes = {
   A3: [297, 420],
@@ -184,6 +231,76 @@ export class EditorComponent {
     },
   ] as const;
   readonly toPx = pointsToPixels;
+  /**
+   * AutoSize pictures sit in a layer spanning the scroll extent, in the item's own
+   * coordinates, so the picture is clipped to the canvas but never to its declared
+   * frame and never grows the scrollable area.
+   */
+  autosizeLayer(item: DesignSceneItem): {
+    readonly left: number;
+    readonly top: number;
+    readonly width: number;
+    readonly height: number;
+  } | null {
+    const scene = this.scene();
+    const extent = this.extent();
+    if (!scene || !extent || !item.bounds) return null;
+    return {
+      left: scene.body.left + item.bounds.left + itemBorder,
+      top: scene.body.top + item.bounds.top + itemBorder,
+      width: extent.width,
+      height: extent.height,
+    };
+  }
+  /** Plain-language state of an image item for its accessible description. */
+  imageDescription(item: DesignSceneItem): string | null {
+    const view = this.imageView(item);
+    return view.state === 'picture' ? null : view.label;
+  }
+  /** What an image item shows: a decoded picture, a pending asset or a labelled placeholder. */
+  imageView(item: DesignSceneItem): ImageItemView {
+    const display = item.display;
+    if (item.kind !== 'image' || !display)
+      return { state: 'placeholder', reason: 'data-invalid', label: '' };
+    if (display.state === 'placeholder')
+      return {
+        state: 'placeholder',
+        reason: display.reason,
+        label: imageReasonLabel(display.reason),
+      };
+    const asset = this.host.images.view(display.assetKey);
+    const source = (url: string): ImageSource => ({
+      key: display.assetKey,
+      url,
+      width: display.pixels.width,
+      height: display.pixels.height,
+    });
+    if (asset.state === 'ready')
+      return { state: 'picture', ...source(asset.url) };
+    if (asset.state === 'loading')
+      return {
+        state: 'pending',
+        label: imagePendingLabel,
+        loading: source(asset.url),
+      };
+    return asset.state === 'undecodable'
+      ? {
+          state: 'undecodable',
+          reason: 'data-invalid',
+          label: imageReasonLabel('data-invalid'),
+        }
+      : { state: 'pending', label: imagePendingLabel };
+  }
+  /** The visible `<img>` is the only decoder: its load event makes the item a picture. */
+  imageLoaded(event: Event, source: ImageSource): void {
+    const element = event.target as HTMLImageElement;
+    if (element.naturalWidth > 0)
+      this.host.images.loaded(source.key, source.url);
+    else this.host.images.failed(source.key, source.url);
+  }
+  imageFailed(source: ImageSource): void {
+    this.host.images.failed(source.key, source.url);
+  }
   readonly explainRefusal = explainRefusal;
   private readonly injector = inject(Injector);
   private readonly viewport = viewChild<ElementRef<HTMLElement>>('viewport');
@@ -248,6 +365,7 @@ export class EditorComponent {
     panelLayout(this.workspaceWidth(), this.view()),
   );
   readonly panelBounds = panelBounds;
+  readonly accessibleName = accessibleName;
   private readonly tabScroll = { components: 0, structure: 0 };
   private sizing: number | null = null;
   readonly diagnosticsOpen = signal(false);
@@ -278,7 +396,8 @@ export class EditorComponent {
       ? 'Select whole body items; cells and data have no item clipboard.'
       : busy ||
         (this.scene()?.items.some(
-          (item) => selection.bodyItemIds.includes(item.id) && item.placeholder,
+          (item) =>
+            selection.bodyItemIds.includes(item.id) && clipboardBlocked(item),
         )
           ? 'Preservation-only members cannot be copied or deleted; use Code XML.'
           : '');
@@ -317,7 +436,7 @@ export class EditorComponent {
       },
       { label: 'Properties', reason: '', run: () => this.focusProperties() },
       ...this.dataDeletion(busy),
-      ...(selected && selected.kind !== 'cell' && !selected.placeholder
+      ...(selected && selected.kind !== 'cell' && !preservationOnly(selected)
         ? [
             {
               label: 'Delete… (confirm contained content)',
@@ -543,7 +662,7 @@ export class EditorComponent {
       ...(this.scene()
         ?.items.filter(
           (item) =>
-            !item.placeholder &&
+            !preservationOnly(item) &&
             ((item.capabilities?.some((capability) => capability !== 'name') ??
               false) ||
               Object.values(item.operations ?? {}).some(
@@ -590,7 +709,7 @@ export class EditorComponent {
         .map((operation) => operation.reason)
         .filter((reason): reason is string => !!reason),
     );
-    if (item.placeholder)
+    if (preservationOnly(item))
       reasons.add('Preservation-only: the designer offers no mutation.');
     if (!item.bounds)
       reasons.add('Bounds are unknown; no canvas area is shown.');
@@ -1712,7 +1831,7 @@ export class EditorComponent {
       return false;
     }
     const items = ids.map((id) => this.scene()?.items.find((i) => i.id === id));
-    const locked = items.findIndex((item) => !item || item.placeholder);
+    const locked = items.findIndex((item) => !item || clipboardBlocked(item));
     if (locked >= 0) {
       this.gestureNotice.set(
         `${items[locked]?.label ?? ids[locked]} is preservation-only and cannot be copied; inspect it in source.`,
@@ -2657,11 +2776,19 @@ export class EditorComponent {
         targetId: authoring.id,
         payload: !spot
           ? { action: 'createDataset' }
-          : {
-              action: kind === 'table' ? 'createTable' : 'createTextbox',
-              left: size(spot.left),
-              top: size(spot.top),
-            },
+          : kind === 'image'
+            ? {
+                action: 'createImage',
+                // A drop is explicit; a click sends the textbox default spot.
+                placement: at ? 'drop' : 'default',
+                left: size(spot.left),
+                top: size(spot.top),
+              }
+            : {
+                action: kind === 'table' ? 'createTable' : 'createTextbox',
+                left: size(spot.left),
+                top: size(spot.top),
+              },
       },
       nativeRequestId,
     );
@@ -2732,7 +2859,10 @@ export class EditorComponent {
       t.startsWith(dragTypePrefix),
     );
     const kind = type?.slice(dragTypePrefix.length);
-    return kind === 'textbox' || kind === 'table' || kind === 'dataset'
+    return kind === 'textbox' ||
+      kind === 'table' ||
+      kind === 'image' ||
+      kind === 'dataset'
       ? kind
       : null;
   }
@@ -2897,7 +3027,32 @@ export class EditorComponent {
       'The draft is being applied; activate the native action again afterward.',
     );
     const property = draft.control.dataset['property'];
-    if (property)
+    const imageForm = draft.control.closest('rdlc-image-properties')
+      ? draft.control.form
+      : null;
+    const targetId = this.selected()?.id;
+    if (property && imageForm && targetId !== undefined) {
+      // An image field applies through its own intents, never a textbox `setProperty`.
+      const value = draft.control.value;
+      if (['left', 'top', 'width', 'height'].includes(property))
+        this.imageGeometry({
+          property: property as ImageGeometryCommit['property'],
+          value,
+          targetId,
+        });
+      else
+        this.sendAuthor(
+          {
+            targetId,
+            payload: {
+              action: 'setImageProperty',
+              property: property as ImageScalarProperty,
+              value,
+            },
+          },
+          imageForm,
+        );
+    } else if (property)
       this.sendCommit({
         property: property as TextboxCommit['property'],
         value: draft.control.value,
@@ -2957,6 +3112,7 @@ export class EditorComponent {
     const snapshot = this.host.snapshot();
     if (!snapshot || snapshot.status !== 'editable') return false;
     const requestId = crypto.randomUUID();
+    const previousRefusal = this.refusedForm;
     this.refusedForm = form ? { requestId, form } : null;
     if (form)
       for (const control of form.querySelectorAll('[aria-invalid]'))
@@ -2970,22 +3126,17 @@ export class EditorComponent {
       },
       nativeRequestId,
     );
-    if (
-      accepted &&
-      ['createTextbox', 'createTable', 'createDataset'].includes(
-        request.payload.action,
-      )
-    ) {
+    // A request the host did not take can never be refused: keep the earlier annotation.
+    if (!accepted && form) this.refusedForm = previousRefusal;
+    const created = (Object.keys(creationActions) as CreationKind[]).find(
+      (kind) => creationActions[kind] === request.payload.action,
+    );
+    if (accepted && created) {
       this.creating = {
         requestId,
         baseVersion: snapshot.version,
         focusName: this.keyboardCreation,
-        kind:
-          request.payload.action === 'createTextbox'
-            ? 'textbox'
-            : request.payload.action === 'createTable'
-              ? 'table'
-              : 'dataset',
+        kind: created,
       };
     }
     this.keyboardCreation = false;
@@ -3009,6 +3160,94 @@ export class EditorComponent {
     if (edit.targetId !== undefined && edit.targetId !== this.selected()?.id)
       return;
     this.sendCommit(edit);
+  }
+
+  /**
+   * Inspector authoring requests: an image field commit (Enter/change) is routed like a
+   * textbox `commit`, every other request keeps `author`.
+   */
+  inspectorRequest(request: AuthoringRequest): void {
+    if (request.payload.action === 'setImageProperty')
+      this.imageProperty(request);
+    else this.author(request);
+  }
+
+  /**
+   * An image scalar field commit. Like `commit`, never while a draft decision or pointer
+   * action is pending, and never for an older version's item; the field's own draft is the
+   * edit being committed, but an unapplied draft elsewhere is still held. An Enter that
+   * is followed by `change` emits twice: the host's pending request drops the second.
+   */
+  private imageProperty(request: AuthoringRequest): void {
+    if (this.conflict() || this.pointerGuard || this.host.pending()) return;
+    if (
+      request.targetId !== undefined &&
+      request.targetId !== this.selected()?.id
+    )
+      return;
+    const form = this.element.nativeElement.querySelector<HTMLFormElement>(
+      'rdlc-image-properties form',
+    );
+    const draft = this.draft();
+    const own = !!draft && !!form && draft.control.form === form;
+    if (this.held(() => this.sendAuthor(request, form), own ? form : null))
+      return;
+    this.sendAuthor(request, form);
+  }
+
+  /**
+   * An image geometry field commit, sent as the existing `LayoutIntent`: Left and Top as a
+   * move by the difference, Width and Height as an east or south edge drag to the new
+   * size. The host validates it exactly like a pointer or keyboard gesture, so a negative
+   * or zero value is refused there and the report stays unchanged.
+   */
+  imageGeometry(edit: ImageGeometryCommit): void {
+    if (this.conflict() || this.pointerGuard) return;
+    if (edit.targetId !== undefined && edit.targetId !== this.selected()?.id)
+      return;
+    const snapshot = this.host.snapshot();
+    const item = this.selected();
+    if (!snapshot || snapshot.status !== 'editable' || !item) return;
+    const points = (property: ImageGeometryCommit['property']) =>
+      item.resolvedGeometry?.[property].points ??
+      toPoints(item.geometry?.[property] ?? null);
+    const target = toPoints(edit.value);
+    const current = points(edit.property);
+    const left = points('left');
+    const top = points('top');
+    if (
+      target === null ||
+      current === null ||
+      (edit.property === 'width' && left === null) ||
+      (edit.property === 'height' && top === null)
+    ) {
+      this.gestureNotice.set(
+        'Enter a valid size with its unit (pt, pc, in, mm or cm); document unchanged.',
+      );
+      return;
+    }
+    if (target === current) return;
+    this.cancelGesture();
+    const common = { targetIds: [item.id], unit: this.view().unit };
+    const payload: LayoutIntent['payload'] =
+      edit.property === 'left'
+        ? { ...common, action: 'move', dxPt: target - current, dyPt: 0 }
+        : edit.property === 'top'
+          ? { ...common, action: 'move', dxPt: 0, dyPt: target - current }
+          : edit.property === 'width'
+            ? { ...common, action: 'resize', handle: 'e', xPt: left! + target }
+            : { ...common, action: 'resize', handle: 's', yPt: top! + target };
+    if (
+      this.host.sendEdit({
+        requestId: crypto.randomUUID(),
+        baseVersion: snapshot.version,
+        operation: 'layout',
+        payload,
+      })
+    ) {
+      this.gestureNotice.set('');
+      this.draft.set(null);
+    }
   }
 
   /** Typed intent only; the host validates, patches, reparses and applies. */

@@ -739,6 +739,63 @@ test('denylisted secret paths are unexpected even where the allowlist would perm
   );
 });
 
+test('the user-chosen import file is readable, exactly, and nothing around it is', () => {
+  const picked = '/media/pick/logo.png';
+  const allowed = { ...ALLOWED, importFiles: [picked] };
+  const verdict = (text: string, rules: typeof ALLOWED = allowed) =>
+    classify(text, rules);
+  // Without the allowance the same read is unexpected.
+  assert.equal(
+    verdict(`openat(AT_FDCWD</work>, "${picked}", O_RDONLY) = 3`, ALLOWED),
+    true,
+  );
+  // The exact file: read and stat only.
+  assert.equal(
+    verdict(`openat(AT_FDCWD</work>, "${picked}", O_RDONLY) = 3`),
+    false,
+  );
+  assert.equal(
+    verdict(`statx(AT_FDCWD</work>, "${picked}", 0, 0, {}) = 0`),
+    false,
+  );
+  assert.equal(
+    verdict(`openat(AT_FDCWD</work>, "${picked}", O_WRONLY|O_TRUNC) = 3`),
+    true,
+  );
+  assert.equal(verdict(`unlink("${picked}") = 0`), true);
+  // Its folder is listed by the chooser (read-only), but never written.
+  assert.equal(
+    verdict('openat(AT_FDCWD</work>, "/media/pick", O_RDONLY|O_DIRECTORY) = 3'),
+    false,
+  );
+  assert.equal(
+    verdict(
+      'openat(AT_FDCWD</work>, "/media/pick/new.png", O_WRONLY|O_CREAT) = 3',
+    ),
+    true,
+  );
+  // Siblings, children, look-alike names and the parent folder stay unexpected.
+  for (const other of [
+    '/media/pick/other.png',
+    '/media/pick/logo.png.bak',
+    '/media/pick/logo.png/child',
+    '/media/pick2/logo.png',
+    '/media/logo.png',
+    '/media',
+  ])
+    assert.equal(
+      verdict(`openat(AT_FDCWD</work>, "${other}", O_RDONLY) = 3`),
+      true,
+      other,
+    );
+  // Other rules are untouched: the secret-path denylist still wins.
+  const shadow = { ...allowed, importFiles: ['/etc/shadow'] };
+  assert.equal(
+    verdict('openat(AT_FDCWD</work>, "/etc/shadow", O_RDONLY) = 3', shadow),
+    true,
+  );
+});
+
 test('a read-only root nested in a writable root wins for writes and still allows reads', () => {
   const allowed = {
     ...ALLOWED,

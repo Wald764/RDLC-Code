@@ -310,6 +310,13 @@ test('data actions reuse the existing dataset form and send no author payload', 
   );
 });
 
+/** Literal context values of the embedded image rows of the fixtures (data.rdlc). */
+const expectedEmbeddedImageContext: Readonly<Record<string, string>> = {
+  Logo: 'dataEmbeddedImage.unreferenced',
+  Odd: 'dataEmbeddedImage.unreferenced',
+  Empty: 'dataEmbeddedImage.unreferenced',
+};
+
 test('inspect-only and non-data targets refuse before any form opens', () => {
   for (const path of [
     'tests/fixtures/sidebar/data.rdlc',
@@ -340,13 +347,27 @@ test('inspect-only and non-data targets refuse before any form opens', () => {
         /stay inspect\/source-only/,
         where,
       );
+      // Embedded images of an editable report claim their own image keys (US4);
+      // every other inspect-only row stays source-only.
       assert.equal(
-        structureContextValue(node, undefined, report.scene),
-        'rdlcCode.source',
+        structureContextValue(node, undefined, report.scene, true),
+        node.kind === 'embedded-image'
+          ? expectedEmbeddedImageContext[node.name ?? '']
+          : 'rdlcCode.source',
         where,
       );
     }
   }
+
+  // A report that is not editable never exposes the image commands.
+  const sourceOnly = evaluate('tests/fixtures/sidebar/data-source-only.rdlc');
+  const mark = sourceOnly.navigation.data.nodes.find(
+    (node) => node.kind === 'embedded-image',
+  )!;
+  assert.equal(
+    structureContextValue(mark, undefined, sourceOnly.scene, false),
+    'rdlcCode.source',
+  );
 
   const report = evaluate('tests/fixtures/sidebar/data.rdlc');
   const nodes = report.navigation.data.nodes;

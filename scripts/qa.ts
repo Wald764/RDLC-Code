@@ -1,6 +1,12 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { posix, resolve } from 'node:path';
+import {
+  accessSync,
+  constants,
+  existsSync,
+  readdirSync,
+  readFileSync,
+} from 'node:fs';
+import { delimiter, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // QA levels (see CONTRIBUTING.md): quick (default, changed files only),
@@ -86,6 +92,103 @@ const PRETTIER = ['node', 'node_modules/prettier/bin/prettier.cjs'];
 const ESLINT = ['node', 'node_modules/eslint/bin/eslint.js'];
 const VSCODE_HOST = ['node', 'dist/tests/vscode/run-tests.js'];
 const DESKTOP_RUNNER = ['node', 'dist/tests/desktop/run-tests.js'];
+
+// ------------------------------------------------------------ headless launch
+
+/** Steps that open a VS Code or Electron window, with the CI screen size. */
+const WINDOWED_RUNNERS: ReadonlyMap<string, string> = new Map([
+  [VSCODE_HOST[1]!, '1920x1080x24'],
+  [DESKTOP_RUNNER[1]!, '1440x1000x24'],
+]);
+/** Session variables that make Electron open on the user's own display. */
+const SESSION_VARIABLES = [
+  'WAYLAND_DISPLAY',
+  'XDG_SESSION_TYPE',
+  'EGL_PLATFORM',
+  'XAUTHORITY',
+] as const;
+
+export interface HeadlessContext {
+  platform: NodeJS.Platform;
+  env: Readonly<Record<string, string | undefined>>;
+  /** Whether an executable with this name is on PATH. */
+  which: (program: string) => boolean;
+}
+
+export interface LaunchPlan {
+  /** Command to run and print, wrapper included. */
+  command: string[];
+  /** The `xvfb-run` prefix of `command`; empty when launched natively. */
+  wrapper: string[];
+  /** Environment for the child, or undefined to inherit the current one. */
+  env: Record<string, string | undefined> | undefined;
+  /** One-line explanation to print when the launch is not headless. */
+  note: string | undefined;
+}
+
+/** Whether an executable named `program` is on the PATH of `env`. */
+export function isOnPath(
+  program: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return (env['PATH'] ?? '').split(delimiter).some((directory) => {
+    if (!directory) return false;
+    try {
+      accessSync(resolve(directory, program), constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * On Linux, runs the steps that open a VS Code or Electron window under a
+ * private Xvfb screen, without the variables that would send the window to the
+ * user's own (possibly locked) Wayland session. Other steps, other platforms,
+ * CI (which wraps itself with xvfb-run) and `RDLC_QA_DISPLAY=native` keep the
+ * command as is.
+ */
+export function headlessLaunch(
+  command: readonly string[],
+  context: HeadlessContext = {
+    platform: process.platform,
+    env: process.env,
+    which: (program) => isOnPath(program),
+  },
+): LaunchPlan {
+  const native = (note?: string): LaunchPlan => ({
+    command: [...command],
+    wrapper: [],
+    env: undefined,
+    note,
+  });
+  const screen =
+    command[0] === 'node' && command[1] !== undefined
+      ? WINDOWED_RUNNERS.get(command[1])
+      : undefined;
+  const ci = context.env['CI'];
+  if (
+    !screen ||
+    context.platform !== 'linux' ||
+    context.env['RDLC_QA_DISPLAY'] === 'native' ||
+    (ci !== undefined && ci !== '' && ci !== '0' && ci !== 'false')
+  )
+    return native();
+  if (!context.which('xvfb-run'))
+    return native(
+      'xvfb-run not found: launching VS Code on the current display (install xvfb to run headless).',
+    );
+  const wrapper = ['xvfb-run', '-a', '-s', `-screen 0 ${screen}`];
+  const env: Record<string, string | undefined> = { ...context.env };
+  for (const name of SESSION_VARIABLES) delete env[name];
+  return {
+    command: [...wrapper, ...command],
+    wrapper,
+    env,
+    note: undefined,
+  };
+}
 
 // ---------------------------------------------------------------- discovery
 
@@ -738,7 +841,9 @@ const shorten = (command: readonly string[]) =>
   (command.length > 8
     ? [...command.slice(0, 5), `... (+${command.length - 5} more)`]
     : command
-  ).join(' ');
+  )
+    .map((arg) => (/\s/.test(arg) ? `"${arg}"` : arg))
+    .join(' ');
 
 export function formatSelection(selection: QaSelection, full = true): string {
   const lines = [`QA ${selection.mode}: ${selection.steps.length} step(s)`];
@@ -789,15 +894,25 @@ export function runQa(argv: readonly string[]): number {
   const started = Date.now();
   let exitCode = 0;
   for (const step of selection.steps) {
-    console.log(`\n> ${shorten(step.command)}`);
+    const launch = headlessLaunch(step.command);
+    console.log(`\n> ${shorten(launch.command)}`);
+    if (launch.note) console.log(`note: ${launch.note}`);
     const begin = Date.now();
-    const [program, ...args] = step.command as [string, ...string[]];
+    const [program, ...args] = launch.command as [string, ...string[]];
     const run = spawnSync(
       program === 'node' ? process.execPath : program,
-      args,
+      // Under the wrapper, the first `node` after it is the real interpreter.
+      launch.wrapper.length
+        ? args.map((arg, index) =>
+            index === launch.wrapper.length - 1 && arg === 'node'
+              ? process.execPath
+              : arg,
+          )
+        : args,
       {
         stdio: 'inherit',
         shell: program === 'pnpm' && process.platform === 'win32',
+        ...(launch.env ? { env: launch.env } : {}),
       },
     );
     const status = run.status;

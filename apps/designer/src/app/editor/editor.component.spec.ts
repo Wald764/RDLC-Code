@@ -7,8 +7,14 @@ import {
   type HostMessage,
   type NavigationNode,
 } from '@rdlc/report-model/protocol';
+import type { DesignScene } from '@rdlc/report-model/scene';
 import { EditorComponent } from './editor.component';
 import { HostAdapter } from './host-adapter';
+import {
+  IMAGE_ASSET_ENVIRONMENT,
+  type ImageAssetEnvironment,
+} from './image-assets';
+import { imagePlaceholderLabels } from './image-placeholder-labels';
 
 const diagnostic: Diagnostic = {
   code: 'PAGE_DIMENSIONS',
@@ -1527,6 +1533,147 @@ describe('editor surface', () => {
     await settle();
     expect(fixture.componentInstance.selected()).toBeNull();
     expect(host.sent()).toHaveLength(1);
+  });
+  it('sends an Image click as a default placement at the textbox default spot', async () => {
+    const { fixture, host, settle } = mount();
+    const blank = directSnapshot();
+    host.ingest({ ...blank, scene: { ...blank.scene, items: [] } });
+    await settle();
+    const component = fixture.componentInstance;
+    component.create('image');
+    const first = host.sent().at(-1) as {
+      requestId: string;
+      targetId: string;
+      operation: string;
+    };
+    expect(first).toMatchObject({
+      operation: 'author',
+      targetId: '2:0',
+      payload: {
+        action: 'createImage',
+        placement: 'default',
+        left: '20pt',
+        top: '20pt',
+      },
+    });
+    host.ingest({
+      protocol: 2,
+      kind: 'editResult',
+      requestId: first.requestId,
+      baseVersion: 2,
+      version: 2,
+      changed: false,
+      accepted: false,
+      mappings: [],
+      reason: 'Refused',
+      diagnostics: [],
+    });
+    // The textbox occupied check applies: a taken corner moves the spot one grid step.
+    host.ingest({
+      ...blank,
+      version: 3,
+      navigation: { ...blank.navigation, version: 3 },
+      scene: {
+        ...blank.scene,
+        version: 3,
+        items: [
+          {
+            ...blank.scene.items[0]!,
+            id: '3:3',
+            bounds: { left: 26.6667, top: 26.6667, width: 96, height: 24 },
+          },
+        ],
+      },
+    });
+    await settle();
+    component.create('image');
+    expect(host.sent().at(-1)).toMatchObject({
+      payload: {
+        action: 'createImage',
+        placement: 'default',
+        left: '30pt',
+        top: '30pt',
+      },
+    });
+  });
+  it('selects the host-named image after an accepted createImage like a textbox', async () => {
+    const { fixture, host, settle } = mount();
+    const blank = directSnapshot();
+    host.ingest({ ...blank, scene: { ...blank.scene, items: [] } });
+    await settle();
+    fixture.componentInstance.create('image');
+    const request = host.sent().at(-1) as { requestId: string };
+    expect(fixture.componentInstance.selected()).toBeNull();
+    host.ingest({
+      protocol: 2,
+      kind: 'editResult',
+      requestId: request.requestId,
+      baseVersion: 2,
+      version: 3,
+      changed: true,
+      accepted: true,
+      mappings: [],
+      reason: 'APPLIED',
+      diagnostics: [],
+      created: { id: '3:4', name: 'Image1' },
+    });
+    await settle();
+    host.ingest(directSnapshot(3, '3:4'));
+    await settle();
+    expect(fixture.componentInstance.selected()?.id).toBe('3:4');
+    expect(fixture.componentInstance.gestureNotice()).toBe('Created Image1.');
+    expect(host.sent()).toHaveLength(1);
+  });
+  it('treats a cancelled file chooser as no refusal, no error and a clean state', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest(directSnapshot());
+    await settle();
+    fixture.componentInstance.create('image');
+    const request = host.sent().at(-1) as { requestId: string };
+    host.ingest({
+      protocol: 2,
+      kind: 'editResult',
+      requestId: request.requestId,
+      baseVersion: 2,
+      version: 2,
+      changed: false,
+      accepted: false,
+      cancelled: true,
+      mappings: [],
+      reason: 'CANCELLED',
+      diagnostics: [],
+    });
+    await settle();
+    expect(host.pending()).toBeNull();
+    expect(element.querySelector('#report-refusal')).toBeNull();
+    expect(element.textContent).not.toContain('Not applied');
+    expect(element.textContent).not.toContain('CANCELLED');
+    expect(fixture.componentInstance.gestureNotice()).toBe('');
+    expect(fixture.componentInstance.selected()).toBeNull();
+    // The author can try again: nothing is retained or blocked.
+    fixture.componentInstance.create('image');
+    expect(host.sent()).toHaveLength(2);
+  });
+  it('keeps showing a real refusal of createImage', async () => {
+    const { fixture, host, element, settle } = mount();
+    host.ingest(directSnapshot());
+    await settle();
+    fixture.componentInstance.create('image');
+    const request = host.sent().at(-1) as { requestId: string };
+    host.ingest({
+      protocol: 2,
+      kind: 'editResult',
+      requestId: request.requestId,
+      baseVersion: 2,
+      version: 2,
+      changed: false,
+      accepted: false,
+      mappings: [],
+      reason: 'IMAGE_UNSUPPORTED_FORMAT',
+      diagnostics: [],
+    });
+    await settle();
+    expect(element.querySelector('#report-refusal')).not.toBeNull();
   });
   it('keeps local input history native and guards Code XML behind Apply/Discard/Cancel', async () => {
     const { fixture, host, element, settle } = mount();
@@ -3395,6 +3542,36 @@ describe('drag-and-drop creation', () => {
     });
   });
 
+  it('sends an Image drop as a drop placement at the unsnapped drop point', async () => {
+    const m = await mounted();
+    const over = drag('image', 100, 50, true);
+    m.component.canvasDragOver(over.event);
+    expect(over.prevented()).toBe(true);
+    expect(over.raw.dataTransfer.dropEffect).toBe('copy');
+    expect(m.component.dropPreview()?.valid).toBe(true);
+    m.component.canvasDrop(drag('image', 100, 50, true).event);
+    expect(m.component.dropPreview()).toBeNull();
+    expect(m.edits()).toHaveLength(1);
+    expect(m.edits()[0]).toMatchObject({
+      operation: 'author',
+      payload: {
+        action: 'createImage',
+        placement: 'drop',
+        left: '75pt',
+        top: '37.5pt',
+      },
+    });
+  });
+
+  it('refuses an Image drop outside the body without sending', async () => {
+    const m = await mounted();
+    const outside = drag('image', 2000, 50, true);
+    m.component.canvasDragOver(outside.event);
+    expect(outside.raw.dataTransfer.dropEffect).toBe('none');
+    m.component.canvasDrop(drag('image', 2000, 50, true).event);
+    expect(m.edits()).toHaveLength(0);
+  });
+
   it('converts the drop point through zoom and scroll', async () => {
     const m = await mounted();
     m.component.zoomTo(2);
@@ -4138,4 +4315,1208 @@ describe('clipboard reuse', () => {
       expect(reveal).toHaveBeenCalledTimes(1);
       expect(m.host.pending()).toBeNull();
     });
+});
+
+describe('embedded image items', () => {
+  const bytesOf = (base64: string) =>
+    Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+  const payload =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAfbLI3wAAAABJRU5ErkJggg==';
+  const asset = (key: string) => ({
+    key,
+    mime: 'image/png' as const,
+    data: bytesOf(payload),
+  });
+  /** A JPEG: the harness maps every JPEG blob to a URL whose decode() rejects. */
+  const brokenPayload = '/9j/4AAQSkZJRgABAQEASABIAAD/2Q==';
+  const broken = (key: string) => ({
+    key,
+    mime: 'image/jpeg' as const,
+    data: bytesOf(brokenPayload),
+  });
+  type SceneItem = DesignScene['items'][number];
+
+  const imageItem = (
+    id: string,
+    display: NonNullable<SceneItem['display']>,
+    sizing: NonNullable<SceneItem['sizing']> = 'Fit',
+    bounds: SceneItem['bounds'] = { left: 24, top: 24, width: 96, height: 72 },
+  ): SceneItem => ({
+    id: `2:${id}`,
+    kind: 'image',
+    name: `Image${id}`,
+    // The scene label is the bare item name; the canvas prefixes `Image `.
+    label: `Image${id}`,
+    bounds,
+    placeholder: display.state === 'placeholder',
+    sizing,
+    display,
+    metadata: {
+      format: 'png',
+      pixels: { width: 120, height: 40 },
+      encodedSize: payload.length,
+    },
+    operations: Object.fromEntries(
+      ['moveX', 'moveY', 'resizeX', 'resizeY'].map((key) => [
+        key,
+        { eligible: true, reason: null },
+      ]),
+    ) as NonNullable<SceneItem['operations']>,
+    capabilities: ['left', 'top', 'width', 'height'],
+  });
+  const picture = (assetKey = 'k1') => ({
+    state: 'picture' as const,
+    assetKey,
+    pixels: { width: 120, height: 40 },
+  });
+
+  function snapshotWith(items: readonly SceneItem[], version = 2): HostMessage {
+    const base = snapshotMessage({ version });
+    if (base.kind !== 'snapshot' || !base.scene)
+      throw new Error('Expected scene');
+    return { ...base, scene: { ...base.scene, items } };
+  }
+
+  interface Env {
+    created: string[];
+    revoked: string[];
+  }
+  let env: Env;
+
+  async function mountImages(items: readonly SceneItem[]) {
+    TestBed.resetTestingModule();
+    env = { created: [], revoked: [] };
+    const provided: ImageAssetEnvironment = {
+      createObjectURL: (blob) => {
+        const url =
+          blob.type === 'image/jpeg'
+            ? 'blob:test/fail'
+            : `blob:test/${env.created.length + 1}`;
+        env.created.push(url);
+        return url;
+      },
+      revokeObjectURL: (url) => void env.revoked.push(url),
+    };
+    TestBed.configureTestingModule({
+      providers: [{ provide: IMAGE_ASSET_ENVIRONMENT, useValue: provided }],
+    });
+    const m = mount();
+    m.host.ingest(snapshotWith(items));
+    await m.settle();
+    return m;
+  }
+  const item = (root: HTMLElement) =>
+    root.querySelector<HTMLElement>('.item[data-kind="image"]')!;
+  const img = (root: HTMLElement) => item(root).querySelector('img');
+  const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+  /** The rendered <img> is the decoder: report its load (or, for the broken URL, its error). */
+  async function finishImages(m: {
+    element: HTMLElement;
+    settle(): Promise<void>;
+  }) {
+    for (const element of m.element.querySelectorAll('img')) {
+      if (element.getAttribute('src') === 'blob:test/fail')
+        element.dispatchEvent(new Event('error'));
+      else {
+        Object.defineProperty(element, 'naturalWidth', {
+          value: 120,
+          configurable: true,
+        });
+        element.dispatchEvent(new Event('load'));
+      }
+    }
+    await m.settle();
+  }
+
+  beforeEach(() => TestBed.resetTestingModule());
+  afterEach(() => vi.restoreAllMocks());
+
+  const sizings = [
+    ['Fit', 'fill', 'image-fit'],
+    ['FitProportional', 'contain', 'image-fit-proportional'],
+    ['Clip', 'none', 'image-clip'],
+  ] as const;
+  for (const [sizing, objectFit, className] of sizings)
+    it(`renders ${sizing} as object-fit ${objectFit} anchored at the top-left`, async () => {
+      const m = await mountImages([imageItem('1', picture(), sizing)]);
+      m.host.ingest({
+        protocol: 2,
+        kind: 'imageAssets',
+        assets: [asset('k1')],
+      });
+      await flush();
+      await m.settle();
+      await finishImages(m);
+      const picture_ = img(m.element)!;
+      expect(picture_).not.toBeNull();
+      expect(picture_.getAttribute('src')).toMatch(/^blob:/);
+      expect(picture_.classList.contains(className)).toBe(true);
+      expect(picture_.getAttribute('data-sizing')).toBe(sizing);
+      expect(picture_.getAttribute('alt')).toBe('');
+      const style = getComputedStyle(picture_);
+      expect(style.objectFit).toBe(objectFit);
+      // jsdom serialises a zero length as `0`, browsers as `0px`.
+      expect(style.objectPosition).toMatch(
+        sizing === 'FitProportional' ? /^50% 50%$/ : /^0(px)? 0(px)?$/,
+      );
+      expect(style.width).toBe('100%');
+      expect(getComputedStyle(item(m.element)).overflow).toBe('hidden');
+      expect(item(m.element).getAttribute('data-image-state')).toBe('picture');
+    });
+
+  it('renders AutoSize at the natural pixel size, anchored top-left, keeping the declared frame', async () => {
+    const m = await mountImages([imageItem('1', picture(), 'AutoSize')]);
+    m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
+    await flush();
+    await m.settle();
+    await finishImages(m);
+    const picture_ = img(m.element)!;
+    expect(picture_.classList.contains('image-autosize')).toBe(true);
+    // The page layer is scaled by the zoom, so natural pixels x zoom is on screen.
+    expect(picture_.style.width).toBe('120px');
+    expect(picture_.style.height).toBe('40px');
+    expect(getComputedStyle(picture_).objectFit).toBe('none');
+    expect(getComputedStyle(picture_).position).toBe('absolute');
+    expect(picture_.closest<HTMLElement>('.page')!.style.transform).toBe(
+      `scale(${m.fixture.componentInstance.view().zoom})`,
+    );
+    // The declared bounds stay the item frame and are never resized by the picture.
+    const frame = item(m.element);
+    expect(frame.style.width).toBe('96px');
+    expect(frame.style.height).toBe('72px');
+    expect(getComputedStyle(frame).overflow).toBe('visible');
+    expect(getComputedStyle(picture_).pointerEvents).toBe('none');
+    // Clipped to the canvas (the scroll extent), not to the declared frame: a layer
+    // spanning the extent, expressed in the item's coordinates, holds the picture.
+    const layer = picture_.parentElement!;
+    expect(layer.classList.contains('image-layer')).toBe(true);
+    expect(getComputedStyle(layer).overflow).toBe('hidden');
+    expect(getComputedStyle(layer).pointerEvents).toBe('none');
+    expect(getComputedStyle(layer).position).toBe('absolute');
+    // Body origin 0,0; item at 24,24; the 1px frame border puts the origin at 25,25.
+    expect(layer.style.left).toBe('-25px');
+    expect(layer.style.top).toBe('-25px');
+    const extent = m.fixture.componentInstance.extent()!;
+    expect(layer.style.width).toBe(`${extent.width}px`);
+    expect(layer.style.height).toBe(`${extent.height}px`);
+    expect(picture_.style.left).toBe('25px');
+    expect(picture_.style.top).toBe('25px');
+    // Zoom scales the picture with the page layer, never the declared size.
+    m.fixture.componentInstance.zoomTo(2);
+    await m.settle();
+    expect(picture_.closest<HTMLElement>('.page')!.style.transform).toBe(
+      'scale(2)',
+    );
+    expect(picture_.style.width).toBe('120px');
+  });
+
+  for (const sizing of ['AutoSize', 'Fit', 'FitProportional', 'Clip'] as const)
+    it(`puts the ${sizing} picture at the inner edge of the declared frame`, async () => {
+      const m = await mountImages([imageItem('1', picture(), sizing)]);
+      m.host.ingest({
+        protocol: 2,
+        kind: 'imageAssets',
+        assets: [asset('k1')],
+      });
+      await flush();
+      await m.settle();
+      await finishImages(m);
+      // Same origin for every mode: no padding, so switching sizing never shifts it.
+      const frame = getComputedStyle(item(m.element));
+      expect(frame.padding).toMatch(/^0(px)?( 0(px)?){0,3}$/);
+      expect(frame.borderTopWidth).toBe('1px');
+      const picture_ = img(m.element)!;
+      const style = getComputedStyle(picture_);
+      expect(style.margin).toMatch(/^(0(px)?( 0(px)?){0,3})?$/);
+      if (sizing !== 'AutoSize') expect(picture_.style.left).toBe('');
+    });
+
+  it('names an image by its item name and exposes the reason through aria-description', async () => {
+    const m = await mountImages([
+      imageItem('1', { state: 'placeholder', reason: 'too-large' }),
+      imageItem('2', picture('k1'), 'Fit', {
+        left: 200,
+        top: 24,
+        width: 96,
+        height: 72,
+      }),
+      imageItem('3', picture('bad'), 'Fit', {
+        left: 300,
+        top: 24,
+        width: 96,
+        height: 72,
+      }),
+    ]);
+    const items = [
+      ...m.element.querySelectorAll<HTMLElement>('.item[data-kind="image"]'),
+    ];
+    // Name stays the item name; the reason or pending text is the description.
+    expect(items[0]!.getAttribute('aria-label')).toBe('Image Image1');
+    expect(items[0]!.getAttribute('aria-description')).toBe(
+      imagePlaceholderLabels['too-large'],
+    );
+    expect(items[1]!.getAttribute('aria-description')).toBe('Loading image…');
+    m.host.ingest({
+      protocol: 2,
+      kind: 'imageAssets',
+      assets: [asset('k1'), broken('bad')],
+    });
+    await flush();
+    await m.settle();
+    await finishImages(m);
+    expect(items[1]!.getAttribute('aria-description')).toBeNull();
+    expect(items[2]!.getAttribute('aria-description')).toBe(
+      imagePlaceholderLabels['data-invalid'],
+    );
+    for (const element of items) {
+      expect(element.getAttribute('aria-label')).toMatch(/^Image Image\d$/);
+      for (const reason of Object.keys(imagePlaceholderLabels))
+        expect(
+          `${element.getAttribute('aria-label')}|${element.getAttribute('aria-description')}`,
+        ).not.toContain(reason);
+    }
+  });
+
+  for (const [reason, label] of Object.entries(imagePlaceholderLabels))
+    it(`shows the ${reason} placeholder label and no picture`, async () => {
+      const m = await mountImages([
+        imageItem('1', {
+          state: 'placeholder',
+          reason: reason as keyof typeof imagePlaceholderLabels,
+        }),
+      ]);
+      expect(label.length).toBeGreaterThan(0);
+      expect(img(m.element)).toBeNull();
+      const note = item(m.element).querySelector('.image-placeholder')!;
+      expect(note.textContent?.trim()).toBe(label);
+      expect(note.getAttribute('data-reason')).toBe(reason);
+      expect(item(m.element).getAttribute('data-image-state')).toBe(
+        'placeholder',
+      );
+      expect(item(m.element).classList.contains('placeholder')).toBe(true);
+    });
+
+  it('shows a pending state, never a broken image, until the asset arrives', async () => {
+    const m = await mountImages([imageItem('1', picture())]);
+    expect(img(m.element)).toBeNull();
+    expect(m.element.querySelector('[src]')).toBeNull();
+    const state = item(m.element);
+    expect(state.getAttribute('data-image-state')).toBe('pending');
+    expect(state.querySelector('.image-placeholder')?.textContent?.trim()).toBe(
+      'Loading image…',
+    );
+    expect(state.hasAttribute('data-invalid')).toBe(false);
+    m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
+    await flush();
+    await m.settle();
+    // The <img> is rendered at once so it can load, but stays hidden and the item
+    // keeps its pending state until the image itself reports a loaded picture.
+    expect(img(m.element)?.getAttribute('src')).toMatch(/^blob:/);
+    expect(img(m.element)?.classList.contains('image-loading')).toBe(true);
+    expect(item(m.element).getAttribute('data-image-state')).toBe('pending');
+    expect(
+      item(m.element).querySelector('.image-placeholder')?.textContent?.trim(),
+    ).toBe('Loading image…');
+    await finishImages(m);
+    expect(img(m.element)?.getAttribute('src')).toMatch(/^blob:/);
+    expect(img(m.element)?.classList.contains('image-loading')).toBe(false);
+    expect(item(m.element).getAttribute('data-image-state')).toBe('picture');
+    expect(item(m.element).querySelector('.image-placeholder')).toBeNull();
+  });
+
+  it('does not accept a loaded image without pixels as a picture', async () => {
+    const m = await mountImages([imageItem('1', picture())]);
+    m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
+    await flush();
+    await m.settle();
+    const element = img(m.element)!;
+    Object.defineProperty(element, 'naturalWidth', { value: 0 });
+    element.dispatchEvent(new Event('load'));
+    await m.settle();
+    expect(img(m.element)).toBeNull();
+    expect(item(m.element).getAttribute('data-image-state')).toBe(
+      'undecodable',
+    );
+  });
+
+  it('falls back to the data-invalid placeholder when the rendered image errors', async () => {
+    const m = await mountImages([imageItem('1', picture())]);
+    m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
+    await flush();
+    await m.settle();
+    img(m.element)!.dispatchEvent(new Event('error'));
+    await m.settle();
+    expect(img(m.element)).toBeNull();
+    expect(item(m.element).getAttribute('data-image-state')).toBe(
+      'undecodable',
+    );
+    expect(env.revoked).toEqual(['blob:test/1']);
+  });
+
+  it('shows the data-invalid placeholder when the picture cannot be decoded', async () => {
+    const m = await mountImages([imageItem('1', picture('bad'))]);
+    m.host.ingest({
+      protocol: 2,
+      kind: 'imageAssets',
+      assets: [broken('bad')],
+    });
+    await flush();
+    await m.settle();
+    await finishImages(m);
+    expect(img(m.element)).toBeNull();
+    const note = item(m.element).querySelector('.image-placeholder')!;
+    expect(note.hasAttribute('data-invalid')).toBe(true);
+    expect(note.getAttribute('data-reason')).toBe('data-invalid');
+    expect(note.textContent?.trim()).toBe(
+      imagePlaceholderLabels['data-invalid'],
+    );
+    expect(item(m.element).getAttribute('data-image-state')).toBe(
+      'undecodable',
+    );
+    expect(env.revoked).toEqual(['blob:test/fail']);
+  });
+
+  it('keeps the DOM free of base64 payloads, data: URLs and picture titles', async () => {
+    const m = await mountImages([
+      imageItem('1', picture(), 'Fit'),
+      imageItem('2', picture('bad'), 'Clip', {
+        left: 200,
+        top: 24,
+        width: 96,
+        height: 72,
+      }),
+      imageItem('3', { state: 'placeholder', reason: 'too-large' }, 'Fit', {
+        left: 300,
+        top: 24,
+        width: 96,
+        height: 72,
+      }),
+    ]);
+    m.host.ingest({
+      protocol: 2,
+      kind: 'imageAssets',
+      assets: [asset('k1'), broken('bad')],
+    });
+    await flush();
+    await m.settle();
+    await finishImages(m);
+    const html = m.element.innerHTML;
+    for (const slice of [
+      payload.slice(0, 20),
+      payload.slice(30, 60),
+      brokenPayload.slice(0, 16),
+    ])
+      expect(html).not.toContain(slice);
+    expect(html).not.toContain('data:');
+    const sources = [...m.element.querySelectorAll('[src]')].map((node) =>
+      node.getAttribute('src'),
+    );
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatch(/^blob:/);
+    expect(m.element.querySelectorAll('img[title], .item[title]')).toHaveLength(
+      0,
+    );
+  });
+
+  it('revokes the object URL once a later snapshot no longer references the picture', async () => {
+    const m = await mountImages([imageItem('1', picture())]);
+    m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
+    await flush();
+    await m.settle();
+    await finishImages(m);
+    expect(env.revoked).toEqual([]);
+    m.host.ingest(snapshotWith([], 3));
+    await m.settle();
+    expect(env.revoked).toEqual(['blob:test/1']);
+    expect(m.element.querySelector('img')).toBeNull();
+  });
+
+  it('keeps selection, handles and focus on the generic item frame', async () => {
+    const m = await mountImages([imageItem('1', picture(), 'AutoSize')]);
+    m.host.ingest({ protocol: 2, kind: 'imageAssets', assets: [asset('k1')] });
+    await flush();
+    await m.settle();
+    await finishImages(m);
+    m.fixture.componentInstance.select(0);
+    await m.settle();
+    expect(item(m.element).tagName).toBe('BUTTON');
+    expect(item(m.element).getAttribute('aria-label')).toBe('Image Image1');
+    expect(item(m.element).getAttribute('aria-pressed')).toBe('true');
+    expect(m.element.querySelector('.selection-frame')).not.toBeNull();
+    expect(m.element.querySelectorAll('.selection-frame .handle').length).toBe(
+      8,
+    );
+  });
+});
+
+describe('image items among body items', () => {
+  beforeEach(() => TestBed.resetTestingModule());
+  afterEach(() => vi.restoreAllMocks());
+
+  const geometryKeys = ['left', 'top', 'width', 'height'];
+  const imageBase = {
+    kind: 'image' as const,
+    sizing: 'Fit' as const,
+    metadata: {
+      format: 'png',
+      pixels: { width: 120, height: 40 },
+      encodedSize: 10,
+    },
+    text: null,
+    style: null,
+  };
+  /** The draft scene plus three images: editable (4), geometry-only (5), preservation-only (6). */
+  function withImages(version = 2): HostMessage {
+    const base = draftSnapshot(version);
+    if (base.kind !== 'snapshot' || !base.scene)
+      throw new Error('Expected scene');
+    const images = [
+      {
+        ...imageBase,
+        id: `${version}:7`,
+        name: 'Logo',
+        label: 'Logo',
+        placeholder: false,
+        display: {
+          state: 'picture',
+          assetKey: 'k1',
+          pixels: { width: 120, height: 40 },
+        },
+        bounds: { left: 200, top: 140, width: 96, height: 72 },
+        geometry: {
+          left: '150pt',
+          top: '105pt',
+          width: '72pt',
+          height: '54pt',
+        },
+        operations: eligible,
+        capabilities: [
+          'image',
+          'name',
+          'left',
+          'top',
+          'width',
+          'height',
+          'sizing',
+          'value',
+          'toolTip',
+        ],
+      },
+      {
+        ...imageBase,
+        id: `${version}:8`,
+        name: 'Missing',
+        label: 'Missing',
+        placeholder: true,
+        display: { state: 'placeholder', reason: 'reference-missing' },
+        bounds: { left: 320, top: 140, width: 96, height: 72 },
+        geometry: {
+          left: '240pt',
+          top: '105pt',
+          width: '72pt',
+          height: '54pt',
+        },
+        operations: eligible,
+        capabilities: [...geometryKeys, 'name'],
+      },
+      {
+        ...imageBase,
+        id: `${version}:9`,
+        name: null,
+        label: 'Image',
+        placeholder: true,
+        display: { state: 'placeholder', reason: 'source-preserved' },
+        bounds: { left: 440, top: 140, width: 96, height: 72 },
+        geometry: null,
+        operations: locked,
+        capabilities: [],
+      },
+    ];
+    return {
+      ...base,
+      scene: { ...base.scene, items: [...base.scene.items, ...images] },
+    } as unknown as HostMessage;
+  }
+  async function mounted() {
+    const m = mount();
+    m.host.ingest(withImages());
+    await m.settle();
+    const component = m.fixture.componentInstance;
+    component.setView({ gridSnap: false, guidesSnap: false });
+    await m.settle();
+    const viewport = m.element.querySelector<HTMLElement>('.viewport')!;
+    const edits = () =>
+      m.host.sent().filter((s) => (s as { kind: string }).kind === 'edit');
+    const clipboards = () =>
+      m.host.sent().filter((s) => (s as { kind: string }).kind === 'clipboard');
+    return { ...m, component, viewport, edits, clipboards };
+  }
+  type Mounted = Awaited<ReturnType<typeof mounted>>;
+  const pointer = (target: HTMLElement, x: number, y: number) =>
+    ({
+      button: 0,
+      pointerId: 1,
+      currentTarget: target,
+      clientX: x,
+      clientY: y,
+      altKey: false,
+      preventDefault() {},
+      stopPropagation() {},
+    }) as unknown as PointerEvent;
+  function drag(
+    m: Mounted,
+    index: number,
+    dx: number,
+    dy: number,
+    handle?: Parameters<Mounted['component']['startGesture']>[2],
+  ) {
+    const item = m.element.querySelector<HTMLElement>(
+      `button.item[data-item="${index}"]`,
+    )!;
+    item.setPointerCapture = () => {};
+    item.hasPointerCapture = () => false;
+    m.component.startGesture(pointer(item, 0, 0), index, handle);
+    m.component.moveGesture(pointer(item, dx, dy));
+    m.component.finishGesture(pointer(item, dx, dy));
+  }
+  const key = (target: EventTarget, type: 'keydown' | 'keyup', init = {}) =>
+    target.dispatchEvent(
+      new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init }),
+    );
+  const labels = (m: Mounted) =>
+    m.component.menuActions().map((entry) => entry.label);
+  const names = (root: HTMLElement) =>
+    [...root.querySelectorAll<HTMLElement>('button.item')].map((element) =>
+      element.getAttribute('aria-label'),
+    );
+
+  it('names an image "Image {name}" and keeps the other items on their label', async () => {
+    const m = await mounted();
+    expect(names(m.element)).toEqual([
+      'Title: Hello',
+      'Other: Second',
+      'Rectangle (unsupported)',
+      'Image Logo',
+      'Image Missing',
+      'Image',
+    ]);
+    m.component.select(4);
+    await m.settle();
+    expect(
+      m.element
+        .querySelector('.selection-frame .handle[data-handle="se"]')
+        ?.getAttribute('aria-label'),
+    ).toBe('Resize Image Logo se');
+  });
+
+  it('selects an image, extends the selection with a textbox and selects all', async () => {
+    const m = await mounted();
+    m.component.select(4);
+    await m.settle();
+    expect(m.component.selectedIds()).toEqual(['2:7']);
+    expect(m.component.primary()?.id).toBe('2:7');
+    expect(
+      m.element
+        .querySelector('button.item[data-item="4"]')!
+        .classList.contains('selected'),
+    ).toBe(true);
+    m.component.select(0, true);
+    await m.settle();
+    expect(m.component.selectedIds()).toEqual(['2:7', '2:3']);
+    expect(m.component.primary()?.id).toBe('2:3');
+    m.component.select(4, true);
+    expect(m.component.selectedIds()).toEqual(['2:3']);
+    m.component.selectAll();
+    expect(m.component.selectedIds()).toEqual([
+      '2:3',
+      '2:4',
+      '2:5',
+      '2:6',
+      '2:7',
+      '2:8',
+      '2:9',
+    ]);
+  });
+
+  it('marquee-selects images together with textboxes', async () => {
+    const m = await mounted();
+    const body = m.element.querySelector<HTMLElement>('.body')!;
+    let captured = false;
+    body.setPointerCapture = () => (captured = true);
+    body.hasPointerCapture = () => captured;
+    body.releasePointerCapture = () => (captured = false);
+    const event = (type: string, x: number, y: number) => {
+      const e = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: type === 'pointerup' ? 0 : 1,
+        clientX: x,
+        clientY: y,
+      });
+      Object.defineProperty(e, 'pointerId', { value: 1 });
+      return e;
+    };
+    body.dispatchEvent(event('pointerdown', 190, 130));
+    window.dispatchEvent(event('pointermove', 600, 300));
+    window.dispatchEvent(event('pointerup', 600, 300));
+    window.dispatchEvent(event('lostpointercapture', 600, 300));
+    await m.settle();
+    // Only the three images lie completely inside the rectangle.
+    expect(m.component.selectedIds()).toEqual(['2:7', '2:8', '2:9']);
+    expect(m.edits()).toHaveLength(0);
+  });
+
+  it('moves an image with the keyboard, alone and with a textbox', async () => {
+    const m = await mounted();
+    m.component.select(4);
+    await m.settle();
+    m.viewport.focus();
+    key(m.viewport, 'keydown', { key: 'ArrowRight' });
+    key(m.viewport, 'keyup', { key: 'ArrowRight' });
+    expect(m.edits()).toHaveLength(1);
+    expect(m.edits()[0]).toMatchObject({
+      operation: 'layout',
+      payload: { action: 'move', targetIds: ['2:7'], dxPt: 1, dyPt: 0 },
+    });
+    TestBed.resetTestingModule();
+    const big = await mounted();
+    big.component.select(4);
+    await big.settle();
+    big.viewport.focus();
+    key(big.viewport, 'keydown', { key: 'ArrowDown', shiftKey: true });
+    key(big.viewport, 'keyup', { key: 'ArrowDown' });
+    expect(big.edits()[0]).toMatchObject({
+      payload: { action: 'move', targetIds: ['2:7'], dxPt: 0, dyPt: 10 },
+    });
+    TestBed.resetTestingModule();
+    const both = await mounted();
+    both.component.select(4);
+    both.component.select(0, true);
+    await both.settle();
+    both.viewport.focus();
+    key(both.viewport, 'keydown', { key: 'ArrowLeft' });
+    key(both.viewport, 'keyup', { key: 'ArrowLeft' });
+    expect(both.edits()[0]).toMatchObject({
+      payload: { action: 'move', targetIds: ['2:7', '2:3'], dxPt: -1, dyPt: 0 },
+    });
+  });
+
+  it('moves and resizes an image with the pointer', async () => {
+    const m = await mounted();
+    drag(m, 4, 8, 4);
+    expect(m.edits()[0]).toMatchObject({
+      payload: { action: 'move', targetIds: ['2:7'], dxPt: 6, dyPt: 3 },
+    });
+    TestBed.resetTestingModule();
+    const resize = await mounted();
+    resize.component.select(4);
+    await resize.settle();
+    expect(
+      resize.element.querySelectorAll('.selection-frame .handle').length,
+    ).toBe(8);
+    drag(resize, 4, 8, 4, 'se');
+    // Logo is 150,105 72×54pt; +6pt/+3pt on the south-east corner.
+    expect(resize.edits()[0]).toMatchObject({
+      payload: { action: 'resize', handle: 'se', xPt: 228, yPt: 162 },
+    });
+  });
+
+  it('snaps an image to the grid, and to other items, and uses it as a guide target', async () => {
+    const m = await mounted();
+    m.component.setView({ gridSnap: true, guidesSnap: false, gridSpacing: 10 });
+    drag(m, 4, 8, 0);
+    // Left 150pt + 6pt = 156pt snaps to the 160pt grid line; top 105pt to 100pt.
+    expect(m.edits()[0]).toMatchObject({
+      payload: { targetIds: ['2:7'], dxPt: 10, dyPt: -5 },
+    });
+    TestBed.resetTestingModule();
+    const guides = await mounted();
+    guides.component.setView({ gridSnap: false, guidesSnap: true });
+    const item = guides.element.querySelector<HTMLElement>(
+      'button.item[data-item="4"]',
+    )!;
+    item.setPointerCapture = () => {};
+    item.hasPointerCapture = () => false;
+    // Dragging up 68px = 51pt puts the image top (105pt) on Title's 54pt bottom edge.
+    guides.component.startGesture(pointer(item, 0, 0), 4);
+    guides.component.moveGesture(pointer(item, 0, -68));
+    await guides.settle();
+    const text = [...guides.element.querySelectorAll('.guide')].map(
+      (guide) => guide.textContent,
+    );
+    expect(text.some((entry) => entry?.includes('Title'))).toBe(true);
+    guides.component.cancelGesture();
+    // The image is itself a guide target for other items.
+    const title = guides.element.querySelector<HTMLElement>(
+      'button.item[data-item="0"]',
+    )!;
+    title.setPointerCapture = () => {};
+    title.hasPointerCapture = () => false;
+    guides.component.startGesture(pointer(title, 0, 0), 0);
+    guides.component.moveGesture(pointer(title, 0, 68));
+    await guides.settle();
+    const toward = [...guides.element.querySelectorAll('.guide')].map(
+      (guide) => guide.textContent,
+    );
+    expect(toward.some((entry) => entry?.includes('Logo'))).toBe(true);
+  });
+
+  it('lets a geometry-only image move, resize, copy, cut, duplicate and delete', async () => {
+    const m = await mounted();
+    m.component.select(5);
+    await m.settle();
+    expect(m.component.treeEditableIds()).toContain('2:8');
+    expect(m.component.limitations()).toBeNull();
+    expect(m.element.textContent).not.toContain('Preservation-only');
+    expect(m.element.querySelectorAll('.selection-frame .handle').length).toBe(
+      8,
+    );
+    const clipboard = m.component
+      .contextActions()
+      .filter((entry) => ['Copy', 'Cut', 'Duplicate'].includes(entry.label));
+    expect(clipboard.map((entry) => entry.reason)).toEqual(['', '', '']);
+    expect(labels(m)).toContain('Delete… (confirm contained content)');
+    expect(m.clipboards()).toHaveLength(0);
+    drag(m, 5, 8, 4);
+    expect(m.edits()[0]).toMatchObject({
+      payload: { action: 'move', targetIds: ['2:8'], dxPt: 6, dyPt: 3 },
+    });
+    TestBed.resetTestingModule();
+    const copy = await mounted();
+    copy.component.select(5);
+    await copy.settle();
+    expect(copy.component.clipboard('copy')).toBe(true);
+    expect(copy.clipboards()[0]).toMatchObject({
+      action: 'copy',
+      targetIds: ['2:8'],
+    });
+  });
+
+  it('offers a geometry-only image no image or sizing edit', async () => {
+    const m = await mounted();
+    m.component.select(5);
+    await m.settle();
+    const item = m.component.selected()!;
+    expect(item.capabilities).toEqual([...geometryKeys, 'name']);
+    for (const capability of ['image', 'sizing', 'value', 'toolTip'])
+      expect(item.capabilities).not.toContain(capability);
+    expect(
+      m.element.querySelector(
+        '[data-property="image"], [data-property="sizing"]',
+      ),
+    ).toBeNull();
+  });
+
+  it('keeps a preservation-only image preserved: no mutation, copy or delete', async () => {
+    const m = await mounted();
+    m.component.select(6);
+    await m.settle();
+    expect(m.component.treeEditableIds()).not.toContain('2:9');
+    expect(m.component.limitations()).toContain(
+      'Preservation-only: the designer offers no mutation.',
+    );
+    expect(m.element.querySelectorAll('.selection-frame .handle').length).toBe(
+      0,
+    );
+    expect(m.component.canHandle(m.component.selected()!, 'move')).toBe(false);
+    expect(labels(m)).not.toContain('Delete… (confirm contained content)');
+    expect(
+      m.component.contextActions().find((entry) => entry.label === 'Copy')
+        ?.reason,
+    ).toContain('Preservation-only');
+    expect(m.component.clipboard('copy')).toBe(false);
+    expect(m.component.gestureNotice()).toContain('preservation-only');
+    m.viewport.focus();
+    key(m.viewport, 'keydown', { key: 'ArrowRight' });
+    key(m.viewport, 'keyup', { key: 'ArrowRight' });
+    drag(m, 6, 8, 4);
+    expect(m.edits()).toHaveLength(0);
+    expect(m.clipboards()).toHaveLength(0);
+  });
+
+  const deleteForm = (m: Mounted) =>
+    m.element.querySelector<HTMLFormElement>('[aria-label="Delete image"]');
+  const authored = (m: Mounted) =>
+    m
+      .edits()
+      .filter(
+        (entry) => (entry as { operation?: string }).operation === 'author',
+      );
+
+  it('offers an editable image a confirmed Delete image control, not the textbox form', async () => {
+    const m = await mounted();
+    m.component.select(4);
+    await m.settle();
+    expect(m.element.textContent).not.toContain('Preserved content');
+    expect(m.element.querySelector('[aria-label="Delete textbox"]')).toBeNull();
+    expect(m.element.querySelector('rdlc-textbox-properties')).toBeNull();
+    expect(m.element.querySelector('rdlc-image-properties')).not.toBeNull();
+    const form = deleteForm(m)!;
+    expect(form).not.toBeNull();
+    expect(form.textContent).toContain('Logo');
+    expect(form.querySelector('button')!.textContent).toContain('Delete image');
+    // Unconfirmed: the request carries an empty confirmation, which the host refuses.
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await m.settle();
+    expect(authored(m).at(-1)).toMatchObject({
+      targetId: '2:7',
+      payload: { action: 'deleteImage', confirm: '' },
+    });
+  });
+
+  it('routes an editable image to the image inspector and its geometry to a LayoutIntent', async () => {
+    const m = await mounted();
+    m.component.select(4);
+    await m.settle();
+    const field = (property: string) =>
+      m.element.querySelector<HTMLInputElement>(
+        `rdlc-image-properties [data-property="${property}"]`,
+      )!;
+    expect(field('name').value).toBe('Logo');
+    expect(field('left').value).toBe('150pt');
+    // The inspector is disabled while an edit is pending, so each one is answered first.
+    const answer = async () => {
+      const sent = m.edits().at(-1) as { requestId: string };
+      m.host.ingest({
+        protocol: 2,
+        kind: 'editResult',
+        requestId: sent.requestId,
+        baseVersion: 2,
+        version: 2,
+        changed: false,
+        accepted: false,
+        mappings: [],
+        reason: 'REFUSED',
+        diagnostics: [],
+      });
+      await m.settle();
+    };
+    const commit = async (property: string, value: string) => {
+      field(property).value = value;
+      field(property).dispatchEvent(new Event('change'));
+      await m.settle();
+    };
+    await commit('left', '200pt');
+    expect(m.edits().at(-1)).toMatchObject({
+      operation: 'layout',
+      payload: { action: 'move', targetIds: ['2:7'], dxPt: 50, dyPt: 0 },
+    });
+    await answer();
+    await commit('top', '100pt');
+    expect(m.edits().at(-1)).toMatchObject({
+      operation: 'layout',
+      payload: { action: 'move', targetIds: ['2:7'], dxPt: 0, dyPt: -5 },
+    });
+    await answer();
+    await commit('width', '100pt');
+    expect(m.edits().at(-1)).toMatchObject({
+      operation: 'layout',
+      payload: { action: 'resize', handle: 'e', xPt: 250 },
+    });
+    await answer();
+    await commit('height', '60pt');
+    expect(m.edits().at(-1)).toMatchObject({
+      operation: 'layout',
+      payload: { action: 'resize', handle: 's', yPt: 165 },
+    });
+    await answer();
+    // The host refuses a negative position; a value that is not a size never leaves.
+    const sent = m.edits().length;
+    await commit('left', 'wide');
+    expect(m.edits()).toHaveLength(sent);
+    expect(m.component.gestureNotice()).toContain('valid size');
+  });
+
+  it('sends image property and replace requests as typed author intents', async () => {
+    const m = await mounted();
+    m.component.select(4);
+    await m.settle();
+    const sizing = m.element.querySelector<HTMLSelectElement>(
+      'rdlc-image-properties [data-property="sizing"]',
+    )!;
+    sizing.value = 'Clip';
+    sizing.dispatchEvent(new Event('change'));
+    await m.settle();
+    expect(authored(m).at(-1)).toMatchObject({
+      targetId: '2:7',
+      payload: {
+        action: 'setImageProperty',
+        property: 'sizing',
+        value: 'Clip',
+      },
+    });
+    const sent = authored(m).at(-1) as { requestId: string };
+    m.host.ingest({
+      protocol: 2,
+      kind: 'editResult',
+      requestId: sent.requestId,
+      baseVersion: 2,
+      version: 2,
+      changed: false,
+      accepted: false,
+      mappings: [],
+      reason: 'IMAGE_PROPERTY_INVALID',
+      diagnostics: [],
+    });
+    await m.settle();
+    const replace = [
+      ...m.element.querySelectorAll<HTMLButtonElement>(
+        'rdlc-image-properties button',
+      ),
+    ].find((button) => button.textContent!.includes('Replace'))!;
+    replace.click();
+    await m.settle();
+    expect(authored(m).at(-1)).toMatchObject({
+      targetId: '2:7',
+      payload: { action: 'replaceImagePicture', scope: 'all' },
+    });
+  });
+
+  describe('image field commits', () => {
+    async function fields() {
+      const m = await mounted();
+      m.component.select(4);
+      await m.settle();
+      const field = (property: string) =>
+        m.element.querySelector<HTMLSelectElement | HTMLInputElement>(
+          `rdlc-image-properties [data-property="${property}"]`,
+        )!;
+      // A real select or typed field fires `input` (a tracked draft) before `change`.
+      const edit = (property: string, value: string) => {
+        const control = field(property);
+        control.focus();
+        control.value = value;
+        control.dispatchEvent(new Event('input', { bubbles: true }));
+        return control;
+      };
+      const answer = async (version = 2) => {
+        const sent = authored(m).at(-1) as { requestId: string };
+        m.host.ingest({
+          protocol: 2,
+          kind: 'editResult',
+          requestId: sent.requestId,
+          baseVersion: version,
+          version,
+          changed: false,
+          accepted: false,
+          mappings: [],
+          reason: 'IMAGE_PROPERTY_INVALID',
+          diagnostics: [],
+        });
+        await m.settle();
+      };
+      return { m, field, edit, answer };
+    }
+
+    it('commits a select and a text field after the input event that precedes change', async () => {
+      const { m, edit, answer } = await fields();
+      edit('sizing', 'Clip').dispatchEvent(
+        new Event('change', { bubbles: true }),
+      );
+      await m.settle();
+      expect(m.component.conflict()).toBeNull();
+      expect(authored(m).at(-1)).toMatchObject({
+        targetId: '2:7',
+        payload: {
+          action: 'setImageProperty',
+          property: 'sizing',
+          value: 'Clip',
+        },
+      });
+      expect(m.component.draft()).toBeNull();
+      await answer();
+      edit('toolTip', 'Company logo').dispatchEvent(
+        new Event('change', { bubbles: true }),
+      );
+      await m.settle();
+      expect(authored(m)).toHaveLength(2);
+      expect(authored(m).at(-1)).toMatchObject({
+        payload: { property: 'toolTip', value: 'Company logo' },
+      });
+    });
+
+    it('holds the commit behind the banner when a pointer action is under way', async () => {
+      const { m, edit } = await fields();
+      const control = edit('toolTip', 'Draft tip');
+      const other = m.element.querySelector<HTMLButtonElement>(
+        'ul[aria-label="Report items"] button',
+      )!;
+      other.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      // Native blur/change happens between pointerdown and click.
+      control.dispatchEvent(new Event('change', { bubbles: true }));
+      other.click();
+      await m.settle();
+      expect(authored(m)).toHaveLength(0);
+      expect(m.component.conflict()).not.toBeNull();
+      expect(m.element.textContent).toContain('Unapplied draft');
+      expect(m.component.selected()?.id).toBe('2:7');
+    });
+
+    it('sends once when Enter is followed by change', async () => {
+      const { m, edit, answer } = await fields();
+      const control = edit('toolTip', 'Once');
+      key(control, 'keydown', { key: 'Enter' });
+      control.dispatchEvent(new Event('change', { bubbles: true }));
+      await m.settle();
+      expect(authored(m)).toHaveLength(1);
+      await answer();
+      // The next, unrelated request is not affected by the earlier commit.
+      const replace = [
+        ...m.element.querySelectorAll<HTMLButtonElement>(
+          'rdlc-image-properties button',
+        ),
+      ].find((button) => button.textContent!.includes('Replace'))!;
+      replace.click();
+      await m.settle();
+      expect(authored(m)).toHaveLength(2);
+      expect(authored(m).at(-1)).toMatchObject({
+        payload: { action: 'replaceImagePicture' },
+      });
+    });
+
+    it('keeps a draft of another form protected', async () => {
+      const { m, edit } = await fields();
+      const foreign = document.createElement('form');
+      const input = document.createElement('input');
+      foreign.append(input);
+      m.element.append(foreign);
+      const control = edit('toolTip', 'Mine');
+      m.component.draft.set({
+        version: 2,
+        control: input as unknown as NonNullable<
+          ReturnType<typeof m.component.draft>
+        >['control'],
+      });
+      control.dispatchEvent(new Event('change', { bubbles: true }));
+      await m.settle();
+      expect(authored(m)).toHaveLength(0);
+      expect(m.component.conflict()).not.toBeNull();
+    });
+
+    it('applies and discards an image draft held behind the banner', async () => {
+      const { m, edit } = await fields();
+      const hold = async () => {
+        const control = edit('toolTip', 'Held tip');
+        const other = m.element.querySelector<HTMLButtonElement>(
+          'ul[aria-label="Report items"] button',
+        )!;
+        other.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+        control.dispatchEvent(new Event('change', { bubbles: true }));
+        other.click();
+        await m.settle();
+        return control;
+      };
+      const label = (text: string) =>
+        [...m.element.querySelectorAll('button')].find((b) =>
+          b.textContent?.includes(text),
+        ) as HTMLButtonElement;
+      const control = await hold();
+      label('Discard draft').click();
+      await m.settle();
+      expect(authored(m)).toHaveLength(0);
+      expect(m.edits()).toHaveLength(0);
+      expect(control.value).toBe('');
+      m.component.select(4);
+      await m.settle();
+      await hold();
+      label('Apply draft').click();
+      await m.settle();
+      expect(m.edits()).toHaveLength(1);
+      expect(authored(m)).toHaveLength(1);
+      expect(authored(m)[0]).toMatchObject({
+        targetId: '2:7',
+        payload: {
+          action: 'setImageProperty',
+          property: 'toolTip',
+          value: 'Held tip',
+        },
+      });
+    });
+
+    it('drops a field commit of an older item', async () => {
+      const { m, edit } = await fields();
+      const control = edit('toolTip', 'Stale');
+      m.component.select(3);
+      await m.settle();
+      control.dispatchEvent(new Event('change', { bubbles: true }));
+      await m.settle();
+      expect(authored(m)).toHaveLength(0);
+    });
+  });
+
+  it('shows a geometry-only image its name and Delete image, not the preserved text', async () => {
+    const m = await mounted();
+    m.component.select(5);
+    await m.settle();
+    expect(m.element.querySelector('.inspector')?.textContent).toContain(
+      'Missing',
+    );
+    expect(m.element.textContent).not.toContain('Preserved content');
+    expect(deleteForm(m)).not.toBeNull();
+    expect(
+      m.element.querySelector(
+        '[data-property="image"], [data-property="sizing"]',
+      ),
+    ).toBeNull();
+    deleteForm(m)!.querySelector<HTMLInputElement>(
+      'input[type=checkbox]',
+    )!.checked = true;
+    deleteForm(m)!.dispatchEvent(new Event('submit', { cancelable: true }));
+    expect(authored(m).at(-1)).toMatchObject({
+      targetId: '2:8',
+      payload: { action: 'deleteImage', confirm: 'delete-contained-content' },
+    });
+  });
+
+  it('keeps a preservation-only image preserved with no delete control', async () => {
+    const m = await mounted();
+    m.component.select(6);
+    await m.settle();
+    expect(m.element.textContent).toContain('Preserved content');
+    expect(deleteForm(m)).toBeNull();
+    expect(authored(m)).toHaveLength(0);
+  });
+
+  it('offers no clipboard action for an image the host would refuse', async () => {
+    const m = mount();
+    const snapshot = withImages() as unknown as {
+      scene: { items: { id: string; capabilities: string[] }[] };
+    };
+    // An expression-valued Left drops the capability, as the projection does.
+    snapshot.scene.items.find((item) => item.id === '2:7')!.capabilities = [
+      'image',
+      'name',
+      'top',
+      'width',
+      'height',
+      'sizing',
+    ];
+    m.host.ingest(snapshot as unknown as HostMessage);
+    await m.settle();
+    m.fixture.componentInstance.select(4);
+    await m.settle();
+    const entries = m.fixture.componentInstance
+      .contextActions()
+      .filter((entry) => ['Copy', 'Cut', 'Duplicate'].includes(entry.label));
+    expect(entries).toHaveLength(3);
+    for (const entry of entries) expect(entry.reason).not.toBe('');
+    expect(m.fixture.componentInstance.clipboard('copy')).toBe(false);
+    expect(
+      m.host.sent().filter((s) => (s as { kind: string }).kind === 'clipboard'),
+    ).toHaveLength(0);
+  });
+
+  it('leaves non-image preserved items preserved', async () => {
+    const m = await mounted();
+    m.component.select(2);
+    await m.settle();
+    expect(m.component.treeEditableIds()).not.toContain('2:5');
+    expect(m.component.limitations()).toContain(
+      'Preservation-only: the designer offers no mutation.',
+    );
+    expect(labels(m)).not.toContain('Delete… (confirm contained content)');
+    expect(m.component.clipboard('copy')).toBe(false);
+    expect(m.clipboards()).toHaveLength(0);
+  });
 });

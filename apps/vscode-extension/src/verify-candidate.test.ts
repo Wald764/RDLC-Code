@@ -7,6 +7,7 @@ import { projectReport } from '@rdlc/xml-parser/project-report';
 import { validateLayout } from '@rdlc/validation/layout';
 import { planLayout } from '@rdlc/xml-serializer/layout';
 import type { PatchPlan } from '@rdlc/report-model/editing';
+import type { XmlSyntaxDocument } from '@rdlc/report-model/syntax';
 
 test('layout verification rejects wrong geometry, content, bindings and hierarchy inside edited parents', () => {
   const snapshot = {
@@ -329,4 +330,45 @@ test('clipboard verification proves each inserted subtree, not only untouched so
     false,
     'namespace meaning changed',
   );
+});
+
+test('a pre-parsed original of exactly this snapshot is reused instead of parsed again', () => {
+  const snapshot = {
+    uri: 'test:verify-reuse',
+    version: 1,
+    source: readFileSync('tests/fixtures/interactive/mixed.rdlc', 'utf8'),
+    eol: '\n' as const,
+  };
+  const original = parse(snapshot);
+  const report = projectReport(original);
+  const changes = validateLayout(report, {
+    action: 'resize',
+    targetIds: [report.tables[0]!.node.id],
+    handle: 'se',
+    xPt: 300,
+    yPt: 300,
+    unit: 'pt',
+  });
+  const plan = planLayout(snapshot, changes, 'pt');
+  const seen: unknown[] = [];
+  const check = (next: XmlSyntaxDocument, old: XmlSyntaxDocument) => {
+    seen.push(old);
+    return verifyLayoutCandidate(old, next, changes);
+  };
+  const fresh = verifyCandidate(snapshot, plan, check);
+  const reused = verifyCandidate(snapshot, plan, check, original);
+  assert.equal(
+    seen[0] === original,
+    false,
+    'without it the original is parsed',
+  );
+  assert.equal(seen[1], original, 'with it the same syntax object is verified');
+  assert.equal(reused.source, fresh.source);
+  // Syntax of another version or another text is never trusted.
+  const other = parse({ ...snapshot, version: 2 });
+  verifyCandidate(snapshot, plan, check, other);
+  assert.notEqual(seen[2], other);
+  const edited = parse({ ...snapshot, source: snapshot.source + '\n' });
+  verifyCandidate(snapshot, plan, check, edited);
+  assert.notEqual(seen[3], edited);
 });

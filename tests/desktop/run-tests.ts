@@ -324,6 +324,7 @@ export const DESKTOP_GROUPS = {
     'accessibility.spec.ts',
     'layout.spec.ts',
     'offline.spec.ts',
+    'images.spec.ts',
   ],
   context: ['context.spec.ts'],
 } as const;
@@ -378,7 +379,8 @@ export function modeDesktopSuites(mode: DesktopMode): string[] {
  * host-observer-scope.ts): the host-observer journeys on a platform that cannot
  * host the observer, and the platform-scoped PLATFORM_SKIPS allowlist. They are
  * listed in `skippedOut` / `platformSkippedOut` so the run records them as
- * UNVALIDATED.
+ * UNVALIDATED. A report whose tests are all such skips (nothing passed, so
+ * `stats.expected` is 0) is complete; one with no test at all is not.
  */
 export function completeDesktopReport(
   value: unknown,
@@ -396,7 +398,7 @@ export function completeDesktopReport(
   if (
     !stats ||
     !Number.isSafeInteger(stats.expected) ||
-    (stats.expected as number) <= 0 ||
+    (stats.expected as number) < 0 ||
     stats.unexpected !== 0 ||
     !Number.isSafeInteger(stats.skipped) ||
     stats.flaky !== 0 ||
@@ -483,8 +485,12 @@ export function completeDesktopReport(
       return false;
     return true;
   };
+  // `expected` may be 0 when every test is an allowlisted platform skip (the
+  // packaged probe runs only the host-observer spec, skipped off Linux); a
+  // report with no test at all is never complete.
   const complete =
     report.suites.every((suite) => visit(suite, 0)) &&
+    count + skipped.length + platformSkipped.length > 0 &&
     count === stats.expected &&
     skipped.length + platformSkipped.length === stats.skipped &&
     suites.every((file) => files.has(file));

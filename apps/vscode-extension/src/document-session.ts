@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { createHash } from 'node:crypto';
 import type {
   AcceptedSelectionMessage,
   ActionOutcomeMessage,
@@ -7,13 +8,30 @@ import type {
   NativeActionMessage,
   ViewIdentity,
 } from '@rdlc/report-model/protocol';
+import type { Diagnostic } from '@rdlc/report-model/diagnostics';
 import type { PatchPlan } from '@rdlc/report-model/editing';
 import type { XmlNode, XmlSyntaxDocument } from '@rdlc/report-model/syntax';
 import { projectStructure } from '@rdlc/renderer/structure';
 import { validateMessage } from '@rdlc/report-model/protocol';
 import { DocumentBinding } from './protocol.js';
 import { settleHistoryChange } from './history-settle.js';
-import { planTextboxIntent, correlateTargets } from './edit-controller.js';
+import {
+  checkImageCreation,
+  checkImageReplacement,
+  correlateTargets,
+  planImageCreation,
+  planImageReplacement,
+  planTextboxIntent,
+  type ImportedPicture,
+  type PlanOutcome,
+} from './edit-controller.js';
+import {
+  refusalDiagnostic,
+  runImport,
+  type ImageSource,
+} from './image-import.js';
+import { vscodeImageSource } from './image-source.js';
+import { ImageAssetCache, sendImageAssets } from './image-assets.js';
 import { PasteCounter, runClipboard, WindowClipboard } from './clipboard.js';
 import {
   evaluateReport,
@@ -24,6 +42,10 @@ import {
 
 /** One retained capture per extension host, i.e. per VS Code window. */
 export const windowClipboard = new WindowClipboard(vscode.env.clipboard);
+
+/** SHA-256 of decoded image bytes; the projection itself stays Node-free. */
+const sha256 = (bytes: Uint8Array): string =>
+  createHash('sha256').update(bytes).digest('hex');
 
 /** Locate the host-named creation in the accepted result so the designer can select it. */
 function createdIn(
@@ -66,6 +88,10 @@ export class DocumentSession {
     new vscode.EventEmitter<AcceptedSelectionMessage>();
   private readonly outcomeEmitter =
     new vscode.EventEmitter<ActionOutcomeMessage>();
+  private readonly chooserEmitter = new vscode.EventEmitter<{
+    readonly requestId: string;
+    readonly open: boolean;
+  }>();
   private readonly reportedOutcomes = new Set<string>();
   private readonly nativeAuthority = new Map<
     string,
@@ -75,6 +101,8 @@ export class DocumentSession {
   private readonly subscriptions: vscode.Disposable[] = [];
   /** Successful pastes in this destination view, per capture generation. */
   private readonly pastes = new PasteCounter();
+  /** Picture keys this session's webview already holds; one session per webview. */
+  private readonly imageAssets = new ImageAssetCache();
   private accepted?: ReportEvaluation;
   private publishedVersion: number | null = null;
   private selection?: AcceptedSelectionMessage;
@@ -85,6 +113,11 @@ export class DocumentSession {
   readonly onSelection = this.selectionEmitter.event;
   /** Terminal native-action outcomes, including host-side invalidation. */
   readonly onActionOutcome = this.outcomeEmitter.event;
+  /**
+   * An authorized native image creation entering (`open`) and leaving the host file
+   * chooser, so the native action timeout never runs while the author is choosing.
+   */
+  readonly onImageChooser = this.chooserEmitter.event;
   get currentSelection(): AcceptedSelectionMessage | null {
     return this.selection ?? null;
   }
@@ -96,9 +129,12 @@ export class DocumentSession {
       this.publishedVersion === this.document.version
     );
   }
-  /** Current accepted facts for consumers that attach after construction. */
+  /**
+   * Accepted facts of the document's current version: the one evaluation every consumer
+   * (the session itself, the sidebar context) shares, computed at most once per version.
+   */
   get evaluation(): ReportEvaluation {
-    return this.accepted ?? this.evaluate();
+    return this.evaluate();
   }
 
   constructor(
@@ -111,6 +147,11 @@ export class DocumentSession {
     ) => Promise<boolean>,
     private readonly revealSource = (uri: vscode.Uri): Thenable<unknown> =>
       vscode.commands.executeCommand('vscode.openWith', uri, 'default'),
+    /** The only way a picture enters the host; replaced by a fake in tests. */
+    private readonly imageSource: ImageSource = vscodeImageSource,
+    /** Workspace trust, injectable so the gate before the file chooser is testable. */
+    private readonly isTrusted: () => boolean = () =>
+      vscode.workspace.isTrusted,
   ) {
     const current = this.evaluate();
     this.binding = new DocumentBinding(
@@ -125,6 +166,13 @@ export class DocumentSession {
       vscode.workspace.onDidChangeTextDocument((event) => {
         if (event.document.uri.toString() !== document.uri.toString()) return;
         this.sync();
+        // VS Code also reports dirty-state changes (no content change, same version);
+        // the snapshot of that version is already out, so republishing it is redundant.
+        if (
+          event.contentChanges.length === 0 &&
+          this.publishedVersion === document.version
+        )
+          return;
         void this.publish();
       }),
     );
@@ -136,7 +184,9 @@ export class DocumentSession {
       this.accepted.snapshot.uri === this.document.uri.toString()
     )
       return this.accepted;
-    const current = evaluateReport(snapshotOf(this.document));
+    const current = evaluateReport(snapshotOf(this.document), {
+      digest: sha256,
+    });
     const previous = this.accepted;
     this.accepted = current;
     if (
@@ -329,6 +379,18 @@ export class DocumentSession {
                 bodyWidth: projection.section.width ?? '',
                 bodyHeight: projection.section.height ?? '',
               },
+              embeddedImages: projection.embeddedImages.map((definition) => ({
+                name: definition.name,
+                displayable: definition.displayable,
+                references: definition.references.length,
+              })),
+              images: projection.images
+                .filter((image) => image.context === 'body')
+                .map((image) => ({
+                  id: image.node.id,
+                  definition: image.definition,
+                  toolTip: image.toolTip,
+                })),
               datasets: projection.datasets.map((dataset) => ({
                 id: dataset.node.id,
                 name: dataset.name,
@@ -399,8 +461,16 @@ export class DocumentSession {
       };
     }
     this.publishedVersion = snapshot.version;
-    if (validateMessage(message)) this.emitter.fire(message);
-    else
+    if (validateMessage(message)) {
+      // Pictures this webview does not hold yet (every displayable PNG/JPEG definition,
+      // each key once) travel before the snapshot, so the bytes are already in the
+      // webview when a snapshot references them. The webview keeps an asset no scene
+      // item references until a snapshot does.
+      sendImageAssets(this.imageAssets, projection, (assets) =>
+        this.emitter.fire(assets),
+      );
+      this.emitter.fire(message);
+    } else
       this.emitter.fire({
         protocol: 2,
         kind: 'snapshot',
@@ -436,6 +506,20 @@ export class DocumentSession {
 
   receive(input: unknown): void {
     if (this.disposed) return;
+    // Host-only kinds can carry megabytes; refuse them before any validation work.
+    const sent =
+      typeof input === 'object' && input !== null
+        ? (input as { kind?: unknown }).kind
+        : undefined;
+    if (sent === 'snapshot' || sent === 'imageAssets') {
+      this.emitter.fire({
+        protocol: 2,
+        kind: 'protocolError',
+        supportedVersion: 2,
+        reason: 'Invalid client envelope or unsupported protocol',
+      });
+      return;
+    }
     const parsed = validateMessage(input);
     const kind = parsed?.kind;
     // Focus probe answers belong to the panel activation awaiting them.
@@ -524,6 +608,8 @@ export class DocumentSession {
     }
     const message = result.message;
     if (message.kind === 'ready') {
+      // The designer (re)loaded and holds no pictures: send them all again.
+      this.imageAssets.clear();
       await this.publish();
       return;
     }
@@ -718,11 +804,15 @@ export class DocumentSession {
         const creation = {
           textbox: 'createTextbox',
           table: 'createTable',
+          image: 'createImage',
           dataset: 'createDataset',
         }[action.create];
         matches =
           message.payload.action === creation &&
-          message.targetId === this.evaluation.syntax.root?.id;
+          message.targetId === this.evaluation.syntax.root?.id &&
+          // A native insert never carries an existing embedded definition.
+          (message.payload.action !== 'createImage' ||
+            message.payload.definition === undefined);
       } else if (action.action === 'author') {
         matches =
           message.targetId === action.targetIds[0] &&
@@ -759,6 +849,21 @@ export class DocumentSession {
         await this.publish();
         return;
       }
+    }
+    if (
+      message.operation === 'author' &&
+      message.payload.action === 'createImage' &&
+      message.payload.definition === undefined
+    ) {
+      await this.createImage(message, current);
+      return;
+    }
+    if (
+      message.operation === 'author' &&
+      message.payload.action === 'replaceImagePicture'
+    ) {
+      await this.replaceImage(message, current);
+      return;
     }
     const outcome = planTextboxIntent(
       current.snapshot,
@@ -839,6 +944,194 @@ export class DocumentSession {
     });
   }
 
+  /** Picture insertion; see `runPictureEdit`. */
+  private async createImage(
+    message: ClientMessage & { kind: 'edit'; operation: 'author' },
+    current: ReportEvaluation,
+  ): Promise<void> {
+    const payload = message.payload as Extract<
+      typeof message.payload,
+      { action: 'createImage' }
+    >;
+    await this.runPictureEdit(
+      message,
+      current,
+      checkImageCreation(
+        current.snapshot,
+        current.syntax,
+        current.projection,
+        message,
+      ),
+      (latest, imported) =>
+        planImageCreation(
+          latest.snapshot,
+          latest.syntax,
+          latest.projection,
+          payload,
+          imported,
+        ),
+    );
+  }
+
+  /**
+   * Picture replacement. The target is remembered by name and definition so that the plan
+   * can find it again in a later version: node ids belong to the version that held them.
+   */
+  private async replaceImage(
+    message: ClientMessage & { kind: 'edit'; operation: 'author' },
+    current: ReportEvaluation,
+  ): Promise<void> {
+    const target = current.projection.images.find(
+      (image) => image.node.id === message.targetId,
+    );
+    const original = {
+      name: target?.name ?? null,
+      definition: target?.definition ?? null,
+    };
+    await this.runPictureEdit(
+      message,
+      current,
+      checkImageReplacement(
+        current.snapshot,
+        current.syntax,
+        current.projection,
+        message,
+      ),
+      (latest, imported) =>
+        planImageReplacement(
+          latest.snapshot,
+          latest.syntax,
+          latest.projection,
+          message,
+          imported,
+          original,
+        ),
+    );
+  }
+
+  /**
+   * Gate, file chooser, then a plan against the latest accepted snapshot (the chooser is
+   * asynchronous and the text may have changed). Cancel and every refusal leave the text
+   * and the history untouched.
+   */
+  private async runPictureEdit(
+    message: ClientMessage & { kind: 'edit'; operation: 'author' },
+    current: ReportEvaluation,
+    unavailable: readonly Diagnostic[],
+    plan: (latest: ReportEvaluation, imported: ImportedPicture) => PlanOutcome,
+  ): Promise<void> {
+    const settle = async (
+      result: Partial<Extract<HostMessage, { kind: 'editResult' }>> & {
+        reason: string;
+      },
+    ) => {
+      this.emitter.fire({
+        protocol: 2,
+        kind: 'editResult',
+        baseVersion: message.baseVersion,
+        changed: false,
+        mappings: [],
+        version: this.document.version,
+        requestId: message.requestId,
+        accepted: false,
+        diagnostics: [],
+        ...result,
+      });
+      await this.publish();
+    };
+    // Same refusals as native history and WorkspaceEdit, before the chooser may open.
+    if (unavailable.length) {
+      await settle({
+        reason: unavailable[0]!.code,
+        diagnostics: unavailable,
+      });
+      return;
+    }
+    if (!this.isTrusted()) {
+      await settle({ reason: 'WORKSPACE_UNTRUSTED' });
+      return;
+    }
+    if (
+      vscode.workspace.fs.isWritableFileSystem(this.document.uri.scheme) ===
+      false
+    ) {
+      await settle({ reason: 'DOCUMENT_READ_ONLY' });
+      return;
+    }
+    const chooserId = message.nativeRequestId;
+    if (chooserId)
+      this.chooserEmitter.fire({ requestId: chooserId, open: true });
+    let imported: Awaited<ReturnType<typeof runImport>>;
+    try {
+      imported = await runImport(this.imageSource, sha256);
+    } finally {
+      if (chooserId)
+        this.chooserEmitter.fire({ requestId: chooserId, open: false });
+    }
+    if (this.disposed || this.document.isClosed) return;
+    if (imported.state === 'cancelled') {
+      await settle({ reason: 'CANCELLED', cancelled: true });
+      return;
+    }
+    if (imported.state === 'refused') {
+      await settle({
+        reason: imported.refusal.code,
+        diagnostics: [refusalDiagnostic(imported.refusal)],
+      });
+      return;
+    }
+    // Re-read the latest accepted snapshot: the plan applies to it, not to `current`.
+    this.sync();
+    const latest = this.evaluate();
+    const outcome = plan(latest, {
+      picture: imported.picture,
+      fileName: imported.fileName,
+    });
+    if (!outcome.ok) {
+      await settle({
+        reason: outcome.diagnostics[0]?.code ?? 'REJECTED',
+        diagnostics: outcome.diagnostics,
+      });
+      return;
+    }
+    if (!outcome.changed) {
+      // The chosen picture is what the target already shows: nothing to write.
+      await settle({
+        accepted: true,
+        reason: 'UNCHANGED',
+        version: latest.snapshot.version,
+      });
+      return;
+    }
+    const result = await this.commit(
+      outcome.plan,
+      outcome.candidate,
+      latest.snapshot.version,
+      message.nativeRequestId,
+    );
+    this.emitter.fire({
+      protocol: 2,
+      kind: 'editResult',
+      baseVersion: message.baseVersion,
+      changed: result.accepted,
+      // Ids of a version the designer never held cannot be mapped.
+      mappings:
+        result.accepted && latest.snapshot.version === message.baseVersion
+          ? correlateTargets(latest.syntax, result.syntax, outcome.plan, [
+              message.targetId,
+            ])
+          : [],
+      version: result.version,
+      requestId: message.requestId,
+      accepted: result.accepted,
+      reason: result.accepted ? 'APPLIED' : result.reason,
+      diagnostics: [],
+      ...(result.accepted && outcome.created
+        ? createdIn(result.syntax.root, outcome.created)
+        : {}),
+    });
+  }
+
   /** One native WorkspaceEdit for a verified candidate; publishes before reporting. */
   private async commit(
     plan: PatchPlan,
@@ -907,7 +1200,13 @@ export class DocumentSession {
       this.nativeAcceptedVersions.set(nativeRequestId, actual.snapshot.version);
     // Bind the new version before reporting success so the next intent cannot race the change event.
     this.sync();
-    await this.publish();
+    // The change listener already published an applied version; only an unchanged
+    // document (a refusal) or a version not yet published needs a fresh snapshot.
+    if (
+      actual.snapshot.version === baseVersion ||
+      this.publishedVersion !== actual.snapshot.version
+    )
+      await this.publish();
     return {
       accepted,
       reason,
@@ -990,6 +1289,7 @@ export class DocumentSession {
     this.disposed = true;
     this.nativeAuthority.clear();
     this.nativeAcceptedVersions.clear();
+    this.imageAssets.clear();
     for (const outcome of this.binding.invalidateNative(
       'The designer was closed before the action completed.',
       true,
@@ -1000,5 +1300,6 @@ export class DocumentSession {
     this.evaluationEmitter.dispose();
     this.selectionEmitter.dispose();
     this.outcomeEmitter.dispose();
+    this.chooserEmitter.dispose();
   }
 }

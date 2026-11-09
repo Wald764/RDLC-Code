@@ -26,6 +26,7 @@ import {
   expectedChecks,
   skipAllowed,
   stripAnsi,
+  stripFailureDetail,
   testId,
   type CellCheck,
 } from '../tests/desktop/qa-classification.js';
@@ -166,8 +167,11 @@ export function collectTests(report: unknown): ReportedTest[] | null {
         const results = Array.isArray(test['results']) ? test['results'] : [];
         const last = results.at(-1);
         const lastStatus = isObject(last) ? String(last['status']) : '';
-        // Only `message`: the snippet and the stack quote neighbouring source
-        // lines, which must never decide the severity of a failure.
+        // Only `message`, reduced to the bare assertion text: `errors[].message`
+        // (unlike `error.message`) carries the code frame and the stack, which
+        // quote neighbouring source lines, must never decide the severity of a
+        // failure and would defeat the end-anchored signatures. Once cleaned,
+        // the duplicate of `error.message` collapses in the Set.
         const errors = [
           ...new Set(
             results.flatMap((result) => {
@@ -178,7 +182,7 @@ export function collectTests(report: unknown): ReportedTest[] | null {
               ];
               return list.flatMap((error) =>
                 isObject(error) && typeof error['message'] === 'string'
-                  ? [error['message']]
+                  ? [stripFailureDetail(error['message'])]
                   : [],
               );
             }),

@@ -36,7 +36,7 @@
       <p>{{ gestureNotice() }}</p>
     }
     @if (host.outcome(); as outcome) {
-      @if (!outcome.accepted) {
+      @if (!outcome.accepted && !outcome.cancelled) {
         <p
           id="report-refusal"
           class="outcome"
@@ -603,11 +603,86 @@
                     [style.color]="item.style?.color"
                     [style.text-align]="item.style?.textAlign"
                     [attr.data-kind]="item.kind ?? 'textbox'"
-                    [attr.aria-label]="item.label"
+                    [attr.data-sizing]="
+                      item.kind === 'image' ? item.sizing : null
+                    "
+                    [attr.data-image-state]="
+                      item.kind === 'image' ? imageView(item).state : null
+                    "
+                    [attr.aria-label]="accessibleName(item)"
+                    [attr.aria-description]="
+                      item.kind === 'image' ? imageDescription(item) : null
+                    "
                     (click)="selectClick($event, $index)"
                     (pointerdown)="startGesture($event, $index)"
                   >
-                    @if (item.kind !== 'table') {
+                    @if (item.kind === 'image') {
+                      @let picture = imageView(item);
+                      @let shown =
+                        picture.state === 'picture'
+                          ? picture
+                          : picture.state === 'pending'
+                            ? picture.loading
+                            : undefined;
+                      @if (shown) {
+                        @if (item.sizing === 'AutoSize') {
+                          @let layer = autosizeLayer(item)!;
+                          <span
+                            class="image-layer"
+                            [style.left.px]="-layer.left"
+                            [style.top.px]="-layer.top"
+                            [style.width.px]="layer.width"
+                            [style.height.px]="layer.height"
+                          >
+                            <img
+                              class="image image-autosize"
+                              [class.image-loading]="
+                                picture.state !== 'picture'
+                              "
+                              data-sizing="AutoSize"
+                              [style.left.px]="layer.left"
+                              [style.top.px]="layer.top"
+                              [style.width.px]="shown.width"
+                              [style.height.px]="shown.height"
+                              [src]="shown.url"
+                              alt=""
+                              draggable="false"
+                              (load)="imageLoaded($event, shown)"
+                              (error)="imageFailed(shown)"
+                            />
+                          </span>
+                        } @else {
+                          <img
+                            class="image"
+                            [class.image-loading]="picture.state !== 'picture'"
+                            [class.image-fit]="item.sizing === 'Fit'"
+                            [class.image-fit-proportional]="
+                              item.sizing === 'FitProportional'
+                            "
+                            [class.image-clip]="item.sizing === 'Clip'"
+                            [attr.data-sizing]="item.sizing"
+                            [src]="shown.url"
+                            alt=""
+                            draggable="false"
+                            (load)="imageLoaded($event, shown)"
+                            (error)="imageFailed(shown)"
+                          />
+                        }
+                      }
+                      @if (picture.state !== 'picture') {
+                        <span
+                          class="content image-placeholder"
+                          [attr.data-state]="picture.state"
+                          [attr.data-reason]="
+                            picture.state === 'pending' ? null : picture.reason
+                          "
+                          [attr.data-invalid]="
+                            picture.state === 'undecodable' ? '' : null
+                          "
+                          >{{ picture.label }}</span
+                        >
+                      }
+                    } @else if (item.kind !== 'table') {
                       <span class="content">{{ item.text ?? item.label }}</span>
                     }
                   </button>
@@ -642,7 +717,7 @@
                             class="handle"
                             [attr.data-handle]="handle"
                             [attr.aria-label]="
-                              'Resize ' + item.label + ' ' + handle
+                              'Resize ' + accessibleName(item) + ' ' + handle
                             "
                             [disabled]="!!host.pending()"
                             (pointerdown)="
@@ -784,12 +859,13 @@
               [expanded]="view().inspectorExpanded"
               (expand)="expandSection($event.section, $event.open)"
               [refusal]="
-                host.outcome()?.accepted === false
+                host.outcome()?.accepted === false && !host.outcome()?.cancelled
                   ? (host.outcome()?.reason ?? '')
                   : ''
               "
               (commit)="commit($event)"
-              (request)="author($event)"
+              (geometry)="imageGeometry($event)"
+              (request)="inspectorRequest($event)"
             />
           </fieldset>
         }

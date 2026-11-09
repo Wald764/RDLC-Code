@@ -13,6 +13,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import {
   assessWindowGeometry,
+  chooseFile,
   commandAvailable,
   desktopLaunchArgs,
   desktopPaths,
@@ -25,6 +26,7 @@ import {
   openWorkspaceFile,
   parseOpenResult,
   parseTrustProbe,
+  PROVISIONED_USER_SETTINGS,
   readExecutableVersion,
   retryTransientEvaluate,
   setQuickInputText,
@@ -1019,5 +1021,105 @@ test('assessWindowGeometry reports full, constrained and refuses a cramped windo
         workArea: { width: 1024, height: 768 },
       }),
     /below the 1280x600 minimum/,
+  );
+});
+
+test('every profile renders the file chooser as a quick input and keeps the other defaults', () => {
+  assert.equal(PROVISIONED_USER_SETTINGS['files.simpleDialog.enable'], true);
+  // The rest of the provisioning is unchanged by the chooser setting.
+  assert.equal(PROVISIONED_USER_SETTINGS['window.menuStyle'], 'custom');
+  assert.equal(PROVISIONED_USER_SETTINGS['telemetry.telemetryLevel'], 'off');
+  assert.equal(PROVISIONED_USER_SETTINGS['update.mode'], 'none');
+});
+
+/** A file dialog whose input echoes what is typed unless `rewrite` replaces it. */
+function fakeFileDialog(options: {
+  rewrite?: (typed: string, attempt: number) => string;
+  stayOpen?: boolean;
+}) {
+  const calls: string[] = [];
+  let value = '';
+  let attempt = 0;
+  const input = {
+    waitFor: async () => {
+      calls.push('input-visible');
+    },
+    evaluate: async (
+      run: (target: unknown, text: string) => void,
+      text: string,
+    ) => {
+      const element = Object.assign(new EventTarget(), { value: '' });
+      run(element, text);
+      attempt++;
+      value = options.rewrite ? options.rewrite(element.value, attempt) : text;
+      calls.push(`type:${attempt}`);
+    },
+    inputValue: async () => value,
+    press: async (key: string) => {
+      calls.push(`press:${key}`);
+    },
+  };
+  const widget = {
+    waitFor: async () => {
+      if (options.stayOpen) throw new Error('Timeout 15000ms exceeded.');
+      calls.push('dialog-hidden');
+    },
+  };
+  const page = {
+    locator: (selector: string) =>
+      selector.includes('.quick-input-box') ? input : widget,
+  } as unknown as Page;
+  return { page, calls };
+}
+
+test('chooseFile types the absolute path into the dialog input and accepts it once', async () => {
+  const { page, calls } = fakeFileDialog({});
+  const order: string[] = [];
+  await chooseFile(page, resolve('/pictures/logo.png'), {
+    beforeAccept: () => order.push('before-accept'),
+  });
+  assert.deepEqual(calls, [
+    'input-visible',
+    'type:1',
+    'press:Enter',
+    'dialog-hidden',
+  ]);
+  assert.deepEqual(order, ['before-accept']);
+});
+
+test('chooseFile types the path again while the dialog rewrites it, then gives up', async () => {
+  const path = resolve('/pictures/logo.png');
+  const settles = fakeFileDialog({
+    rewrite: (typed, attempt) => (attempt < 3 ? '/pictures/' : typed),
+  });
+  await chooseFile(settles.page, path);
+  assert.deepEqual(
+    settles.calls.filter((call) => call.startsWith('type')),
+    ['type:1', 'type:2', 'type:3'],
+  );
+  assert.equal(
+    settles.calls.filter((call) => call === 'press:Enter').length,
+    1,
+  );
+
+  const hopeless = fakeFileDialog({ rewrite: () => '/elsewhere/' });
+  await assert.rejects(
+    chooseFile(hopeless.page, path),
+    /did not keep the path .* after 3 attempts/,
+  );
+  assert.ok(
+    !hopeless.calls.includes('press:Enter'),
+    'never accepts a rewritten path',
+  );
+});
+
+test('chooseFile refuses a relative path and a dialog that stays open', async () => {
+  const closed = fakeFileDialog({});
+  await assert.rejects(chooseFile(closed.page, 'logo.png'), /must be absolute/);
+  assert.deepEqual(closed.calls, []);
+  const open = fakeFileDialog({ stayOpen: true });
+  await assert.rejects(
+    chooseFile(open.page, resolve('/pictures/logo.png')),
+    /stayed open after choosing/,
   );
 });
